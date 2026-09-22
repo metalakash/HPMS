@@ -346,6 +346,29 @@ EXPOSURE VIEW
 > Week 1 Day 4–5, and the Vertical Slice already implements a two-state version — so the
 > schema must be generated in Phase 1 for the existing code to extend cleanly.
 
+### Design Decision: Progress Entry Workflow (Locked for Phase 1)
+
+**Mechanism: Bank-Entered, Evidence-Backed (Internal-Only)**
+
+Construction progress is entered by Credit Officers, not by external borrowers:
+
+1. Borrower submits progress report and supporting evidence (email, hard copy)
+2. Credit Officer enters structured data in HPMS and attaches the evidence document
+3. Risk Manager reviews and recommends (Maker-Checker approval)
+4. Approving Authority finalizes
+
+All actors are SBL staff authenticated via Active Directory. No external portal. No DMZ.
+This aligns with current Nepali project finance practice and fits the 4-week timeline.
+
+**Future Extension (Phase 2+): Independent Engineer Verification**
+
+When ready, bolt on IE certification without rearchitecting:
+- Borrower → Independent Engineer (IE certifies progress, signs off)
+- Credit Officer enters IE-verified data (backed by IE's certificate)
+- Add fields: `ie_certificate_id`, `ie_verified_at`, `ie_certifying_engineer` to milestone
+  records
+- Workflow remains internal-only; IE engagement is upstream
+
 ```
 Generate the governance models in backend/app/models/governance.py, extending the
 Maker-Checker logic already verified in backend/app/services/workflow.py.
@@ -367,7 +390,7 @@ TABLE: roles / permissions / role_permissions  [FUNC A.1 — CR, FUNC A.2 — CR
 TABLE: approval_requests
   - id UUID PK, entity_type, entity_id, workflow_definition_id
   - current_state: ApprovalState
-  - maker_id, recommender_id, approver_id (all AD employee IDs)
+  - maker_id, recommender_id, approver_id (all AD employee IDs — internal staff only)
   - submitted_at, completed_at
 
 TABLE: approval_steps
@@ -379,6 +402,9 @@ TABLE: workflow_definitions  [FUNC A.3 — CR]
   Configurable per use case: the Bank must be able to define steps and route to single
   or multiple recommenders/approvers without a code change. Store the step graph as
   JSONB with a validating Pydantic schema.
+  
+  NOTE: Phase 1 scope is internal routing only (SBL staff). External actors (borrowers,
+  engineers) are handled upstream of the approval workflow, not within HPMS routing.
 
 SEPARATION OF DUTIES (four-eyes) — preserve the verified prototype behaviour:
   The maker of a request may never act as its recommender or approver. Violation returns
