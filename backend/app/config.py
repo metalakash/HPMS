@@ -62,7 +62,23 @@ class Settings(BaseSettings):
     CACHE_PROJECT_LIST_TTL: int = int(os.getenv("CACHE_PROJECT_LIST_TTL", "300"))
     CACHE_PROJECT_DETAIL_TTL: int = int(os.getenv("CACHE_PROJECT_DETAIL_TTL", "600"))
     CACHE_REPORT_TTL: int = int(os.getenv("CACHE_REPORT_TTL", "900"))  # 15 minutes
-    
+
+    # PDF Generation (Phase 4, Task 2)
+    PDF_ENABLED: bool = os.getenv("PDF_ENABLED", "true").lower() == "true"
+    PDF_FONT: str = os.getenv("PDF_FONT", "Helvetica")
+    PDF_PAGESIZE: str = os.getenv("PDF_PAGESIZE", "letter")  # letter or a4
+    PDF_MARGIN_TOP: int = int(os.getenv("PDF_MARGIN_TOP", "72"))  # 1 inch
+    PDF_MARGIN_BOTTOM: int = int(os.getenv("PDF_MARGIN_BOTTOM", "72"))  # 1 inch
+    PDF_MARGIN_LEFT: int = int(os.getenv("PDF_MARGIN_LEFT", "54"))  # 0.75 inch
+    PDF_MARGIN_RIGHT: int = int(os.getenv("PDF_MARGIN_RIGHT", "54"))  # 0.75 inch
+    PDF_COLOR_PRIMARY: str = os.getenv("PDF_COLOR_PRIMARY", "#1F4788")  # SBL Blue
+    PDF_COLOR_SECONDARY: str = os.getenv("PDF_COLOR_SECONDARY", "#2E7D32")  # SBL Green
+    PDF_COLOR_ACCENT: str = os.getenv("PDF_COLOR_ACCENT", "#F57C00")  # SBL Orange
+    PDF_WATERMARK_ENABLED: bool = os.getenv("PDF_WATERMARK_ENABLED", "false").lower() == "true"
+    PDF_WATERMARK_TEXT: str = os.getenv("PDF_WATERMARK_TEXT", "CONFIDENTIAL")
+    PDF_ENCRYPTION_ENABLED: bool = os.getenv("PDF_ENCRYPTION_ENABLED", "false").lower() == "true"
+    PDF_MAX_FILE_SIZE_MB: int = int(os.getenv("PDF_MAX_FILE_SIZE_MB", "50"))
+
     class Config:
         env_file = ".env"
         case_sensitive = True

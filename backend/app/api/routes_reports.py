@@ -1,4 +1,4 @@
-"""Report export endpoints for PowerBI integration."""
+"""Report export endpoints for PowerBI integration and PDF generation."""
 
 import logging
 from typing import Optional
@@ -17,6 +17,8 @@ from backend.app.schemas.report_schema import (
 )
 from backend.app.services.report_service import ReportService
 from backend.app.services.export_service import ExportService
+from backend.app.services.pdf_service import PDFService, ReportType
+from backend.app.security.auth_middleware import CurrentUser, get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -148,3 +150,192 @@ async def export_report(
     except Exception as e:
         logger.error(f"Unexpected error generating report: {e}")
         raise HTTPException(status_code=500, detail="Report generation failed")
+
+
+@router.post("/pdf/portfolio")
+async def export_portfolio_pdf(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export portfolio report as PDF with SBL branding.
+
+    Includes:
+    - Executive summary with project metrics
+    - Project details table
+    - Capacity distribution
+    - Financial overview
+
+    Returns: PDF file with Content-Disposition attachment header
+    """
+
+    try:
+        # Get portfolio data
+        rows, count = await ReportService.export_portfolio_report(
+            db, None, current_user.id
+        )
+
+        # Transform to PDF-friendly format
+        portfolio_data = {
+            "total_projects": count,
+            "total_capacity_mw": sum(r.get("capacity_mw", 0) for r in rows) if rows else 0,
+            "active_projects": sum(1 for r in rows if r.get("status") == "active") if rows else 0,
+            "average_rate": sum(r.get("rate", 0) for r in rows) / count if rows and count > 0 else 0,
+            "projects": rows[:10] if rows else [],  # First 10 projects
+        }
+
+        # Generate PDF
+        pdf_bytes = PDFService.generate_portfolio_report(
+            portfolio_data,
+            metadata={
+                "title": "Portfolio Report",
+                "author": "SBL HPMS",
+                "subject": "Portfolio Analysis",
+            }
+        )
+
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=portfolio-report.pdf"}
+        )
+
+    except Exception as e:
+        logger.error(f"Portfolio PDF generation failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate portfolio report"
+        )
+
+
+@router.post("/pdf/covenant")
+async def export_covenant_pdf(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export covenant compliance report as PDF.
+
+    Includes:
+    - Covenant status summary
+    - DSCR, LTV, ICR metrics
+    - Compliance status indicators
+
+    Returns: PDF file with Content-Disposition attachment header
+    """
+
+    try:
+        # Get covenant data
+        rows, count = await ReportService.export_covenant_report(
+            db, None, current_user.id
+        )
+
+        # Transform to PDF-friendly format
+        covenant_data = {
+            "dscr": rows[0].get("dscr", 0) if rows else 0,
+            "dscr_threshold": 1.25,
+            "dscr_pass": rows[0].get("dscr", 0) >= 1.25 if rows else False,
+            "ltv": rows[0].get("ltv", 0) if rows else 0,
+            "ltv_threshold": 70,
+            "ltv_pass": rows[0].get("ltv", 0) <= 70 if rows else False,
+            "icr": rows[0].get("icr", 0) if rows else 0,
+            "icr_threshold": 2.0,
+            "icr_pass": rows[0].get("icr", 0) >= 2.0 if rows else False,
+        }
+
+        # Generate PDF
+        pdf_bytes = PDFService.generate_covenant_report(
+            covenant_data,
+            metadata={
+                "title": "Covenant Compliance Report",
+                "author": "SBL HPMS",
+                "subject": "Covenant Analysis",
+            }
+        )
+
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=covenant-report.pdf"}
+        )
+
+    except Exception as e:
+        logger.error(f"Covenant PDF generation failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate covenant report"
+        )
+
+
+@router.post("/pdf/capex")
+async def export_capex_pdf(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export capital expenditure report as PDF.
+
+    Includes:
+    - Expenditure summary by category
+    - Budget vs. actual spending
+    - Remaining budget and % utilization
+
+    Returns: PDF file with Content-Disposition attachment header
+    """
+
+    try:
+        # Get CapEx data
+        rows, count = await ReportService.export_capex_report(
+            db, None, current_user.id
+        )
+
+        # Transform to PDF-friendly format
+        capex_data = {
+            "civil_budgeted": rows[0].get("civil_budgeted", 0) if rows else 0,
+            "civil_spent": rows[0].get("civil_spent", 0) if rows else 0,
+            "civil_remaining": rows[0].get("civil_remaining", 0) if rows else 0,
+            "civil_pct": 0,
+            "equip_budgeted": rows[0].get("equip_budgeted", 0) if rows else 0,
+            "equip_spent": rows[0].get("equip_spent", 0) if rows else 0,
+            "equip_remaining": rows[0].get("equip_remaining", 0) if rows else 0,
+            "equip_pct": 0,
+            "cont_budgeted": rows[0].get("cont_budgeted", 0) if rows else 0,
+            "cont_spent": rows[0].get("cont_spent", 0) if rows else 0,
+            "cont_remaining": rows[0].get("cont_remaining", 0) if rows else 0,
+            "cont_pct": 0,
+            "total_budgeted": rows[0].get("total_budgeted", 0) if rows else 0,
+            "total_spent": rows[0].get("total_spent", 0) if rows else 0,
+            "total_remaining": rows[0].get("total_remaining", 0) if rows else 0,
+            "total_pct": 0,
+        }
+
+        # Calculate percentages
+        for key in ["civil", "equip", "cont"]:
+            budgeted = capex_data.get(f"{key}_budgeted", 0)
+            spent = capex_data.get(f"{key}_spent", 0)
+            if budgeted > 0:
+                capex_data[f"{key}_pct"] = (spent / budgeted) * 100
+
+        # Calculate total percentage
+        if capex_data["total_budgeted"] > 0:
+            capex_data["total_pct"] = (capex_data["total_spent"] / capex_data["total_budgeted"]) * 100
+
+        # Generate PDF
+        pdf_bytes = PDFService.generate_capex_report(
+            capex_data,
+            metadata={
+                "title": "Capital Expenditure Report",
+                "author": "SBL HPMS",
+                "subject": "CapEx Analysis",
+            }
+        )
+
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=capex-report.pdf"}
+        )
+
+    except Exception as e:
+        logger.error(f"CapEx PDF generation failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate capex report"
+        )
