@@ -65,6 +65,13 @@ app.add_middleware(
 app.state.limiter = limiter
 app.add_exception_handler(HTTPException, lambda r, e: HTTPException(status_code=e.status_code, detail=e.detail))
 
+# Register API routes
+from backend.app.api.routes_projects import router as projects_router
+from backend.app.api.routes_loans import router as loans_router
+
+app.include_router(projects_router)
+app.include_router(loans_router)
+
 # Health check
 @app.get("/health", tags=["monitoring"])
 async def health_check():
@@ -105,12 +112,13 @@ async def shutdown_event():
     logger.info("SBL HPMS Shutting down")
     await close_db()
 
-# TODO: Add routes for:
-# - /api/v1/projects
-# - /api/v1/loan-accounts
-# - /api/v1/approvals
-# - /api/v1/audit
-# - /api/v1/consortium
+# API Routes (Phase 2):
+# - /api/v1/projects (GET list, GET detail, POST create, PATCH update)
+# - /api/v1/projects/{id}/loan-accounts (GET linked accounts)
+# - /api/v1/loan-accounts (GET list, GET detail, POST sync trigger)
+# - /api/v1/approvals (Phase 2.5)
+# - /api/v1/audit-logs (Phase 2.5)
+# - /api/v1/documents (Phase 2.5)
 
 if __name__ == "__main__":
     import uvicorn
