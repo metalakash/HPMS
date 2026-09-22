@@ -12,6 +12,27 @@ Blueprint left open. Ten things need resolving before building to it.
 
 ---
 
+## ✅ Implementation Status (Phase 1 Task 5)
+
+**Completed 2026-09-22:**
+- [x] **Item #3** — Effective-dating for shares, rates, COD, capacity, risk rating (DONE)
+  - Added `project_capacity_history` table with valid_from/to_ad/bs
+  - Added `loan_account_rate_history` table with effective-dating
+  - Consortium shares already have effective-dating
+- [x] **Item #4** — COD/RCOD model (DONE)
+  - Verified project table has original/current_approved/forecast/actual_cod
+  - Added `rcod_events` table with classification review triggers
+- [x] **Item #5** — data_provenance field (DONE)
+  - Added to disbursement_tranches, repayments, all new history tables
+  - Provenance values: CBS_SYNCED, MANUAL_ENTRY, CALCULATED, DOCUMENT_VERIFIED
+- [x] **Item #6** — Audit reads/exports at API layer (DONE)
+  - Added middleware in main.py (Phase 2 DB integration ready)
+  - AuditLogRead table already exists in audit.py
+
+**See:** `TASK-5-COMPLETION-SUMMARY.md` for full details
+
+---
+
 ## A. Tensions with the RFP — resolve these first
 
 ### A.1 "Not a loan-origination system" contradicts four Critical Requirements

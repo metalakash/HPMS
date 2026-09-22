@@ -1,10 +1,11 @@
 """FastAPI application factory and entry point."""
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 import logging
+from datetime import datetime
 
 from .config import settings
 from .database import get_db, init_db, close_db
@@ -28,6 +29,21 @@ async def add_security_headers(request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+
+# Middleware - Audit read/export operations
+@app.middleware("http")
+async def audit_read_operations(request: Request, call_next):
+    """Log read/export operations to audit_log_reads table."""
+    response = await call_next(request)
+
+    # Capture export/view endpoints for audit logging (Phase 2 implementation)
+    if request.method == "GET" and ("export" in request.url.path or "download" in request.url.path):
+        user_id = request.headers.get("X-User-ID", "anonymous")
+        export_format = request.query_params.get("format", "JSON")
+        # TODO: Log to AuditLogRead table with entity_type, entity_id, export_format, record_count
+
     return response
 
 # CORS - Internal intranet only (to be configured per SBL infra)

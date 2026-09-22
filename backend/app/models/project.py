@@ -61,6 +61,8 @@ class Project(Base, TimestampedMixin):
     water_licenses = relationship("WaterLicense", back_populates="project")
     land_records = relationship("LandRecord", back_populates="project")
     loan_accounts = relationship("LoanAccount", back_populates="project")
+    capacity_history = relationship("ProjectCapacityHistory", back_populates="project")
+    rcod_events = relationship("RCODEvent", back_populates="project")
     
     __table_args__ = (
         UniqueConstraint('project_code', name='uq_project_code'),
@@ -135,3 +137,63 @@ class LandRecord(Base, TimestampedMixin):
     compensation_status = Column(String(100))
     
     project = relationship("Project", back_populates="land_records")
+
+
+class ProjectCapacityHistory(Base, TimestampedMixin):
+    """Effective-dated capacity changes during design/construction phases."""
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), nullable=False, index=True)
+
+    capacity_mw = Column(Numeric(12, 4), nullable=False)
+
+    valid_from_ad = Column(Date, nullable=False, index=True)
+    valid_from_bs = Column(String(10))
+    valid_to_ad = Column(Date, index=True)
+    valid_to_bs = Column(String(10))
+    is_current = Column(String(5), default='Y', index=True)
+
+    revision_reason = Column(String(255))
+
+    # Data provenance
+    data_provenance = Column(String(50), default='DOCUMENT_VERIFIED')
+    source_reference = Column(String(255))
+
+    project = relationship("Project", back_populates="capacity_history")
+
+    __table_args__ = (
+        Index('ix_capacity_current', 'project_id', 'is_current'),
+        Index('ix_capacity_validity', 'valid_from_ad', 'valid_to_ad'),
+    )
+
+
+class RCODEvent(Base, TimestampedMixin):
+    """Revised Commercial Operation Date events with classification review triggers."""
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), nullable=False, index=True)
+
+    # RCOD dates
+    rcod_ad = Column(Date, nullable=False)
+    rcod_bs = Column(String(10))
+
+    previous_rcod_ad = Column(Date)
+    previous_rcod_bs = Column(String(10))
+
+    # Classification and review
+    rcod_classification = Column(String(100))  # e.g., minor_revision, major_revision, contract_amendment
+    requires_classification_review = Column(String(5), default='Y')
+
+    reason_for_revision = Column(Text)
+    contract_amendment_reference = Column(String(255))
+
+    # Data provenance
+    data_provenance = Column(String(50), default='MANUAL_ENTRY')
+    source_reference = Column(String(255))
+
+    project = relationship("Project", back_populates="rcod_events")
+
+    __table_args__ = (
+        Index('ix_rcod_classification', 'rcod_classification', 'requires_classification_review'),
+        Index('ix_rcod_dates', 'rcod_ad', 'previous_rcod_ad'),
+    )

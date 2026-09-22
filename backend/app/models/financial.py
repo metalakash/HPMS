@@ -57,21 +57,25 @@ class LoanAccount(Base, TimestampedMixin):
 
 class DisbursementTranche(Base, TimestampedMixin):
     """Disbursement tranche schedule and tracking."""
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     loan_account_id = Column(UUID(as_uuid=True), ForeignKey('loan_accounts.id'), nullable=False, index=True)
-    
+
     tranche_no = Column(Integer)
     planned_amount = Column(Numeric(20, 4))
     actual_amount = Column(Numeric(20, 4))
-    
+
     planned_date_ad = Column(Date)
     planned_date_bs = Column(String(10))
     actual_date_ad = Column(Date)
     actual_date_bs = Column(String(10))
-    
+
     pro_rata_share_pct = Column(Numeric(9, 6))
-    
+
+    # Data provenance
+    data_provenance = Column(String(50), default='CBS_SYNCED')
+    source_reference = Column(String(255))
+
     loan_account = relationship("LoanAccount", back_populates="disbursement_tranches")
 
 class Repayment(Base, TimestampedMixin):
@@ -91,8 +95,38 @@ class Repayment(Base, TimestampedMixin):
     paid_date_bs = Column(String(10))
     
     days_past_due = Column(Integer, default=0)
-    
+
+    # Data provenance
+    data_provenance = Column(String(50), default='CBS_SYNCED')
+    source_reference = Column(String(255))
+
     loan_account = relationship("LoanAccount", back_populates="repayments")
+
+
+class LoanAccountRateHistory(Base, TimestampedMixin):
+    """Effective-dated interest rate history for loan accounts."""
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    loan_account_id = Column(UUID(as_uuid=True), ForeignKey('loan_accounts.id'), nullable=False, index=True)
+
+    interest_rate_pct = Column(Numeric(7, 4), nullable=False)
+
+    valid_from_ad = Column(Date, nullable=False, index=True)
+    valid_from_bs = Column(String(10))
+    valid_to_ad = Column(Date, index=True)
+    valid_to_bs = Column(String(10))
+    is_current = Column(String(5), default='Y', index=True)
+
+    reason_for_change = Column(String(255))
+
+    # Data provenance
+    data_provenance = Column(String(50), default='CBS_SYNCED')
+    source_reference = Column(String(255))
+
+    __table_args__ = (
+        Index('ix_rate_history_current', 'loan_account_id', 'is_current'),
+        Index('ix_rate_history_validity', 'valid_from_ad', 'valid_to_ad'),
+    )
 
 class CBSSyncLog(Base, TimestampedMixin):
     """Finacle CBS synchronisation audit log."""
