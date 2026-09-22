@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from typing import Optional
 import os
 
 class Settings(BaseSettings):
@@ -46,6 +47,21 @@ class Settings(BaseSettings):
     EXPORT_FILE_EXPIRY_HOURS: int = int(os.getenv("EXPORT_FILE_EXPIRY_HOURS", "24"))  # Delete after 24h
     PRESIGNED_URL_EXPIRY_SECONDS: int = int(os.getenv("PRESIGNED_URL_EXPIRY_SECONDS", "3600"))  # 1 hour
     MAX_EXPORT_RECORDS: int = int(os.getenv("MAX_EXPORT_RECORDS", "100000"))
+
+    # Rate Limiting (Phase 3, Task 5)
+    RATE_LIMIT_ENABLED: bool = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
+    RATE_LIMIT_DEFAULT_QUOTA: int = int(os.getenv("RATE_LIMIT_DEFAULT_QUOTA", "10"))  # Requests per minute
+    RATE_LIMIT_PREMIUM_QUOTA: int = int(os.getenv("RATE_LIMIT_PREMIUM_QUOTA", "50"))
+    RATE_LIMIT_ADMIN_QUOTA: Optional[int] = None if os.getenv("RATE_LIMIT_ADMIN_QUOTA", "unlimited") == "unlimited" else int(os.getenv("RATE_LIMIT_ADMIN_QUOTA", "1000"))
+    RATE_LIMIT_WINDOW_SECONDS: int = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
+
+    # Caching (Phase 3, Task 5)
+    CACHE_ENABLED: bool = os.getenv("CACHE_ENABLED", "true").lower() == "true"
+    CACHE_MAX_SIZE: int = int(os.getenv("CACHE_MAX_SIZE", "1000"))
+    CACHE_DEFAULT_TTL_SECONDS: int = int(os.getenv("CACHE_DEFAULT_TTL_SECONDS", "300"))  # 5 minutes
+    CACHE_PROJECT_LIST_TTL: int = int(os.getenv("CACHE_PROJECT_LIST_TTL", "300"))
+    CACHE_PROJECT_DETAIL_TTL: int = int(os.getenv("CACHE_PROJECT_DETAIL_TTL", "600"))
+    CACHE_REPORT_TTL: int = int(os.getenv("CACHE_REPORT_TTL", "900"))  # 15 minutes
     
     class Config:
         env_file = ".env"
