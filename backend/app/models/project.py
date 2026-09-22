@@ -64,6 +64,9 @@ class Project(Base, TimestampedMixin):
     capacity_history = relationship("ProjectCapacityHistory", back_populates="project")
     rcod_events = relationship("RCODEvent", back_populates="project")
     documents = relationship("Document", back_populates="project")
+    project_owners = relationship("ProjectOwner", back_populates="project", cascade="all, delete-orphan")  # Phase 3: RLS
+    consortium = relationship("Consortium", back_populates="project", uselist=False)
+    consortium_members = relationship("ConsortiaMember", back_populates="project")
     
     __table_args__ = (
         UniqueConstraint('project_code', name='uq_project_code'),
