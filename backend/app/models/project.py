@@ -63,6 +63,7 @@ class Project(Base, TimestampedMixin):
     loan_accounts = relationship("LoanAccount", back_populates="project")
     capacity_history = relationship("ProjectCapacityHistory", back_populates="project")
     rcod_events = relationship("RCODEvent", back_populates="project")
+    documents = relationship("Document", back_populates="project")
     
     __table_args__ = (
         UniqueConstraint('project_code', name='uq_project_code'),
