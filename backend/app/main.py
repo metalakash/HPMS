@@ -66,10 +66,15 @@ app.state.limiter = limiter
 app.add_exception_handler(HTTPException, lambda r, e: HTTPException(status_code=e.status_code, detail=e.detail))
 
 # Register API routes
+from backend.app.api.routes_auth import router as auth_router
 from backend.app.api.routes_projects import router as projects_router
 from backend.app.api.routes_loans import router as loans_router
 from backend.app.api.routes_reports import router as reports_router
 
+# Auth routes (no auth required)
+app.include_router(auth_router)
+
+# Protected routes (require JWT token)
 app.include_router(projects_router)
 app.include_router(loans_router)
 app.include_router(reports_router)
