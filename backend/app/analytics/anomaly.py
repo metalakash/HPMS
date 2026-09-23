@@ -69,11 +69,17 @@ class AnomalyDetector:
             mean = self.baseline_stats["mean"]
             std = self.baseline_stats["std"]
 
+            # If std is 0, use a small value to detect large deviations
             if std == 0:
-                return None
+                # If value differs significantly from mean, it's anomalous
+                if abs(value - mean) > mean * 0.5:  # >50% deviation
+                    z_score = 5.0  # Treat as critical anomaly
+                else:
+                    return None
+            else:
+                # Calculate z-score
+                z_score = abs((value - mean) / std)
 
-            # Calculate z-score
-            z_score = abs((value - mean) / std)
             threshold = self.sensitivity
 
             if z_score > threshold:
