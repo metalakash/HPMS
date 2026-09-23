@@ -1,0 +1,57 @@
+{
+  "testRunner": "jest",
+  "configurations": {
+    "ios.sim.release": {
+      "device": {
+        "type": "iPhone 14"
+      },
+      "app": "ios.release"
+    },
+    "ios.sim.debug": {
+      "device": {
+        "type": "iPhone 14"
+      },
+      "app": "ios.debug"
+    },
+    "android.emu.release": {
+      "device": {
+        "type": "android.emulator",
+        "device": {
+          "avdName": "Pixel_4_API_30"
+        }
+      },
+      "app": "android.release"
+    },
+    "android.emu.debug": {
+      "device": {
+        "type": "android.emulator",
+        "device": {
+          "avdName": "Pixel_4_API_30"
+        }
+      },
+      "app": "android.debug"
+    }
+  },
+  "apps": {
+    "ios.debug": {
+      "type": "ios.app",
+      "binaryPath": "ios/build/Build/Products/Release-iphonesimulator/HPMS.app",
+      "build": "xcodebuild -workspace ios/HPMS.xcworkspace -scheme HPMS -configuration Release -derivedDataPath ios/build -arch x86_64 -gpu off"
+    },
+    "ios.release": {
+      "type": "ios.app",
+      "binaryPath": "ios/build/Build/Products/Release-iphonesimulator/HPMS.app",
+      "build": "xcodebuild -workspace ios/HPMS.xcworkspace -scheme HPMS -configuration Release -derivedDataPath ios/build -arch x86_64 -gpu off"
+    },
+    "android.debug": {
+      "type": "android.apk",
+      "binaryPath": "android/app/build/outputs/apk/debug/app-debug.apk",
+      "build": "cd android && ./gradlew assembleDebug assembleAndroidTest -DtestBuildType=debug"
+    },
+    "android.release": {
+      "type": "android.apk",
+      "binaryPath": "android/app/build/outputs/apk/release/app-release.apk",
+      "build": "cd android && ./gradlew assembleRelease assembleAndroidTest -DtestBuildType=release"
+    }
+  }
+}
