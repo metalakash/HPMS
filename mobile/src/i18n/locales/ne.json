@@ -1,0 +1,45 @@
+{
+  "nav": {
+    "projects": "परियोजना",
+    "inspections": "निरीक्षण",
+    "maintenance": "रखरखाव",
+    "settings": "सेटिङ्ग"
+  },
+  "dashboard": {
+    "title": "परियोजना",
+    "mw_output": "MW उत्पादन",
+    "status": "स्थिति",
+    "last_update": "अन्तिम अपडेट"
+  },
+  "inspection": {
+    "title": "निरीक्षण",
+    "new_inspection": "नयाँ निरीक्षण",
+    "photo": "फोटो थप्नुहोस्",
+    "signature": "हस्ताक्षर",
+    "notes": "नोटहरू"
+  },
+  "maintenance": {
+    "title": "रखरखाव",
+    "schedule": "समयसूची",
+    "history": "इतिहास",
+    "overdue": "म्याद सकिएको",
+    "due_soon": "छिट्टै देय"
+  },
+  "settings": {
+    "title": "सेटिङ्ग",
+    "language": "भाषा",
+    "dark_mode": "अन्धकार मोड",
+    "offline_mode": "अफलाइन मोड",
+    "sync_data": "डेटा सिङ्क गर्नुहोस्"
+  },
+  "common": {
+    "save": "सहेजनुहोस्",
+    "cancel": "रद्द गर्नुहोस्",
+    "delete": "मेटाउनुहोस्",
+    "edit": "सम्पादन गर्नुहोस्",
+    "loading": "लोड हुँदैछ...",
+    "error": "त्रुटि",
+    "success": "सफल",
+    "offline": "अफलाइन मोड"
+  }
+}

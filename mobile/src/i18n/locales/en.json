@@ -1,0 +1,45 @@
+{
+  "nav": {
+    "projects": "Projects",
+    "inspections": "Inspections",
+    "maintenance": "Maintenance",
+    "settings": "Settings"
+  },
+  "dashboard": {
+    "title": "Projects",
+    "mw_output": "MW Output",
+    "status": "Status",
+    "last_update": "Last Updated"
+  },
+  "inspection": {
+    "title": "Inspections",
+    "new_inspection": "New Inspection",
+    "photo": "Add Photo",
+    "signature": "Signature",
+    "notes": "Notes"
+  },
+  "maintenance": {
+    "title": "Maintenance",
+    "schedule": "Schedule",
+    "history": "History",
+    "overdue": "Overdue",
+    "due_soon": "Due Soon"
+  },
+  "settings": {
+    "title": "Settings",
+    "language": "Language",
+    "dark_mode": "Dark Mode",
+    "offline_mode": "Offline Mode",
+    "sync_data": "Sync Data"
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success",
+    "offline": "Offline Mode"
+  }
+}
