@@ -1,10 +1,13 @@
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
 from typing import Optional
 import os
 
 class Settings(BaseSettings):
     """Application configuration from environment variables."""
-    
+
+    model_config = ConfigDict(extra="ignore")  # Ignore extra env vars
+
     # Database
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
@@ -89,8 +92,5 @@ class Settings(BaseSettings):
     REDIS_ENABLED: bool = os.getenv("REDIS_ENABLED", "false").lower() == "true"
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
 
 settings = Settings()
