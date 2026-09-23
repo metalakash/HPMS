@@ -41,6 +41,9 @@ class User(Base, TimestampedMixin):
     # Default role (can have multiple via role_assignments)
     default_role = Column(SQLEnum(UserRole), default=UserRole.GUEST)
 
+    # Language preference (Phase 4 Task 5)
+    language_preference = Column(String(10), default="en")  # en, ne
+
     # Relationships
     role_assignments = relationship("UserRoleAssignment", back_populates="user", cascade="all, delete-orphan")
     project_owners = relationship(

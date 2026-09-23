@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
+# Language detection middleware (Phase 4 Task 5)
+from backend.app.i18n.middleware import LanguageDetectionMiddleware
+
 app = FastAPI(
     title="SBL HPMS",
     description="Hydropower Project Management Solution",
@@ -46,6 +49,9 @@ async def audit_read_operations(request: Request, call_next):
 
     return response
 
+# Language detection middleware (Phase 4 Task 5)
+app.add_middleware(LanguageDetectionMiddleware)
+
 # CORS - Internal intranet only (to be configured per SBL infra)
 app.add_middleware(
     CORSMiddleware,
@@ -73,6 +79,7 @@ from backend.app.api.routes_reports import router as reports_router
 from backend.app.api.routes_mfa import router as mfa_router
 from backend.app.api.routes_graphql import router as graphql_router
 from backend.app.api.routes_ws import router as ws_router
+from backend.app.api.routes_i18n import router as i18n_router
 
 # Auth routes (no auth required)
 app.include_router(auth_router)
@@ -84,6 +91,7 @@ app.include_router(reports_router)
 app.include_router(mfa_router)
 app.include_router(graphql_router)
 app.include_router(ws_router)
+app.include_router(i18n_router)
 
 # Health check
 @app.get("/health", tags=["monitoring"])

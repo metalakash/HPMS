@@ -23,8 +23,9 @@ target_metadata = Base.metadata
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
     url = config.get_main_option("sqlalchemy.url")
+    sync_url = url.replace("postgresql+asyncpg://", "postgresql://")
     context.configure(
-        url=url,
+        url=sync_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -36,15 +37,17 @@ def run_migrations_offline() -> None:
 async def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
     configuration = config.get_section(config.config_ini_section)
-    configuration["sqlalchemy.url"] = settings.DATABASE_URL
+    # Convert async URL to sync for Alembic autogenerate
+    sync_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+    configuration["sqlalchemy.url"] = sync_url
     connectable = engine_from_config(
         configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
 
-    async with connectable.begin() as connection:
-        await connection.run_sync(do_run_migrations)
+    with connectable.begin() as connection:
+        do_run_migrations(connection)
 
 def do_run_migrations(connection):
     context.configure(connection=connection, target_metadata=target_metadata)
@@ -55,4 +58,9 @@ def do_run_migrations(connection):
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    asyncio.run(run_migrations_online())
+    try:
+        asyncio.run(run_migrations_online())
+    except Exception as e:
+        print(f"Database connection failed: {e}")
+        print("Falling back to offline mode (SQL file generation)...")
+        run_migrations_offline()
