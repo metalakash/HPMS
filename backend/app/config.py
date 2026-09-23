@@ -79,6 +79,16 @@ class Settings(BaseSettings):
     PDF_ENCRYPTION_ENABLED: bool = os.getenv("PDF_ENCRYPTION_ENABLED", "false").lower() == "true"
     PDF_MAX_FILE_SIZE_MB: int = int(os.getenv("PDF_MAX_FILE_SIZE_MB", "50"))
 
+    # WebSocket (Phase 4, Task 4)
+    WEBSOCKET_ENABLED: bool = os.getenv("WEBSOCKET_ENABLED", "true").lower() == "true"
+    WEBSOCKET_HEARTBEAT_INTERVAL: int = int(os.getenv("WEBSOCKET_HEARTBEAT_INTERVAL", "30"))  # seconds
+    WEBSOCKET_HEARTBEAT_TIMEOUT: int = int(os.getenv("WEBSOCKET_HEARTBEAT_TIMEOUT", "60"))  # seconds
+    WEBSOCKET_MAX_CONNECTIONS_PER_USER: int = int(os.getenv("WEBSOCKET_MAX_CONNECTIONS_PER_USER", "5"))
+    WEBSOCKET_MESSAGE_QUEUE_SIZE: int = int(os.getenv("WEBSOCKET_MESSAGE_QUEUE_SIZE", "1000"))
+    WEBSOCKET_RECONNECT_TIMEOUT: int = int(os.getenv("WEBSOCKET_RECONNECT_TIMEOUT", "300"))  # 5 minutes
+    REDIS_ENABLED: bool = os.getenv("REDIS_ENABLED", "false").lower() == "true"
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
     class Config:
         env_file = ".env"
         case_sensitive = True

@@ -72,6 +72,7 @@ from backend.app.api.routes_loans import router as loans_router
 from backend.app.api.routes_reports import router as reports_router
 from backend.app.api.routes_mfa import router as mfa_router
 from backend.app.api.routes_graphql import router as graphql_router
+from backend.app.api.routes_ws import router as ws_router
 
 # Auth routes (no auth required)
 app.include_router(auth_router)
@@ -82,6 +83,7 @@ app.include_router(loans_router)
 app.include_router(reports_router)
 app.include_router(mfa_router)
 app.include_router(graphql_router)
+app.include_router(ws_router)
 
 # Health check
 @app.get("/health", tags=["monitoring"])
