@@ -470,37 +470,95 @@ class PDFService:
     def add_watermark(
         pdf_bytes: bytes,
         watermark_text: str = "CONFIDENTIAL",
+        opacity: float = 0.3,
+        angle: int = 45,
     ) -> bytes:
         """Add watermark to PDF (Phase 4.5 enhancement).
 
         Args:
             pdf_bytes: Input PDF bytes
             watermark_text: Text to watermark
+            opacity: Text opacity (0.0 - 1.0)
+            angle: Rotation angle in degrees
 
         Returns:
-            PDF with watermark
+            PDF with watermark overlay
         """
 
         try:
             from PyPDF2 import PdfReader, PdfWriter
+            from reportlab.pdfgen import canvas
+            from reportlab.lib.pagesizes import letter
         except ImportError:
-            logger.warning("PyPDF2 not installed. Skipping watermark.")
+            logger.warning("PyPDF2 or reportlab not installed. Skipping watermark.")
             return pdf_bytes
 
-        # Implementation for Phase 4.5
-        logger.info(f"Watermark feature available in Phase 4.5: {watermark_text}")
-        return pdf_bytes
+        try:
+            # Read input PDF
+            pdf_reader = PdfReader(io.BytesIO(pdf_bytes))
+            pdf_writer = PdfWriter()
+
+            # Create watermark on each page
+            for page_num in range(len(pdf_reader.pages)):
+                page = pdf_reader.pages[page_num]
+
+                # Create watermark canvas
+                watermark_buffer = io.BytesIO()
+                watermark_canvas = canvas.Canvas(
+                    watermark_buffer,
+                    pagesize=letter,
+                    bottomup=False
+                )
+
+                # Set opacity and font
+                from reportlab.lib import colors
+                watermark_canvas.setFillAlpha(opacity)
+                watermark_canvas.setFont("Helvetica-Bold", 60)
+                watermark_canvas.setFillColor(colors.grey)
+
+                # Draw watermark text (centered, rotated)
+                width, height = letter
+                watermark_canvas.saveState()
+                watermark_canvas.translate(width / 2, height / 2)
+                watermark_canvas.rotate(angle)
+                watermark_canvas.drawCentredString(0, 0, watermark_text)
+                watermark_canvas.restoreState()
+
+                watermark_canvas.save()
+                watermark_buffer.seek(0)
+
+                # Merge watermark with page
+                watermark_pdf = PdfReader(watermark_buffer)
+                watermark_page = watermark_pdf.pages[0]
+                page.merge_page(watermark_page)
+
+                pdf_writer.add_page(page)
+
+            # Return watermarked PDF
+            output_buffer = io.BytesIO()
+            pdf_writer.write(output_buffer)
+            output_buffer.seek(0)
+            result = output_buffer.getvalue()
+
+            logger.info(f"Watermark added: '{watermark_text}' (opacity={opacity}, angle={angle}°)")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error adding watermark: {e}")
+            return pdf_bytes
 
     @staticmethod
     def encrypt_pdf(
         pdf_bytes: bytes,
         password: str,
+        owner_password: str = None,
     ) -> bytes:
-        """Encrypt PDF with password (Phase 4.5 enhancement).
+        """Encrypt PDF with password protection (Phase 4.5 enhancement).
 
         Args:
             pdf_bytes: Input PDF bytes
-            password: Protection password
+            password: User password for opening PDF
+            owner_password: Owner password for restrictions (if None, same as password)
 
         Returns:
             Encrypted PDF bytes
@@ -512,6 +570,40 @@ class PDFService:
             logger.warning("PyPDF2 not installed. Skipping encryption.")
             return pdf_bytes
 
-        # Implementation for Phase 4.5
-        logger.info("Encryption feature available in Phase 4.5")
-        return pdf_bytes
+        try:
+            if not password:
+                logger.warning("No password provided. Skipping encryption.")
+                return pdf_bytes
+
+            # Use owner password if not provided
+            if owner_password is None:
+                owner_password = password
+
+            # Read PDF and add encryption
+            pdf_reader = PdfReader(io.BytesIO(pdf_bytes))
+            pdf_writer = PdfWriter()
+
+            # Copy all pages
+            for page_num in range(len(pdf_reader.pages)):
+                page = pdf_reader.pages[page_num]
+                pdf_writer.add_page(page)
+
+            # Encrypt with password
+            pdf_writer.encrypt(
+                user_password=password,
+                owner_password=owner_password,
+                permissions_flag=-1  # All restrictions
+            )
+
+            # Write encrypted PDF
+            output_buffer = io.BytesIO()
+            pdf_writer.write(output_buffer)
+            output_buffer.seek(0)
+            result = output_buffer.getvalue()
+
+            logger.info("PDF encrypted with password protection")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error encrypting PDF: {e}")
+            return pdf_bytes

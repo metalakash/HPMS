@@ -79,7 +79,11 @@ class Settings(BaseSettings):
     PDF_COLOR_ACCENT: str = os.getenv("PDF_COLOR_ACCENT", "#F57C00")  # SBL Orange
     PDF_WATERMARK_ENABLED: bool = os.getenv("PDF_WATERMARK_ENABLED", "false").lower() == "true"
     PDF_WATERMARK_TEXT: str = os.getenv("PDF_WATERMARK_TEXT", "CONFIDENTIAL")
+    PDF_WATERMARK_OPACITY: float = float(os.getenv("PDF_WATERMARK_OPACITY", "0.3"))
+    PDF_WATERMARK_ANGLE: int = int(os.getenv("PDF_WATERMARK_ANGLE", "45"))
     PDF_ENCRYPTION_ENABLED: bool = os.getenv("PDF_ENCRYPTION_ENABLED", "false").lower() == "true"
+    PDF_ENCRYPTION_ALGORITHM: str = os.getenv("PDF_ENCRYPTION_ALGORITHM", "AES128")
+    PDF_ENCRYPTION_DEFAULT_PASSWORD: Optional[str] = os.getenv("PDF_ENCRYPTION_DEFAULT_PASSWORD", None)
     PDF_MAX_FILE_SIZE_MB: int = int(os.getenv("PDF_MAX_FILE_SIZE_MB", "50"))
 
     # WebSocket (Phase 4, Task 4)
