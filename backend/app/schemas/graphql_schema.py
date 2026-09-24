@@ -16,18 +16,19 @@ logger = logging.getLogger(__name__)
 
 @strawberry.type
 class ProjectType:
-    """Project GraphQL type for mobile."""
+    """Project GraphQL type for mobile (maps to backend Project model columns)."""
 
     id: UUID
-    name: str
-    capacity_mw: float
+    project_code: str  # Unique project identifier
+    name_en: str  # English name (use name_np for Nepali via i18n)
+    installed_capacity_mw: float  # Technical capacity in MW
     province: str
     district: str
-    status: str
-    facility_type: str
-    rate: float
-    start_date: Optional[datetime] = None
-    end_date: Optional[datetime] = None
+    pipeline_status: str  # Proposal, Under Review, Approved, Dropped, etc.
+    project_stage: str  # Feasibility, Construction, Operation
+    rate: Optional[float] = None  # Interest rate (from related LoanAccount, not on Project)
+    original_cod_ad: Optional[datetime] = None  # Original Commercial Operation Date
+    forecast_cod_ad: Optional[datetime] = None  # Forecast COD
     description: Optional[str] = None
 
 
@@ -196,16 +197,17 @@ class Query:
 
             return ProjectType(
                 id=project_row.id,
-                name=project_row.name,
-                capacity_mw=float(project_row.capacity_mw or 0),
+                project_code=project_row.project_code,
+                name_en=project_row.name_en,
+                installed_capacity_mw=float(project_row.installed_capacity_mw or 0),
                 province=project_row.province or "",
                 district=project_row.district or "",
-                status=project_row.status or "unknown",
-                facility_type=project_row.facility_type or "",
-                rate=float(project_row.rate or 0),
-                start_date=project_row.start_date,
-                end_date=project_row.end_date,
-                description=project_row.description,
+                pipeline_status=project_row.pipeline_status or "unknown",
+                project_stage=project_row.project_stage or "feasibility",
+                rate=None,  # Rate is on LoanAccount, not Project
+                original_cod_ad=project_row.original_cod_ad,
+                forecast_cod_ad=project_row.forecast_cod_ad,
+                description=None,  # Project model doesn't have description field
             )
 
         except Exception as e:
@@ -252,8 +254,9 @@ class Query:
             # Build query
             query = select(Project)
 
+            # Filter by pipeline_status (not "status" - that's a GraphQL param name)
             if status:
-                query = query.where(Project.status == status)
+                query = query.where(Project.pipeline_status == status)
 
             # Get offset from cursor
             offset = 0
@@ -279,13 +282,17 @@ class Query:
                 edges.append(ProjectEdgeType(
                     node=ProjectType(
                         id=proj.id,
-                        name=proj.name,
-                        capacity_mw=float(proj.capacity_mw or 0),
+                        project_code=proj.project_code,
+                        name_en=proj.name_en,
+                        installed_capacity_mw=float(proj.installed_capacity_mw or 0),
                         province=proj.province or "",
                         district=proj.district or "",
-                        status=proj.status or "unknown",
-                        facility_type=proj.facility_type or "",
-                        rate=float(proj.rate or 0),
+                        pipeline_status=proj.pipeline_status or "unknown",
+                        project_stage=proj.project_stage or "feasibility",
+                        rate=None,  # Rate is on LoanAccount
+                        original_cod_ad=proj.original_cod_ad,
+                        forecast_cod_ad=proj.forecast_cod_ad,
+                        description=None,
                     ),
                     cursor=cursor,
                 ))
@@ -331,12 +338,12 @@ class Query:
             if not db:
                 return None
 
-            # Query all projects
+            # Query all active projects by pipeline status
             query = select(
                 func.count(Project.id).label("total_projects"),
-                func.sum(Project.capacity_mw).label("total_capacity"),
-                func.avg(Project.rate).label("avg_rate"),
-            ).where(Project.status == "active")
+                func.sum(Project.installed_capacity_mw).label("total_capacity"),
+                func.avg(Project.installed_capacity_mw).label("avg_rate"),  # No rate on Project; avg capacity as placeholder
+            ).where(Project.pipeline_status == "under_operation")
 
             result = await db.execute(query)
             row = result.first()

@@ -8,7 +8,7 @@ from typing import Optional
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status, Request
-from fastapi.security import HTTPBearer, HTTPAuthCredentials
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from backend.app.config import settings
 from backend.app.security.ldap_provider import ADUser, UserRole
@@ -38,6 +38,7 @@ class TokenManager:
 
         payload = {
             **ad_user.to_dict(),
+            "sub": ad_user.username,  # JWT standard subject (principal identifier)
             "exp": datetime.utcnow() + timedelta(minutes=TokenManager.TOKEN_EXPIRY_MINUTES),
             "iat": datetime.utcnow(),
         }
@@ -78,6 +79,7 @@ class CurrentUser:
     """Dependency to inject current authenticated user into endpoints."""
 
     def __init__(self, token_payload: dict):
+        self.id = token_payload.get("sub")  # JWT subject claim (username)
         self.username = token_payload.get("username")
         self.email = token_payload.get("email")
         self.full_name = token_payload.get("full_name")
@@ -93,7 +95,7 @@ class CurrentUser:
         return any(self.has_role(r) for r in roles)
 
 
-async def get_current_user(credentials: HTTPAuthCredentials = Depends(security)) -> CurrentUser:
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> CurrentUser:
     """Dependency to extract and validate current user from JWT token.
 
     Args:

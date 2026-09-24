@@ -55,7 +55,12 @@ app.add_middleware(LanguageDetectionMiddleware)
 # CORS - Internal intranet only (to be configured per SBL infra)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost", "http://localhost:3000", "http://localhost:8080"],  # DEV ONLY
+    allow_origins=[
+        "http://localhost",
+        "http://localhost:3000",  # React old dev server
+        "http://localhost:5173",  # Vite dev server (Phase 6 frontend)
+        "http://localhost:8080",  # Alternative dev port
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

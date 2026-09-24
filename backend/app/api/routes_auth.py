@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.database import get_db
 from backend.app.config import settings
 from backend.app.security.ldap_provider import LDAPAuthProvider, LocalDevAuthProvider
-from backend.app.security.auth_middleware import TokenManager
+from backend.app.security.auth_middleware import TokenManager, CurrentUser, get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -117,31 +117,27 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 @router.get("/me")
 async def get_current_user_info(
-    current_user: dict = Depends(TokenManager.verify_token),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Get information about the current authenticated user.
 
     **Response:**
+    - id: User identifier (username from sub claim)
     - username: AD username
     - email: Email address
     - full_name: Display name
     - roles: List of assigned roles
 
     **Authorization:**
-    - Requires valid Bearer token
+    - Requires valid Bearer token in Authorization header
     """
 
-    if current_user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-        )
-
     return {
-        "username": current_user.get("username"),
-        "email": current_user.get("email"),
-        "full_name": current_user.get("full_name"),
-        "roles": current_user.get("roles"),
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "full_name": current_user.full_name,
+        "roles": [r.value for r in current_user.roles],
     }
 
 

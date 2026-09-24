@@ -8,7 +8,7 @@ import asyncio
 from datetime import datetime
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status, Query, Depends
-from fastapi.security import HTTPBearer, HTTPAuthCredentials
+from fastapi.security import HTTPBearer
 
 from backend.app.security.auth_middleware import TokenManager
 from backend.app.websocket.ws_handler import (
