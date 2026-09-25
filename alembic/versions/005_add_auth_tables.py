@@ -68,7 +68,7 @@ def upgrade() -> None:
         'project_owner',
         sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column('user_id', postgresql.UUID(as_uuid=True), sa.ForeignKey('user.id'), nullable=False),
-        sa.Column('project_id', postgresql.UUID(as_uuid=True), sa.ForeignKey('project.id'), nullable=False),
+        sa.Column('project_id', postgresql.UUID(as_uuid=True), sa.ForeignKey('projects.id'), nullable=False),
         sa.Column('ownership_type', sa.String(50)),
         sa.Column('valid_from', sa.Date),
         sa.Column('valid_to', sa.Date),

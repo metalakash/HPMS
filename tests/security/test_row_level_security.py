@@ -1,76 +1,89 @@
 """Tests for row-level security enforcement.
 
 Verifies that users see only authorized projects and cannot bypass RLS.
+Runs against a migrated Postgres (see tests/conftest.py).
 """
 
 import pytest
 from uuid import uuid4
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.project import Project
 from backend.app.models.auth import User, ProjectOwner, UserRole
+from backend.app.models.governance import ApprovalRequest, WorkflowDefinition
 from backend.app.security.rls_service import RLSService
 from backend.app.security.auth_middleware import CurrentUser
 
 
-@pytest.fixture
-async def admin_user():
-    """Create admin user."""
+def make_user(username: str, role: str) -> CurrentUser:
     return CurrentUser({
-        "username": "admin",
-        "email": "admin@sbl.local",
-        "full_name": "Admin User",
-        "roles": ["admin"],
+        "sub": str(uuid4()),
+        "username": username,
+        "email": f"{username}@sbl.local",
+        "full_name": username.title(),
+        "roles": [role],
         "is_authenticated": True,
     })
 
 
-@pytest.fixture
-async def maker_user():
-    """Create maker user."""
-    return CurrentUser({
-        "username": "maker1",
-        "email": "maker1@sbl.local",
-        "full_name": "Maker User 1",
-        "roles": ["maker"],
-        "is_authenticated": True,
-    })
+async def persist(db: AsyncSession, user: CurrentUser) -> User:
+    """Insert the DB row a logged-in user would have (login does this via sync_user)."""
+    row = User(
+        id=user.uuid,
+        username=user.username,
+        email=user.email,
+        full_name=user.full_name,
+        default_role=UserRole(user.roles[0].value),
+    )
+    db.add(row)
+    await db.flush()
+    return row
+
+
+def make_project(code: str, **overrides) -> Project:
+    fields = dict(
+        project_code=code,
+        name_en=f"Project {code}",
+        name_np=f"प्रकल्प {code}",
+        province="Gandaki",
+        installed_capacity_mw=50,
+        project_stage="operation",
+        pipeline_status="under_operation",
+        created_by="system",
+    )
+    fields.update(overrides)
+    return Project(**fields)
 
 
 @pytest.fixture
-async def other_maker_user():
-    """Create another maker user."""
-    return CurrentUser({
-        "username": "maker2",
-        "email": "maker2@sbl.local",
-        "full_name": "Maker User 2",
-        "roles": ["maker"],
-        "is_authenticated": True,
-    })
+def admin_user():
+    return make_user("admin", "admin")
 
 
 @pytest.fixture
-async def auditor_user():
-    """Create auditor user."""
-    return CurrentUser({
-        "username": "auditor",
-        "email": "auditor@sbl.local",
-        "full_name": "Auditor User",
-        "roles": ["auditor"],
-        "is_authenticated": True,
-    })
+def maker_user():
+    return make_user("maker1", "maker")
 
 
 @pytest.fixture
-async def guest_user():
-    """Create guest user."""
-    return CurrentUser({
-        "username": "guest",
-        "email": "guest@sbl.local",
-        "full_name": "Guest User",
-        "roles": ["guest"],
-        "is_authenticated": True,
-    })
+def other_maker_user():
+    return make_user("maker2", "maker")
+
+
+@pytest.fixture
+def auditor_user():
+    return make_user("auditor", "auditor")
+
+
+@pytest.fixture
+def guest_user():
+    return make_user("guest", "guest")
+
+
+@pytest.fixture
+def approver_user():
+    return make_user("approver1", "approver")
 
 
 @pytest.mark.asyncio
@@ -191,9 +204,9 @@ async def test_maker_sees_owned_projects(
     await db_session.flush()
 
     # Set up maker1 to own only owned_project
-    maker_user.user_id = uuid4()
+    await persist(db_session, maker_user)
     ownership = ProjectOwner(
-        user_id=maker_user.user_id,
+        user_id=maker_user.uuid,
         project_id=owned_project.id,
         ownership_type="direct",
     )
@@ -242,7 +255,7 @@ async def test_can_view_project_denied(
     """Test can_view_project returns false for unauthorized access."""
 
     # Set up maker with no projects
-    maker_user.user_id = uuid4()
+    await persist(db_session, maker_user)
 
     project = Project(
         project_code="DENIED-TEST",
@@ -310,7 +323,7 @@ async def test_can_update_project_maker_owned(
 ):
     """Test maker can update owned projects."""
 
-    maker_user.user_id = uuid4()
+    await persist(db_session, maker_user)
 
     project = Project(
         project_code="UPDATE-MAKER",
@@ -328,7 +341,7 @@ async def test_can_update_project_maker_owned(
 
     # Assign ownership
     ownership = ProjectOwner(
-        user_id=maker_user.user_id,
+        user_id=maker_user.uuid,
         project_id=project.id,
         ownership_type="direct",
     )
@@ -348,7 +361,7 @@ async def test_can_update_project_maker_unowned(
 ):
     """Test maker cannot update unowned projects."""
 
-    maker_user.user_id = uuid4()
+    await persist(db_session, maker_user)
 
     project = Project(
         project_code="UNOWNED",
@@ -402,59 +415,87 @@ async def test_can_delete_project_only_admin(
 
 
 @pytest.mark.asyncio
-async def test_assign_project_ownership(
-    db_session: AsyncSession,
-):
+async def test_assign_project_ownership(db_session: AsyncSession, maker_user):
     """Test assigning project ownership."""
 
-    user_id = uuid4()
-    project_id = uuid4()
+    await persist(db_session, maker_user)
+    project = make_project("ASSIGN-1")
+    db_session.add(project)
+    await db_session.flush()
 
-    ownership = await RLSService.assign_project_ownership(
-        db_session,
-        user_id,
-        project_id,
-        "direct",
-    )
+    ownership = await RLSService.assign_project_ownership(db_session, maker_user.uuid, project.id, "direct")
 
-    assert ownership.user_id == user_id
-    assert ownership.project_id == project_id
+    assert ownership.user_id == maker_user.uuid
+    assert ownership.project_id == project.id
     assert ownership.ownership_type == "direct"
+    assert project.id in await RLSService.get_authorized_project_ids(db_session, maker_user)
 
 
 @pytest.mark.asyncio
-async def test_remove_project_ownership(
-    db_session: AsyncSession,
-):
+async def test_remove_project_ownership(db_session: AsyncSession, maker_user):
     """Test removing project ownership."""
 
-    user_id = uuid4()
-    project_id = uuid4()
+    await persist(db_session, maker_user)
+    project = make_project("REMOVE-1")
+    db_session.add(project)
+    await db_session.flush()
+    await RLSService.assign_project_ownership(db_session, maker_user.uuid, project.id, "direct")
 
-    # Assign first
-    await RLSService.assign_project_ownership(
-        db_session,
-        user_id,
-        project_id,
-        "direct",
-    )
-
-    # Remove
-    removed = await RLSService.remove_project_ownership(db_session, user_id, project_id)
+    removed = await RLSService.remove_project_ownership(db_session, maker_user.uuid, project.id)
 
     assert removed is True
+    assert project.id not in await RLSService.get_authorized_project_ids(db_session, maker_user)
 
 
 @pytest.mark.asyncio
-async def test_remove_nonexistent_ownership(
-    db_session: AsyncSession,
-):
+async def test_remove_nonexistent_ownership(db_session: AsyncSession):
     """Test removing ownership that doesn't exist."""
 
-    removed = await RLSService.remove_project_ownership(
-        db_session,
-        uuid4(),
-        uuid4(),
-    )
+    removed = await RLSService.remove_project_ownership(db_session, uuid4(), uuid4())
 
     assert removed is False
+
+
+@pytest.mark.asyncio
+async def test_approver_sees_projects_awaiting_their_approval(db_session: AsyncSession, approver_user):
+    """Approvers see projects with an open approval request assigned to them, and no others."""
+
+    await persist(db_session, approver_user)
+    pending = make_project("APPR-PENDING")
+    done = make_project("APPR-DONE")
+    unrelated = make_project("APPR-OTHER")
+    workflow = WorkflowDefinition(name="project_approval", entity_type="project")
+    db_session.add_all([pending, done, unrelated, workflow])
+    await db_session.flush()
+
+    db_session.add_all([
+        ApprovalRequest(workflow_definition_id=workflow.id, entity_type="project", entity_id=str(pending.id),
+                        current_state="submitted", maker_id="maker1", approver_id=approver_user.username),
+        ApprovalRequest(workflow_definition_id=workflow.id, entity_type="project", entity_id=str(done.id),
+                        current_state="approved", maker_id="maker1", approver_id=approver_user.username),
+    ])
+    await db_session.flush()
+
+    ids = await RLSService.get_authorized_project_ids(db_session, approver_user)
+
+    assert pending.id in ids
+    assert done.id not in ids
+    assert unrelated.id not in ids
+
+
+@pytest.mark.asyncio
+async def test_scope_query_filters_to_visible_projects(db_session: AsyncSession, maker_user, auditor_user):
+    await persist(db_session, maker_user)
+    mine = make_project("SCOPE-MINE")
+    theirs = make_project("SCOPE-THEIRS")
+    db_session.add_all([mine, theirs])
+    await db_session.flush()
+    await RLSService.assign_project_ownership(db_session, maker_user.uuid, mine.id)
+
+    base = select(Project.id).where(Project.project_code.like("SCOPE-%"))
+
+    maker_ids = set((await db_session.execute(await RLSService.scope_query(db_session, maker_user, base))).scalars())
+    auditor_ids = set((await db_session.execute(await RLSService.scope_query(db_session, auditor_user, base))).scalars())
+
+    assert maker_ids == {mine.id}
+    assert auditor_ids == {mine.id, theirs.id}

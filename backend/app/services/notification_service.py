@@ -440,7 +440,13 @@ class NotificationService:
         count = 0
         for websocket in websockets:
             try:
-                await websocket.send_json(event.to_dict())
+                # Same envelope as WebSocketConnectionHandler.send_event, which clients filter on
+                await websocket.send_json({
+                    "type": "event",
+                    "data": event.to_dict(),
+                    "message_id": event.id,
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                })
                 count += 1
             except Exception as e:
                 logger.error(f"Error sending notification: {e}")

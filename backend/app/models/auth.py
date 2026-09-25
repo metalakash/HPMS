@@ -9,6 +9,10 @@ import uuid
 from .base import Base, TimestampedMixin
 
 
+def _enum_values(enum_cls):
+    return [member.value for member in enum_cls]
+
+
 class UserRole(str, Enum):
     """User roles for authorization."""
     ADMIN = "admin"
@@ -23,6 +27,8 @@ class User(Base, TimestampedMixin):
 
     One user can belong to multiple projects (via project_owners).
     """
+
+    __tablename__ = 'user'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
@@ -39,7 +45,10 @@ class User(Base, TimestampedMixin):
     last_ad_sync_at = Column(Date)
 
     # Default role (can have multiple via role_assignments)
-    default_role = Column(SQLEnum(UserRole), default=UserRole.GUEST)
+    default_role = Column(
+        SQLEnum(UserRole, native_enum=False, length=50, values_callable=_enum_values),
+        default=UserRole.GUEST,
+    )
 
     # Language preference (Phase 4 Task 5)
     language_preference = Column(String(10), default="en")  # en, ne
@@ -52,11 +61,6 @@ class User(Base, TimestampedMixin):
         cascade="all, delete-orphan",
         foreign_keys="ProjectOwner.user_id",
     )
-    approval_requests = relationship(
-        "ApprovalRequest",
-        back_populates="approver",
-        foreign_keys="ApprovalRequest.approver_id",
-    )
 
     __table_args__ = (
         Index("ix_user_username", "username"),
@@ -67,10 +71,12 @@ class User(Base, TimestampedMixin):
 
 class UserRoleAssignment(Base, TimestampedMixin):
     """User role assignments (many-to-many)."""
+    
+    __tablename__ = 'user_role_assignment'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=False, index=True)
-    role = Column(SQLEnum(UserRole), nullable=False)
+    role = Column(SQLEnum(UserRole, native_enum=False, length=50, values_callable=_enum_values), nullable=False)
 
     # Role validity window (optional)
     valid_from = Column(Date)
@@ -90,9 +96,11 @@ class ProjectOwner(Base, TimestampedMixin):
     Users can own projects directly or via consortium membership.
     """
 
+    __tablename__ = 'project_owner'
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=False, index=True)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id"), nullable=False, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), nullable=False, index=True)
 
     # Ownership type
     ownership_type = Column(String(50))  # direct, consortium_member, lead_bank

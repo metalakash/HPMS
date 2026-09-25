@@ -31,6 +31,7 @@ export const tokenResponse: TokenResponse = {
   token_type: 'bearer',
   expires_in_seconds: 28_800,
   user: {
+    id: '0b6f3c4e-2d1a-4e8b-9c7f-5a3d2e1f0a9b',
     username: 'ram.sharma',
     email: 'ram@sbl.local',
     full_name: 'Ram Sharma',

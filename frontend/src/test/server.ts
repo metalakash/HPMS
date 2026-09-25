@@ -1,5 +1,6 @@
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
+import { useAuthStore } from '@/store/useAuthStore';
 import { envelope, makeLoan, makeProject, projectDetail, tokenResponse } from './fixtures';
 
 const STAGE_TOTALS: Record<string, number> = { feasibility: 4, construction: 7, operation: 12 };
@@ -14,6 +15,13 @@ export const handlers = [
     return HttpResponse.json(tokenResponse);
   }),
   http.post('*/api/v1/auth/logout', () => HttpResponse.json({ message: 'ok' })),
+  // Like the real endpoint, answers for whoever the bearer token belongs to.
+  http.get('*/api/v1/auth/me', () => {
+    const user = useAuthStore.getState().user;
+    return user
+      ? HttpResponse.json(user)
+      : HttpResponse.json({ detail: 'Not authenticated' }, { status: 401 });
+  }),
 
   http.get('*/api/v1/projects', ({ request }) => {
     const url = new URL(request.url);

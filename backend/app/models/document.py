@@ -40,6 +40,8 @@ class DocumentStatus(str, enum.Enum):
 
 class Document(Base, TimestampedMixin):
     """Master document record with classification and lifecycle tracking."""
+    
+    __tablename__ = 'documents'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), nullable=False, index=True)
@@ -88,6 +90,8 @@ class DocumentVersion(Base, TimestampedMixin):
     for compliance (7-year retention per AUDIT_RETENTION_YEARS).
     """
 
+    __tablename__ = 'document_versions'
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     document_id = Column(UUID(as_uuid=True), ForeignKey('documents.id'), nullable=False, index=True)
 
@@ -133,6 +137,8 @@ class DocumentApprovalRequest(Base, TimestampedMixin):
     Some documents require review/approval before entering system.
     This tracks the approval state independent of the document status.
     """
+
+    __tablename__ = 'document_approval_requests'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     document_id = Column(UUID(as_uuid=True), ForeignKey('documents.id'), nullable=False, index=True)

@@ -82,7 +82,7 @@ async def setup_mfa(
     Returns otpauth:// URI and QR code PNG for scanning with authenticator app.
     """
     try:
-        totp_uri, qr_code_bytes = await MFAService.setup_totp(db, current_user.id)
+        totp_uri, qr_code_bytes = await MFAService.setup_totp(db, current_user.uuid)
 
         # Convert PNG bytes to base64 for JSON response
         import base64
@@ -119,7 +119,7 @@ async def verify_totp(
 
     try:
         # Get user MFA
-        query = select(UserMFA).where(UserMFA.user_id == current_user.id)
+        query = select(UserMFA).where(UserMFA.user_id == current_user.uuid)
         result = await db.execute(query)
         user_mfa = result.scalar_one_or_none()
 
@@ -191,7 +191,7 @@ async def generate_backup_codes(
 
     try:
         # Get user MFA
-        query = select(UserMFA).where(UserMFA.user_id == current_user.id)
+        query = select(UserMFA).where(UserMFA.user_id == current_user.uuid)
         result = await db.execute(query)
         user_mfa = result.scalar_one_or_none()
 
@@ -252,7 +252,7 @@ async def mark_device_trusted(
 
     try:
         # Get user MFA
-        query = select(UserMFA).where(UserMFA.user_id == current_user.id)
+        query = select(UserMFA).where(UserMFA.user_id == current_user.uuid)
         result = await db.execute(query)
         user_mfa = result.scalar_one_or_none()
 
@@ -308,7 +308,7 @@ async def get_mfa_status(
 
     try:
         # Get user MFA
-        query = select(UserMFA).where(UserMFA.user_id == current_user.id)
+        query = select(UserMFA).where(UserMFA.user_id == current_user.uuid)
         result = await db.execute(query)
         user_mfa = result.scalar_one_or_none()
 
@@ -365,7 +365,7 @@ async def disable_mfa(
 
     try:
         # Get user MFA
-        query = select(UserMFA).where(UserMFA.user_id == current_user.id)
+        query = select(UserMFA).where(UserMFA.user_id == current_user.uuid)
         result = await db.execute(query)
         user_mfa = result.scalar_one_or_none()
 

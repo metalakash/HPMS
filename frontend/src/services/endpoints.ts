@@ -1,6 +1,7 @@
 import { api } from './api';
 import type {
   ApiResponse,
+  AuthUser,
   LoanAccountListItem,
   LoanFilters,
   LoginRequest,
@@ -17,12 +18,12 @@ function clean<T extends object>(params: T): Partial<T> {
   ) as Partial<T>;
 }
 
-// GET /auth/me is not wrapped: it reads the token from a query param rather than
-// the Authorization header. The user profile comes from the login response.
 export const authApi = {
   login: (body: LoginRequest) =>
     api.post<TokenResponse>('/api/v1/auth/login', body).then((r) => r.data),
   logout: () => api.post('/api/v1/auth/logout'),
+  /** Profile for the bearer token; a 401 here means the stored session is stale. */
+  me: () => api.get<AuthUser>('/api/v1/auth/me').then((r) => r.data),
 };
 
 export const projectsApi = {

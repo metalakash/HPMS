@@ -431,7 +431,6 @@ def upgrade() -> None:
     )
     op.create_index('ix_approval_step_request', 'approval_steps', ['approval_request_id'])
 
-    print("✓ Initial schema created")
 
 
 def downgrade() -> None:

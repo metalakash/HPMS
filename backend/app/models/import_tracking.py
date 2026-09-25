@@ -28,6 +28,8 @@ class ImportBatch(Base, TimestampedMixin):
     Tracks a single CSV/Excel upload with all its rows and errors.
     """
 
+    __tablename__ = 'import_batches'
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
     # Upload metadata
@@ -71,6 +73,8 @@ class ImportRowError(Base, TimestampedMixin):
     One record per validation error or processing failure.
     Enables detailed error reporting and retry logic.
     """
+
+    __tablename__ = 'import_row_errors'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     batch_id = Column(UUID(as_uuid=True), ForeignKey('import_batches.id'), nullable=False, index=True)

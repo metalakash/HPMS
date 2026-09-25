@@ -56,21 +56,42 @@ class RLSService:
         authorized_ids = []
 
         # Get projects where user is owner (direct or via consortium)
+        if user.uuid is None:
+            return []
+
         owner_query = select(ProjectOwner.project_id).where(
-            ProjectOwner.user_id == user.user_id
+            ProjectOwner.user_id == user.uuid
         )
         owner_result = await db.execute(owner_query)
         authorized_ids.extend([row[0] for row in owner_result.all()])
 
         # Approvers also see projects with pending approvals for them
         if user.has_role(UserRole.APPROVER):
-            from backend.app.models.governance import ApprovalRequest
-            approval_query = select(Project.id).where(
-                and_(
-                    ApprovalRequest.approver_id == user.user_id,
-                    ApprovalRequest.status == "pending",
+            from backend.app.models.governance import ApprovalRequest, ApprovalState
+            from sqlalchemy import cast, String
+
+            # ApprovalRequest links to entities by (entity_type, entity_id) and records
+            # the approver as a free-text employee id, which is the AD username.
+            pending_states = [
+                ApprovalState.SUBMITTED.value,
+                ApprovalState.UNDER_RECOMMENDATION.value,
+                ApprovalState.RECOMMENDED.value,
+            ]
+            approval_query = (
+                select(Project.id)
+                .join(
+                    ApprovalRequest,
+                    and_(
+                        ApprovalRequest.entity_type == "project",
+                        ApprovalRequest.entity_id == cast(Project.id, String),
+                    ),
                 )
-            ).distinct()
+                .where(
+                    ApprovalRequest.approver_id.in_([user.username, str(user.uuid)]),
+                    ApprovalRequest.current_state.in_(pending_states),
+                )
+                .distinct()
+            )
             approval_result = await db.execute(approval_query)
             authorized_ids.extend([row[0] for row in approval_result.all()])
 
@@ -155,10 +176,10 @@ class RLSService:
             return True
 
         # Maker can update projects they own
-        if user.has_role(UserRole.MAKER):
+        if user.has_role(UserRole.MAKER) and user.uuid is not None:
             owner_query = select(ProjectOwner).where(
                 and_(
-                    ProjectOwner.user_id == user.user_id,
+                    ProjectOwner.user_id == user.uuid,
                     ProjectOwner.project_id == project_id,
                 )
             )
@@ -264,6 +285,26 @@ class RLSService:
         )
 
         return True
+
+    @staticmethod
+    async def scope_query(db: AsyncSession, user: CurrentUser, query, project_id_column=Project.id):
+        """Restrict a query to rows whose project the user may see.
+
+        Args:
+            db: Database session
+            user: Current user
+            query: SQLAlchemy select to filter
+            project_id_column: Column holding the project id (e.g. LoanAccount.project_id)
+
+        Returns:
+            Filtered query
+        """
+
+        if user.has_any_role([UserRole.ADMIN, UserRole.AUDITOR]):
+            return query
+
+        authorized_ids = await RLSService.get_authorized_project_ids(db, user)
+        return query.where(project_id_column.in_(authorized_ids))
 
     @staticmethod
     def apply_rls_filter(query, user: CurrentUser, authorized_ids: List[UUID]):

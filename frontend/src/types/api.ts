@@ -38,6 +38,8 @@ export interface PageParams {
 // --- Auth (backend/app/api/routes_auth.py) ---
 
 export interface AuthUser {
+  /** DB user UUID; also the JWT `sub` and the WebSocket routing key. */
+  id: string;
   username: string;
   email: string | null;
   full_name: string | null;
@@ -65,7 +67,7 @@ export interface ProjectListItem {
   project_code: string;
   name_en: string;
   name_np: string;
-  province: string;
+  province: string | null;
   installed_capacity_mw: DecimalString;
   project_stage: string;
   pipeline_status: string;
@@ -89,7 +91,7 @@ export interface ProjectDetail {
   project_code: string;
   name_en: string;
   name_np: string;
-  location: { province: string; district: string; local_level: string | null };
+  location: { province: string | null; district: string | null; local_level: string | null };
   installed_capacity_mw: DecimalString;
   project_stage: string;
   pipeline_status: string;
@@ -115,11 +117,11 @@ export interface LoanAccountListItem {
   id: string;
   project_code: string;
   finacle_account_id: string;
-  facility_type: string;
+  facility_type: string | null;
   sanctioned_amount: DecimalString;
   disbursed_amount: DecimalString;
   outstanding_principal: DecimalString;
-  current_rate_pct: DecimalString;
+  current_rate_pct: DecimalString | null;
   maturity_ad: IsoDate | null;
   sync_status: string;
   last_synced_at: string | null;

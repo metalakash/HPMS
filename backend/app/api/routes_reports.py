@@ -5,9 +5,11 @@ from typing import Optional
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.database import get_db
+from backend.app.models.financial import LoanAccount
 from backend.app.config import settings
 from backend.app.schemas.common import ApiResponse, AuditMetadata
 from backend.app.schemas.report_schema import (
@@ -18,18 +20,35 @@ from backend.app.schemas.report_schema import (
 from backend.app.services.report_service import ReportService
 from backend.app.services.export_service import ExportService
 from backend.app.services.pdf_service import PDFService, ReportType
-from backend.app.security.auth_middleware import CurrentUser, get_current_user
+from backend.app.security.auth_middleware import CurrentUser, get_current_user, require_role
+from backend.app.security.ldap_provider import UserRole
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/reports", tags=["reports"])
+
+# Reports cover the whole portfolio, so only roles that may see every project
+# (see RLSService) can generate them.
+require_portfolio_access = require_role(UserRole.ADMIN, UserRole.AUDITOR)
+
+ACTIVE_PIPELINE_STATUSES = {"under_construction", "under_operation"}
+
+
+def _capex_bucket(category: Optional[str]) -> str:
+    """Map a free-text budget category onto the capex PDF's civil / equipment / contingency rows."""
+    name = (category or "").lower()
+    if "civil" in name:
+        return "civil"
+    if "equip" in name or "electro" in name or "mechanical" in name:
+        return "equip"
+    return "cont"
 
 
 @router.post("/export", response_model=ApiResponse[ReportExportResponse])
 async def export_report(
     request: ReportExportRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Query("SYSTEM", description="User ID (from X-User-ID header)"),
+    current_user: CurrentUser = Depends(require_portfolio_access),
 ) -> ApiResponse[ReportExportResponse]:
     """Export report data for PowerBI integration.
 
@@ -46,6 +65,8 @@ async def export_report(
 
     **Audit:** Export logged in AuditLogRead table with user_id, timestamp, record_count
     """
+
+    user_id = current_user.username
 
     try:
         # Generate report based on type
@@ -144,6 +165,8 @@ async def export_report(
             )
         )
 
+    except HTTPException:
+        raise
     except ValueError as e:
         logger.error(f"Report generation failed: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -154,7 +177,7 @@ async def export_report(
 
 @router.post("/pdf/portfolio")
 async def export_portfolio_pdf(
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_portfolio_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Export portfolio report as PDF with SBL branding.
@@ -171,16 +194,25 @@ async def export_portfolio_pdf(
     try:
         # Get portfolio data
         rows, count = await ReportService.export_portfolio_report(
-            db, None, current_user.id
+            db, None, current_user.username
         )
 
         # Transform to PDF-friendly format
+        avg_rate = (await db.execute(select(func.avg(LoanAccount.interest_rate_pct)))).scalar()
         portfolio_data = {
             "total_projects": count,
-            "total_capacity_mw": sum(r.get("capacity_mw", 0) for r in rows) if rows else 0,
-            "active_projects": sum(1 for r in rows if r.get("status") == "active") if rows else 0,
-            "average_rate": sum(r.get("rate", 0) for r in rows) / count if rows and count > 0 else 0,
-            "projects": rows[:10] if rows else [],  # First 10 projects
+            "total_capacity_mw": sum(r["capacity_mw"] for r in rows),
+            "active_projects": sum(1 for r in rows if r["pipeline_status"] in ACTIVE_PIPELINE_STATUSES),
+            "average_rate": float(avg_rate) if avg_rate is not None else None,
+            "projects": [
+                {
+                    "name": r["project_name_en"],
+                    "capacity_mw": r["capacity_mw"],
+                    "status": r["pipeline_status"],
+                    "rate": None,  # rates live on loan accounts, not projects
+                }
+                for r in rows[:10]
+            ],
         }
 
         # Generate PDF
@@ -199,6 +231,8 @@ async def export_portfolio_pdf(
             headers={"Content-Disposition": "attachment; filename=portfolio-report.pdf"}
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Portfolio PDF generation failed: {e}")
         raise HTTPException(
@@ -209,7 +243,7 @@ async def export_portfolio_pdf(
 
 @router.post("/pdf/covenant")
 async def export_covenant_pdf(
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_portfolio_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Export covenant compliance report as PDF.
@@ -223,23 +257,12 @@ async def export_covenant_pdf(
     """
 
     try:
-        # Get covenant data
-        rows, count = await ReportService.export_covenant_report(
-            db, None, current_user.id
+        # DSCR/LTV/ICR are not stored anywhere yet (the compliance engine is in-memory only).
+        # Rendering zeros would print FAIL for every covenant, so refuse instead.
+        raise HTTPException(
+            status_code=501,
+            detail="Covenant metrics (DSCR, LTV, ICR) are not persisted yet; covenant PDF is unavailable",
         )
-
-        # Transform to PDF-friendly format
-        covenant_data = {
-            "dscr": rows[0].get("dscr", 0) if rows else 0,
-            "dscr_threshold": 1.25,
-            "dscr_pass": rows[0].get("dscr", 0) >= 1.25 if rows else False,
-            "ltv": rows[0].get("ltv", 0) if rows else 0,
-            "ltv_threshold": 70,
-            "ltv_pass": rows[0].get("ltv", 0) <= 70 if rows else False,
-            "icr": rows[0].get("icr", 0) if rows else 0,
-            "icr_threshold": 2.0,
-            "icr_pass": rows[0].get("icr", 0) >= 2.0 if rows else False,
-        }
 
         # Generate PDF
         pdf_bytes = PDFService.generate_covenant_report(
@@ -257,6 +280,8 @@ async def export_covenant_pdf(
             headers={"Content-Disposition": "attachment; filename=covenant-report.pdf"}
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Covenant PDF generation failed: {e}")
         raise HTTPException(
@@ -267,7 +292,7 @@ async def export_covenant_pdf(
 
 @router.post("/pdf/capex")
 async def export_capex_pdf(
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_portfolio_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Export capital expenditure report as PDF.
@@ -283,28 +308,23 @@ async def export_capex_pdf(
     try:
         # Get CapEx data
         rows, count = await ReportService.export_capex_report(
-            db, None, current_user.id
+            db, None, current_user.username
         )
 
-        # Transform to PDF-friendly format
-        capex_data = {
-            "civil_budgeted": rows[0].get("civil_budgeted", 0) if rows else 0,
-            "civil_spent": rows[0].get("civil_spent", 0) if rows else 0,
-            "civil_remaining": rows[0].get("civil_remaining", 0) if rows else 0,
-            "civil_pct": 0,
-            "equip_budgeted": rows[0].get("equip_budgeted", 0) if rows else 0,
-            "equip_spent": rows[0].get("equip_spent", 0) if rows else 0,
-            "equip_remaining": rows[0].get("equip_remaining", 0) if rows else 0,
-            "equip_pct": 0,
-            "cont_budgeted": rows[0].get("cont_budgeted", 0) if rows else 0,
-            "cont_spent": rows[0].get("cont_spent", 0) if rows else 0,
-            "cont_remaining": rows[0].get("cont_remaining", 0) if rows else 0,
-            "cont_pct": 0,
-            "total_budgeted": rows[0].get("total_budgeted", 0) if rows else 0,
-            "total_spent": rows[0].get("total_spent", 0) if rows else 0,
-            "total_remaining": rows[0].get("total_remaining", 0) if rows else 0,
-            "total_pct": 0,
-        }
+        # Transform to PDF-friendly format: one row per budget line, summed by category
+        capex_data = {}
+        for key in ("civil", "equip", "cont", "total"):
+            capex_data[f"{key}_budgeted"] = 0.0
+            capex_data[f"{key}_spent"] = 0.0
+            capex_data[f"{key}_pct"] = 0.0
+        for r in rows:
+            budgeted = r["budgeted_amount"] or 0.0
+            spent = r["actual_amount"] or 0.0
+            for key in (_capex_bucket(r["budget_category"]), "total"):
+                capex_data[f"{key}_budgeted"] += budgeted
+                capex_data[f"{key}_spent"] += spent
+        for key in ("civil", "equip", "cont", "total"):
+            capex_data[f"{key}_remaining"] = capex_data[f"{key}_budgeted"] - capex_data[f"{key}_spent"]
 
         # Calculate percentages
         for key in ["civil", "equip", "cont"]:
@@ -333,6 +353,8 @@ async def export_capex_pdf(
             headers={"Content-Disposition": "attachment; filename=capex-report.pdf"}
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"CapEx PDF generation failed: {e}")
         raise HTTPException(

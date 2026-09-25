@@ -1,6 +1,7 @@
 """Tests for LDAP authentication and JWT token management."""
 
 import pytest
+from uuid import uuid4
 from backend.app.security.ldap_provider import (
     LocalDevAuthProvider,
     LDAPAuthProvider,
@@ -173,7 +174,7 @@ class TestTokenManager:
             roles=[UserRole.MAKER],
         )
 
-        token = TokenManager.create_token(user)
+        token = TokenManager.create_token(user, uuid4())
 
         assert token is not None
         assert isinstance(token, str)
@@ -188,7 +189,7 @@ class TestTokenManager:
             roles=[UserRole.MAKER],
         )
 
-        token = TokenManager.create_token(user)
+        token = TokenManager.create_token(user, uuid4())
         payload = TokenManager.verify_token(token)
 
         assert payload is not None
@@ -214,7 +215,7 @@ class TestTokenManager:
             roles=[UserRole.MAKER],
         )
 
-        token = TokenManager.create_token(user)
+        token = TokenManager.create_token(user, uuid4())
         # Tamper with token
         tampered_token = token[:-10] + "tampered!!"
 

@@ -23,7 +23,8 @@ class ProjectCreateRequest(BaseModel):
     district: str = Field(description="District name")
     local_level: Optional[str] = Field(None, description="Local level (municipality)")
 
-    installed_capacity_mw: Decimal = Field(gt=0, description="Installed capacity in MW")
+    # strict=False: request bodies arrive as JSON numbers/strings, never Decimal instances
+    installed_capacity_mw: Decimal = Field(gt=0, strict=False, description="Installed capacity in MW")
     project_stage: str = Field(description="Stage: feasibility, construction, operation")
     pipeline_status: str = Field(description="Pipeline status (proposal_under_pipeline, under_review, approved, etc.)")
 
@@ -84,7 +85,7 @@ class ProjectListResponse(BaseModel):
     name_en: str
     name_np: str
 
-    province: str
+    province: Optional[str]
     installed_capacity_mw: Decimal
     project_stage: str
     pipeline_status: str

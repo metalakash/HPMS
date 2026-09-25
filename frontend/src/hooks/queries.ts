@@ -1,5 +1,7 @@
 import { keepPreviousData, useQueries, useQuery } from '@tanstack/react-query';
-import { loansApi, projectsApi } from '@/services/endpoints';
+import { useEffect } from 'react';
+import { authApi, loansApi, projectsApi } from '@/services/endpoints';
+import { useAuthStore } from '@/store/useAuthStore';
 import type { LoanFilters, ProjectFilters, ProjectStage } from '@/types/api';
 
 /** Central query keys so WebSocket events can invalidate by prefix. */
@@ -8,9 +10,23 @@ export const queryKeys = {
   projectList: (filters: ProjectFilters) => ['projects', 'list', filters] as const,
   project: (id: string) => ['projects', 'detail', id] as const,
   projectLoans: (id: string) => ['projects', 'detail', id, 'loans'] as const,
+  me: ['auth', 'me'] as const,
   loans: ['loans'] as const,
   loanList: (filters: LoanFilters) => ['loans', 'list', filters] as const,
 };
+
+/**
+ * Confirms the stored token with the server once per session and keeps the
+ * profile current. A stale or pre-upgrade token gets a 401, which the API
+ * interceptor turns into a logout.
+ */
+export function useSessionCheck() {
+  const setUser = useAuthStore((s) => s.setUser);
+  const { data } = useQuery({ queryKey: queryKeys.me, queryFn: authApi.me, staleTime: Infinity });
+  useEffect(() => {
+    if (data) setUser(data);
+  }, [data, setUser]);
+}
 
 export function useProjects(filters: ProjectFilters) {
   return useQuery({

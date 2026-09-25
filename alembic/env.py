@@ -1,4 +1,3 @@
-import asyncio
 from logging.config import fileConfig
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
@@ -34,8 +33,14 @@ def run_migrations_offline() -> None:
     with context.begin_transaction():
         context.run_migrations()
 
-async def run_migrations_online() -> None:
+def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
+    # Callers (e.g. the test suite) may hand in an open connection to migrate a different DB.
+    external = config.attributes.get("connection")
+    if external is not None:
+        do_run_migrations(external)
+        return
+
     configuration = config.get_section(config.config_ini_section)
     # Convert async URL to sync for Alembic autogenerate
     sync_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
@@ -55,12 +60,9 @@ def do_run_migrations(connection):
     with context.begin_transaction():
         context.run_migrations()
 
+# Offline SQL generation is explicit (`alembic upgrade head --sql`). Never fall back to it
+# silently: that turned real migration errors into a misleading "connection failed".
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    try:
-        asyncio.run(run_migrations_online())
-    except Exception as e:
-        print(f"Database connection failed: {e}")
-        print("Falling back to offline mode (SQL file generation)...")
-        run_migrations_offline()
+    run_migrations_online()

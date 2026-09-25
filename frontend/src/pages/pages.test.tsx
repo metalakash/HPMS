@@ -68,6 +68,18 @@ describe('routing and auth', () => {
     expect(within(adminNav).getByRole('link', { name: /Admin/ })).toBeInTheDocument();
   });
 
+  it('signs out when the server rejects the stored token', async () => {
+    server.use(
+      http.get('*/api/v1/auth/me', () =>
+        HttpResponse.json({ detail: 'Invalid or expired token' }, { status: 401 }),
+      ),
+    );
+    signIn();
+    renderRoute('/projects');
+    expect(await screen.findByRole('button', { name: /sign in/i })).toBeInTheDocument();
+    expect(useAuthStore.getState().token).toBeNull();
+  });
+
   it('renders a not-found page for unknown routes', async () => {
     signIn();
     renderRoute('/nope');

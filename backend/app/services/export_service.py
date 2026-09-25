@@ -192,7 +192,7 @@ class ExportService:
             Export record dict
         """
 
-        from backend.app.models.audit import AuditLog
+        from backend.app.models.audit import AuditLogRead
 
         export_record = {
             "report_id": report_id,
@@ -203,13 +203,14 @@ class ExportService:
             "exported_at": datetime.utcnow().isoformat() + "Z",
         }
 
-        # Log to audit trail
-        audit_log = AuditLog(
+        # Exports are read access: they belong in the read-audit table. (AuditLog is the
+        # hash-chained write log and needs state_hash/prev_hash, which nothing computes here.)
+        audit_log = AuditLogRead(
             user_id=user_id,
             entity_type="report",
             entity_id=report_id,
-            action="export",
-            details=f"Exported {format} file ({file_size_bytes} bytes)",
+            export_format=format,
+            timestamp=datetime.utcnow().isoformat() + "Z",
         )
         db.add(audit_log)
         await db.flush()

@@ -21,6 +21,8 @@ class ApprovalState(str, enum.Enum):
 class Role(Base, TimestampedMixin):
     """User roles in the system."""
     
+    __tablename__ = 'roles'
+    
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(100), unique=True, nullable=False)
     description = Column(Text)
@@ -34,6 +36,8 @@ class Role(Base, TimestampedMixin):
 
 class Permission(Base, TimestampedMixin):
     """Granular permissions (field-level, entity-level)."""
+    
+    __tablename__ = 'permissions'
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     
@@ -65,6 +69,8 @@ role_permissions = Table(
 class WorkflowDefinition(Base, TimestampedMixin):
     """Configurable workflow definition per use case."""
     
+    __tablename__ = 'workflow_definitions'
+    
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     
     name = Column(String(255), unique=True, nullable=False)
@@ -79,6 +85,8 @@ class WorkflowDefinition(Base, TimestampedMixin):
 
 class ApprovalRequest(Base, TimestampedMixin):
     """Approval workflow instance."""
+    
+    __tablename__ = 'approval_requests'
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     workflow_definition_id = Column(UUID(as_uuid=True), ForeignKey('workflow_definitions.id'), nullable=False)
@@ -103,6 +111,8 @@ class ApprovalRequest(Base, TimestampedMixin):
 
 class ApprovalStep(Base, TimestampedMixin):
     """Individual approval step in a workflow."""
+    
+    __tablename__ = 'approval_steps'
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     approval_request_id = Column(UUID(as_uuid=True), ForeignKey('approval_requests.id'), nullable=False, index=True)

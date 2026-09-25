@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router';
 import { Spinner } from '@/components/common/Spinner';
+import { useSessionCheck } from '@/hooks/queries';
 import { useNotificationSocket } from '@/hooks/useNotificationSocket';
 import { isSessionValid, useAuthStore } from '@/store/useAuthStore';
 import { Header } from './Header';
@@ -23,6 +24,7 @@ export function PageFallback() {
 }
 
 function AppShell() {
+  useSessionCheck();
   useNotificationSocket();
 
   return (

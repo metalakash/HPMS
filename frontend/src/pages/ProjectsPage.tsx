@@ -53,7 +53,7 @@ export default function ProjectsPage() {
         </div>
       ),
     },
-    { key: 'province', header: 'Province', hideOnMobile: true, render: (p) => p.province },
+    { key: 'province', header: 'Province', hideOnMobile: true, render: (p) => p.province ?? '—' },
     {
       key: 'capacity',
       header: 'Capacity',

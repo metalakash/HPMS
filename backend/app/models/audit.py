@@ -27,6 +27,8 @@ class AuditAction(str, enum.Enum):
 class AuditLog(Base):
     """Append-only, immutable audit log with cryptographic chaining."""
     
+    __tablename__ = 'audit_logs'
+    
     id = Column(BIGINT, primary_key=True, autoincrement=True)  # Monotonic
     
     # Actor information
@@ -63,6 +65,8 @@ class AuditLog(Base):
 
 class AuditLogRead(Base):
     """Track read access to sensitive data."""
+    
+    __tablename__ = 'audit_log_reads'
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(String(255), nullable=False, index=True)

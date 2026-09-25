@@ -7,8 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.project import Project
 from backend.app.models.financial import LoanAccount, LoanAccountRateHistory, BudgetLine
-from backend.app.models.governance import Consortium
+from backend.app.models.consortium import ConsortiumFacility
 from backend.app.services.report_service import ReportService
+from backend.app.models.audit import AuditLogRead
 from backend.app.schemas.report_schema import ExportFilter
 
 
@@ -118,10 +119,10 @@ async def test_covenant_report_with_rate_history(db_session: AsyncSession):
 
     rate_history = LoanAccountRateHistory(
         loan_account_id=account.id,
-        rate_percent=Decimal("8.50"),
-        effective_date_ad=date(2026, 1, 1),
-        expiry_date_ad=date(2027, 1, 1),
-        is_current=True,
+        interest_rate_pct=Decimal("8.50"),
+        valid_from_ad=date(2026, 1, 1),
+        valid_to_ad=date(2027, 1, 1),
+        is_current="Y",
         created_by="test_user"
     )
     db_session.add(rate_history)
@@ -204,5 +205,35 @@ async def test_report_audit_logging(db_session: AsyncSession):
         db_session, None, user_id="audit_test_user"
     )
 
-    # Assert - audit log was created (checked via service, not DB)
-    assert count >= 0  # Report was generated
+    # Assert - the read audit row was written for this user and export
+    from sqlalchemy import select
+    audit = (await db_session.execute(
+        select(AuditLogRead).where(AuditLogRead.user_id == "audit_test_user")
+    )).scalar_one()
+    assert audit.entity_type == "report"
+    assert audit.entity_id == "portfolio"
+    assert audit.record_count == count
+
+
+@pytest.mark.asyncio
+async def test_covenant_report_includes_accounts_without_rate_history(db_session: AsyncSession):
+    """Accounts with no current rate still appear, with a null rate."""
+
+    project = Project(
+        project_code="NORATE-001", name_en="No Rate", name_np="दर छैन", province="Gandaki",
+        installed_capacity_mw=Decimal("10.00"), project_stage="construction",
+        pipeline_status="under_construction", created_by="test_user",
+    )
+    db_session.add(project)
+    await db_session.flush()
+    account = LoanAccount(
+        project_id=project.id, finacle_account_id="ACC-NORATE", facility_type="Term Loan",
+        sanctioned_amount=Decimal("500000.00"), created_by="test_user",
+    )
+    db_session.add(account)
+    await db_session.flush()
+
+    rows, _ = await ReportService.export_covenant_report(db_session)
+
+    row = next(r for r in rows if r["loan_account_id"] == str(account.id))
+    assert row["current_rate_percent"] is None

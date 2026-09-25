@@ -5,6 +5,7 @@ Handles JWT token validation, user context injection, and role-based access cont
 
 import logging
 from typing import Optional
+from uuid import UUID
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status, Request
@@ -26,11 +27,12 @@ class TokenManager:
     TOKEN_EXPIRY_MINUTES = 480  # 8 hours
 
     @staticmethod
-    def create_token(ad_user: ADUser) -> str:
+    def create_token(ad_user: ADUser, user_id: UUID) -> str:
         """Create JWT token from AD user.
 
         Args:
             ad_user: Authenticated AD user
+            user_id: Primary key of the user's row in the ``user`` table
 
         Returns:
             JWT token string
@@ -38,7 +40,9 @@ class TokenManager:
 
         payload = {
             **ad_user.to_dict(),
-            "sub": ad_user.username,  # JWT standard subject (principal identifier)
+            # JWT subject: the DB user id. DB rows (MFA, preferences) and
+            # WebSocket routing are keyed by this UUID, not the AD username.
+            "sub": str(user_id),
             "exp": datetime.utcnow() + timedelta(minutes=TokenManager.TOKEN_EXPIRY_MINUTES),
             "iat": datetime.utcnow(),
         }
@@ -79,12 +83,20 @@ class CurrentUser:
     """Dependency to inject current authenticated user into endpoints."""
 
     def __init__(self, token_payload: dict):
-        self.id = token_payload.get("sub")  # JWT subject claim (username)
+        self.id = token_payload.get("sub")  # JWT subject claim (DB user UUID)
         self.username = token_payload.get("username")
         self.email = token_payload.get("email")
         self.full_name = token_payload.get("full_name")
         self.roles = [UserRole(r) for r in token_payload.get("roles", [])]
         self.is_authenticated = token_payload.get("is_authenticated", False)
+
+    @property
+    def uuid(self) -> Optional[UUID]:
+        """The user id as a UUID, for DB queries. None if the claim is missing or malformed."""
+        try:
+            return UUID(self.id) if self.id else None
+        except ValueError:
+            return None
 
     def has_role(self, role: UserRole) -> bool:
         """Check if user has a specific role."""
@@ -119,7 +131,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         )
 
     user = CurrentUser(payload)
-    if not user.is_authenticated:
+    if not user.is_authenticated or user.uuid is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not authenticated",

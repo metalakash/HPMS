@@ -7,6 +7,7 @@ interface AuthState {
   expiresAt: number | null;
   user: AuthUser | null;
   setSession: (response: TokenResponse) => void;
+  setUser: (user: AuthUser) => void;
   logout: () => void;
 }
 
@@ -26,6 +27,7 @@ export const useAuthStore = create<AuthState>()(
           expiresAt: Date.now() + expires_in_seconds * 1000,
           user,
         }),
+      setUser: (user) => set({ user }),
       logout: () => set({ token: null, expiresAt: null, user: null }),
     }),
     { name: 'hpms-auth', storage: createJSONStorage(() => sessionStorage) },

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from uuid import UUID
 
 from backend.app.database import get_db
-from backend.app.security.auth_middleware import verify_jwt_token
+from backend.app.security.auth_middleware import CurrentUser, get_current_user
 from backend.app.i18n.service import get_i18n_service, SUPPORTED_LANGUAGES
 from backend.app.i18n.middleware import get_language_dependency
 
@@ -87,14 +87,14 @@ async def get_current_language(
 @router.post("/preferences", response_model=LanguagePreferenceResponse)
 async def set_language_preference(
     request: LanguagePreferenceRequest,
-    token_data = Depends(verify_jwt_token),
+    current_user: CurrentUser = Depends(get_current_user),
     db = Depends(get_db),
 ):
     """Set user language preference.
 
     Args:
         request: Language preference request
-        token_data: JWT token data (user info)
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -110,13 +110,13 @@ async def set_language_preference(
             detail=f"Unsupported language. Supported: {', '.join(SUPPORTED_LANGUAGES)}"
         )
 
-    user_id = token_data.get("sub")
+    user_id = current_user.id
 
     # Get user and update language preference
     try:
         from sqlalchemy import select
 
-        stmt = select(User).where(User.id == UUID(user_id))
+        stmt = select(User).where(User.id == current_user.uuid)
         user = await db.execute(stmt)
         user = user.scalar_one_or_none()
 
@@ -137,6 +137,8 @@ async def set_language_preference(
             "timestamp": datetime.utcnow().isoformat() + "Z"
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         await db.rollback()
         logger.error(f"Error updating language preference: {e}")
@@ -148,13 +150,13 @@ async def set_language_preference(
 
 @router.get("/preferences", response_model=LanguagePreferenceResponse)
 async def get_language_preference(
-    token_data = Depends(verify_jwt_token),
+    current_user: CurrentUser = Depends(get_current_user),
     db = Depends(get_db),
 ):
     """Get user language preference.
 
     Args:
-        token_data: JWT token data (user info)
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -164,10 +166,10 @@ async def get_language_preference(
     from backend.app.models.auth import User
     from sqlalchemy import select
 
-    user_id = token_data.get("sub")
+    user_id = current_user.id
 
     try:
-        stmt = select(User).where(User.id == UUID(user_id))
+        stmt = select(User).where(User.id == current_user.uuid)
         user = await db.execute(stmt)
         user = user.scalar_one_or_none()
 
@@ -183,6 +185,8 @@ async def get_language_preference(
             "timestamp": datetime.utcnow().isoformat() + "Z"
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error fetching language preference: {e}")
         raise HTTPException(

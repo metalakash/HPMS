@@ -14,7 +14,6 @@ from sqlalchemy.orm import joinedload
 
 from backend.app.models.project import Project, ProjectCapacityHistory
 from backend.app.models.financial import LoanAccount, LoanAccountRateHistory, BudgetLine
-from backend.app.models.governance import Consortium, ConsortiaMember
 from backend.app.models.audit import AuditLog, AuditLogRead
 from backend.app.schemas.report_schema import (
     PortfolioReportRow,
@@ -85,7 +84,7 @@ class ReportService:
             consortium_members_count = len(project.consortium_members) if project.consortium_members else 0
             lead_bank = None
             if project.consortium:
-                lead_bank = project.consortium.lead_bank
+                lead_bank = project.consortium.lead_bank_name
 
             row_dict = {
                 "project_code": project.project_code,
@@ -133,12 +132,18 @@ class ReportService:
             (list of report rows, record count)
         """
 
-        # Query: loan accounts with rate history
+        # Query: loan accounts with their current rate (if any). The is_current condition
+        # belongs in the join, or accounts without rate history would be dropped.
         query = (
             select(LoanAccount, Project, LoanAccountRateHistory)
             .join(Project, LoanAccount.project_id == Project.id)
-            .outerjoin(LoanAccountRateHistory, LoanAccountRateHistory.loan_account_id == LoanAccount.id)
-            .where(LoanAccountRateHistory.is_current == True)  # Current rate only
+            .outerjoin(
+                LoanAccountRateHistory,
+                and_(
+                    LoanAccountRateHistory.loan_account_id == LoanAccount.id,
+                    LoanAccountRateHistory.is_current == "Y",  # Y/N flag, see migration 002
+                ),
+            )
         )
 
         # Apply filters
@@ -171,12 +176,12 @@ class ReportService:
                 "finacle_account_id": account.finacle_account_id,
                 "facility_type": account.facility_type,
                 "sanctioned_amount": float(account.sanctioned_amount) if account.sanctioned_amount else 0,
-                "current_rate_percent": float(rate_history.rate_percent) if rate_history and rate_history.rate_percent else None,
-                "rate_effective_date_ad": rate_history.effective_date_ad.strftime("%Y-%m-%d") if rate_history and rate_history.effective_date_ad else None,
-                "rate_effective_date_bs": None,
-                "rate_expiry_date_ad": rate_history.expiry_date_ad.strftime("%Y-%m-%d") if rate_history and rate_history.expiry_date_ad else None,
-                "rate_expiry_date_bs": None,
-                "last_sync_date": account.last_sync_timestamp.strftime("%Y-%m-%d") if account.last_sync_timestamp else None,
+                "current_rate_percent": float(rate_history.interest_rate_pct) if rate_history else None,
+                "rate_effective_date_ad": rate_history.valid_from_ad.strftime("%Y-%m-%d") if rate_history and rate_history.valid_from_ad else None,
+                "rate_effective_date_bs": rate_history.valid_from_bs if rate_history else None,
+                "rate_expiry_date_ad": rate_history.valid_to_ad.strftime("%Y-%m-%d") if rate_history and rate_history.valid_to_ad else None,
+                "rate_expiry_date_bs": rate_history.valid_to_bs if rate_history else None,
+                "last_sync_date": account.last_synced_at[:10] if account.last_synced_at else None,
                 "sync_status": account.sync_status or "pending",
             }
             rows.append(row_dict)
@@ -260,6 +265,8 @@ class ReportService:
     ) -> None:
         """Log export action in AuditLogRead table.
 
+        Fails closed: if the read audit can't be written, the export must not be returned.
+
         Args:
             db: async database session
             report_id: which report was exported
@@ -267,18 +274,14 @@ class ReportService:
             user_id: who requested export
         """
 
-        try:
-            audit_log_read = AuditLogRead(
+        db.add(
+            AuditLogRead(
                 user_id=user_id,
                 entity_type="report",
                 entity_id=report_id,
-                action="export",
-                details=f"Exported {record_count} rows",
-                timestamp=datetime.utcnow(),
+                record_count=record_count,
+                timestamp=datetime.utcnow().isoformat() + "Z",
             )
-            db.add(audit_log_read)
-            await db.flush()
-        except Exception as e:
-            logger.error(f"Failed to audit export {report_id}: {e}")
-            # Don't fail export if audit fails
-            pass
+        )
+        # Commit before the data leaves the service so the read audit is durable
+        await db.commit()

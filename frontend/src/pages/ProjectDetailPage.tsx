@@ -89,7 +89,12 @@ export default function ProjectDetailPage() {
       {p ? (
         <PageHeader
           title={projectName(p, language)}
-          description={`${p.project_code} · ${p.location.district}, ${p.location.province}`}
+          description={[
+            p.project_code,
+            [p.location.district, p.location.province].filter(Boolean).join(', '),
+          ]
+            .filter(Boolean)
+            .join(' · ')}
           actions={
             <Badge tone={statusTone(p.pipeline_status)}>{humanize(p.pipeline_status)}</Badge>
           }
