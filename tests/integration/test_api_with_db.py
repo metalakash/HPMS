@@ -233,3 +233,48 @@ async def test_reports(api, db_session):
 
 async def test_readiness_uses_database(api):
     assert (await api.get("/ready")).json() == {"status": "ready"}
+
+
+async def test_compliance_audit_log_access_control(api, db_session):
+    """Test that audit log endpoint enforces role-based access."""
+    maker = await login(api, "maker", "maker123")
+    auditor = await login(api, "auditor", "auditor123")
+    guest = await login(api, "guest", "guest123")
+
+    # Auditor can list (returns empty but succeeds)
+    r = await api.get("/api/v1/compliance/audit-log", headers=auditor)
+    assert r.status_code == 200
+    assert r.json()["data"] == []
+
+    # Maker can list (returns empty but succeeds)
+    r = await api.get("/api/v1/compliance/audit-log", headers=maker)
+    assert r.status_code == 200
+    assert r.json()["data"] == []
+
+    # Guest can list (returns empty, no error)
+    r = await api.get("/api/v1/compliance/audit-log", headers=guest)
+    assert r.status_code == 200
+    assert r.json()["data"] == []
+
+
+async def test_compliance_export_requires_auditor_or_admin(api, db_session):
+    """Test that compliance export is restricted to auditors and admins."""
+    maker = await login(api, "maker", "maker123")
+    auditor = await login(api, "auditor", "auditor123")
+    guest = await login(api, "guest", "guest123")
+
+    # Auditor can export
+    r = await api.post("/api/v1/compliance/export", json={}, headers=auditor)
+    assert r.status_code == 200
+    body = r.json()["data"]
+    assert body["record_count"] == 0
+    assert "export_timestamp" in body
+    assert body["generated_by"] == "auditor"
+
+    # Maker cannot export
+    r = await api.post("/api/v1/compliance/export", json={}, headers=maker)
+    assert r.status_code == 403
+
+    # Guest cannot export
+    r = await api.post("/api/v1/compliance/export", json={}, headers=guest)
+    assert r.status_code == 403
