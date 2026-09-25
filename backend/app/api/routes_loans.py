@@ -7,6 +7,7 @@ Implements:
 """
 
 import logging
+import uuid
 from datetime import datetime
 from typing import Optional
 
@@ -28,6 +29,8 @@ from backend.app.schemas.loan import (
 from backend.app.services.cbs_sync_service import CBSSyncService
 from backend.app.integration.finacle_adapter import get_adapter
 from backend.app.integration.finacle_schema import FinacleSyncType
+from backend.app.security.auth_middleware import CurrentUser, get_current_user, require_admin
+from backend.app.security.rls_service import RLSService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/loan-accounts", tags=["loan-accounts"])
@@ -40,6 +43,14 @@ def _get_audit_metadata(user_id: str = "anonymous", action: str = "read") -> Aud
         action=action,
         timestamp=datetime.utcnow().isoformat(),
     )
+
+
+def _parse_uuid(value: str, label: str) -> uuid.UUID:
+    """Parse a UUID filter/path value; malformed ids are reported as not found."""
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"{label} {value} not found")
 
 
 def _get_response_meta(page: Optional[int] = None, page_size: Optional[int] = None, total_count: Optional[int] = None) -> ResponseMeta:
@@ -56,6 +67,7 @@ def _get_response_meta(page: Optional[int] = None, page_size: Optional[int] = No
 @router.get("", response_model=ApiResponse[list[LoanAccountListResponse]])
 async def list_loan_accounts(
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
     project_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None, description="Filter by sync_status"),
     facility_type: Optional[str] = Query(None),
@@ -70,8 +82,11 @@ async def list_loan_accounts(
     - facility_type: filter by facility type
     """
 
-    # Build query
-    query = select(LoanAccount)
+    if project_id:
+        project_id = _parse_uuid(project_id, "Project")
+
+    # Build query (joined to Project so each row carries its project code)
+    query = select(LoanAccount, Project.project_code).join(Project, Project.id == LoanAccount.project_id)
 
     if project_id:
         query = query.where(LoanAccount.project_id == project_id)
@@ -89,6 +104,10 @@ async def list_loan_accounts(
     if facility_type:
         count_query = count_query.where(LoanAccount.facility_type == facility_type)
 
+    # Row-level security: only accounts on projects the user may see
+    query = await RLSService.scope_query(db, current_user, query, LoanAccount.project_id)
+    count_query = await RLSService.scope_query(db, current_user, count_query, LoanAccount.project_id)
+
     total_count = await db.execute(count_query)
     total_count = total_count.scalar() or 0
 
@@ -98,20 +117,15 @@ async def list_loan_accounts(
 
     # Execute
     result = await db.execute(query)
-    accounts = result.scalars().all()
+    rows = result.all()
 
     # Convert
     items = []
-    for a in accounts:
-        # Get project code for context
-        proj_query = select(Project).where(Project.id == a.project_id)
-        proj_result = await db.execute(proj_query)
-        project = proj_result.scalar()
-
+    for a, project_code in rows:
         items.append(
             LoanAccountListResponse(
                 id=str(a.id),
-                project_code=project.project_code if project else "UNKNOWN",
+                project_code=project_code,
                 finacle_account_id="***MASKED***",
                 facility_type=a.facility_type,
                 sanctioned_amount=a.sanctioned_amount,
@@ -128,7 +142,7 @@ async def list_loan_accounts(
     return ApiResponse(
         data=items,
         meta=_get_response_meta(page=page, page_size=page_size, total_count=total_count),
-        audit=_get_audit_metadata(action="list_loan_accounts"),
+        audit=_get_audit_metadata(user_id=current_user.username, action="list_loan_accounts"),
     )
 
 
@@ -136,6 +150,7 @@ async def list_loan_accounts(
 async def get_loan_account(
     account_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> ApiResponse[LoanAccountDetailResponse]:
     """Get detailed loan account view with rate history.
 
@@ -144,11 +159,13 @@ async def get_loan_account(
     """
 
     # Get account
+    account_id = _parse_uuid(account_id, "Loan account")
     query = select(LoanAccount).where(LoanAccount.id == account_id)
     result = await db.execute(query)
     account = result.scalar_one_or_none()
 
-    if not account:
+    # Accounts on projects the user can't see are reported as missing
+    if not account or not await RLSService.can_view_project(db, current_user, account.project_id):
         raise HTTPException(status_code=404, detail=f"Loan account {account_id} not found")
 
     # Get project code
@@ -160,7 +177,7 @@ async def get_loan_account(
     rate_query = (
         select(LoanAccountRateHistory)
         .where(LoanAccountRateHistory.loan_account_id == account_id)
-        .order_by(LoanAccountRateHistory.version_number.desc())
+        .order_by(LoanAccountRateHistory.valid_from_ad.desc())  # newest first
     )
     rate_result = await db.execute(rate_query)
     rates = rate_result.scalars().all()
@@ -209,7 +226,7 @@ async def get_loan_account(
     return ApiResponse(
         data=response,
         meta=_get_response_meta(),
-        audit=_get_audit_metadata(action="get_loan_account"),
+        audit=_get_audit_metadata(user_id=current_user.username, action="get_loan_account"),
     )
 
 
@@ -217,15 +234,17 @@ async def get_loan_account(
 async def trigger_rate_sync(
     db: AsyncSession = Depends(get_db),
     sync_type: str = Query("eod_batch", description="realtime_inquiry, eod_batch, bod_batch"),
-    user_id: str = Query("SYSTEM"),
+    current_user: CurrentUser = Depends(require_admin),
 ) -> ApiResponse[RateSyncResponse]:
-    """Trigger CBS loan account synchronization.
+    """Trigger CBS loan account synchronization (admin only).
 
     Query parameters:
     - sync_type: realtime_inquiry (single), eod_batch (all), bod_batch (all)
 
     Response: 202 Accepted (async job started)
     """
+
+    user_id = current_user.username
 
     # Map sync type
     sync_type_map = {

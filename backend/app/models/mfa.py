@@ -25,6 +25,8 @@ class UserMFA(Base, TimestampedMixin):
     Tracks which MFA methods are enabled and primary method.
     """
 
+    __tablename__ = 'user_mfa'
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=False, unique=True, index=True)
 
@@ -62,6 +64,21 @@ class UserMFA(Base, TimestampedMixin):
 
     # Relationships
     user = relationship("User", foreign_keys=[user_id], backref="mfa")
+
+    # Column defaults only apply on INSERT; mirror them so new, unflushed rows read correctly.
+    _PYTHON_DEFAULTS = {
+        "is_mfa_enabled": False,
+        "totp_enabled": False,
+        "sms_enabled": False,
+        "email_enabled": False,
+        "trusted_devices_enabled": True,
+        "mfa_required": False,
+    }
+
+    def __init__(self, **kwargs):
+        for key, value in self._PYTHON_DEFAULTS.items():
+            kwargs.setdefault(key, value)
+        super().__init__(**kwargs)
     totp_history = relationship("TOTPVerification", back_populates="user_mfa", cascade="all, delete-orphan")
     sms_history = relationship("SMSVerification", back_populates="user_mfa", cascade="all, delete-orphan")
     backup_codes = relationship("BackupCode", back_populates="user_mfa", cascade="all, delete-orphan")
@@ -78,6 +95,8 @@ class TOTPVerification(Base, TimestampedMixin):
 
     Tracks when and if TOTP codes were verified.
     """
+
+    __tablename__ = 'totp_verification'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_mfa_id = Column(UUID(as_uuid=True), ForeignKey("user_mfa.id"), nullable=False, index=True)
@@ -98,6 +117,8 @@ class TOTPVerification(Base, TimestampedMixin):
 
 class SMSVerification(Base, TimestampedMixin):
     """SMS verification attempt history."""
+    
+    __tablename__ = 'sms_verification'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_mfa_id = Column(UUID(as_uuid=True), ForeignKey("user_mfa.id"), nullable=False, index=True)
@@ -126,6 +147,8 @@ class BackupCode(Base, TimestampedMixin):
     10 single-use codes, generated when TOTP is enabled.
     """
 
+    __tablename__ = 'backup_code'
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_mfa_id = Column(UUID(as_uuid=True), ForeignKey("user_mfa.id"), nullable=False, index=True)
 
@@ -148,6 +171,8 @@ class TrustedDevice(Base, TimestampedMixin):
 
     User can mark a device as trusted for 30 days (configurable).
     """
+
+    __tablename__ = 'trusted_device'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_mfa_id = Column(UUID(as_uuid=True), ForeignKey("user_mfa.id"), nullable=False, index=True)

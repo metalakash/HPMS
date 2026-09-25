@@ -95,7 +95,7 @@ class TestQueryPerformance:
             .options(joinedload(Project.loan_accounts))
         )
         result = await db_session.execute(query)
-        project = result.scalar_one()
+        project = result.unique().scalar_one()  # joined collection eager load requires unique()
 
         elapsed = time.time() - start
 

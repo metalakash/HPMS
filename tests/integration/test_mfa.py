@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from backend.app.services.mfa_service import MFAService
 from backend.app.models.mfa import UserMFA
+from urllib.parse import unquote
 
 
 class TestTOTPGeneration:
@@ -25,7 +26,7 @@ class TestTOTPGeneration:
 
         assert uri is not None
         assert "otpauth://" in uri
-        assert "user@example.com" in uri
+        assert "user@example.com" in unquote(uri)
         assert "SBL%20HPMS" in uri  # URL-encoded issuer
 
     def test_generate_qr_code(self):
@@ -171,7 +172,8 @@ class TestPhoneMasking:
 
         assert masked is not None
         assert "..." in masked
-        assert "1234567" in masked  # Last 4 digits visible
+        assert masked.endswith("4567")  # Last 4 digits visible
+        assert "1234567" not in masked  # Middle digits hidden
 
     def test_mask_short_phone(self):
         """Test masking short phone numbers."""

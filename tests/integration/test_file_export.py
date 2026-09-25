@@ -185,7 +185,7 @@ class TestJSONExport:
 
         parsed = json.loads(json_content)
 
-        assert parsed["metadata"]["province"] == "Gandaki"
+        assert parsed["metadata"]["filters"]["province"] == "Gandaki"
         assert parsed["metadata"]["version"] == "1.0"
 
     def test_generate_json_timestamp_included(self):

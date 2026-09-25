@@ -27,6 +27,8 @@ class ProjectStage(str, enum.Enum):
 class Project(Base, TimestampedMixin):
     """Core project master record."""
     
+    __tablename__ = 'projects'
+    
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_code = Column(String(50), unique=True, nullable=False, index=True)
     name_en = Column(String(255), nullable=False)
@@ -65,8 +67,14 @@ class Project(Base, TimestampedMixin):
     rcod_events = relationship("RCODEvent", back_populates="project")
     documents = relationship("Document", back_populates="project")
     project_owners = relationship("ProjectOwner", back_populates="project", cascade="all, delete-orphan")  # Phase 3: RLS
-    consortium = relationship("Consortium", back_populates="project", uselist=False)
-    consortium_members = relationship("ConsortiaMember", back_populates="project")
+    consortium = relationship("ConsortiumFacility", back_populates="project", uselist=False)
+    consortium_members = relationship(
+        "ConsortiumMember",
+        secondary="consortium_facilities",
+        primaryjoin="Project.id == ConsortiumFacility.project_id",
+        secondaryjoin="ConsortiumFacility.id == ConsortiumMember.consortium_facility_id",
+        viewonly=True,
+    )
     
     __table_args__ = (
         UniqueConstraint('project_code', name='uq_project_code'),
@@ -75,6 +83,8 @@ class Project(Base, TimestampedMixin):
 
 class ProjectTechnicalSpecs(Base, TimestampedMixin):
     """Technical specifications for a project."""
+    
+    __tablename__ = 'project_technical_specs'
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), unique=True, nullable=False)
@@ -89,6 +99,8 @@ class ProjectTechnicalSpecs(Base, TimestampedMixin):
 
 class HydrologyRecord(Base, TimestampedMixin):
     """Hydrological data for environmental assessment."""
+    
+    __tablename__ = 'hydrology_records'
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), nullable=False, index=True)
@@ -110,6 +122,8 @@ class HydrologyRecord(Base, TimestampedMixin):
 class WaterLicense(Base, TimestampedMixin):
     """Water license and rights for the project."""
     
+    __tablename__ = 'water_licenses'
+    
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), nullable=False, index=True)
     
@@ -130,6 +144,8 @@ class WaterLicense(Base, TimestampedMixin):
 class LandRecord(Base, TimestampedMixin):
     """Land acquisition and ownership records."""
     
+    __tablename__ = 'land_records'
+    
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), nullable=False, index=True)
     
@@ -145,6 +161,8 @@ class LandRecord(Base, TimestampedMixin):
 
 class ProjectCapacityHistory(Base, TimestampedMixin):
     """Effective-dated capacity changes during design/construction phases."""
+    
+    __tablename__ = 'project_capacity_history'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), nullable=False, index=True)
@@ -173,6 +191,8 @@ class ProjectCapacityHistory(Base, TimestampedMixin):
 
 class RCODEvent(Base, TimestampedMixin):
     """Revised Commercial Operation Date events with classification review triggers."""
+    
+    __tablename__ = 'rcod_events'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), nullable=False, index=True)

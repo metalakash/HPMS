@@ -85,7 +85,6 @@ async def graphql_query(
         # Prepare context with database and user
         context = {
             "db": db,
-            "user_id": current_user.id,
             "user": current_user,
         }
 
@@ -166,16 +165,17 @@ async def graphql_introspection(
 # Example GraphQL queries for reference
 EXAMPLE_QUERIES = {
     "projects": """
-    query GetProjects($first: Int, $status: String) {
-      projects(first: $first, status: $status) {
+    query GetProjects($first: Int, $after: String, $pipelineStatus: String) {
+      projects(first: $first, after: $after, pipelineStatus: $pipelineStatus) {
         edges {
           node {
             id
-            name
-            capacity_mw
-            rate
+            projectCode
+            nameEn
+            installedCapacityMw
             province
-            status
+            pipelineStatus
+            projectStage
           }
           cursor
         }
@@ -192,63 +192,61 @@ EXAMPLE_QUERIES = {
     query GetProjectDetail($id: UUID!) {
       project(id: $id) {
         id
-        name
-        capacity_mw
-        rate
-        status
+        projectCode
+        nameEn
+        nameNp
+        installedCapacityMw
         province
         district
-        facility_type
-        description
-        start_date
-        end_date
+        pipelineStatus
+        projectStage
+        originalCodAd
+        currentApprovedCodAd
+        forecastCodAd
+        actualCodAd
+      }
+      loanAccounts(projectId: $id) {
+        id
+        facilityType
+        sanctionedAmount
+        disbursedAmount
+        outstandingPrincipal
+        interestRatePct
+        syncStatus
       }
     }
     """,
     "portfolio_metrics": """
     query GetPortfolioMetrics {
-      portfolio_metrics {
-        total_projects
-        total_capacity_mw
-        total_loan_amount
-        total_disbursed
-        active_projects
-        average_rate
-        average_tenor_years
-      }
-    }
-    """,
-    "covenant_metrics": """
-    query GetCovenantMetrics {
-      covenant_metrics {
-        dscr
-        ltv
-        icr
-        dscr_pass
-        ltv_pass
-        icr_pass
+      portfolioMetrics {
+        totalProjects
+        activeProjects
+        totalCapacityMw
+        totalSanctioned
+        totalDisbursed
+        averageRatePct
       }
     }
     """,
     "current_user": """
     query GetCurrentUser {
-      current_user {
+      currentUser {
         id
         username
         email
-        full_name
-        is_active
-        default_role
+        fullName
+        isActive
+        defaultRole
+        languagePreference
       }
     }
     """,
     "update_project": """
-    mutation UpdateProject($id: UUID!, $name: String, $rate: Float, $status: String) {
-      update_project(id: $id, name: $name, rate: $rate, status: $status) {
+    mutation UpdateProject($id: UUID!, $pipelineStatus: String, $dropReason: String) {
+      updateProject(id: $id, pipelineStatus: $pipelineStatus, dropReason: $dropReason) {
         id
-        name
-        rate
-        status
+        pipelineStatus
+        dropReason
       }
     }
     """,

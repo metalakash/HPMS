@@ -15,11 +15,14 @@ from decimal import Decimal
 import uuid
 
 from fastapi import APIRouter, Depends, Query, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from backend.app.database import get_db
-from backend.app.models.project import Project, RCODEvent
+from backend.app.models.project import Project, RCODEvent, PipelineStatus, ProjectStage
+from backend.app.security.auth_middleware import CurrentUser, get_current_user
+from backend.app.security.rls_service import RLSService
 from backend.app.models.financial import LoanAccount, LoanAccountRateHistory
 from backend.app.schemas.common import ApiResponse, ResponseMeta, AuditMetadata
 from backend.app.schemas.project import (
@@ -45,6 +48,33 @@ def _get_audit_metadata(user_id: str = "anonymous", action: str = "read") -> Aud
     )
 
 
+def _parse_project_id(project_id: str) -> uuid.UUID:
+    """Parse a path UUID; malformed ids are reported as not found."""
+    try:
+        return uuid.UUID(project_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+
+
+async def _get_visible_project(db: AsyncSession, user: CurrentUser, project_id: str) -> Project:
+    """Load a project the user may see. Invisible projects are 404, not 403, so ids don't leak."""
+    pid = _parse_project_id(project_id)
+    result = await db.execute(select(Project).where(Project.id == pid))
+    project = result.scalar_one_or_none()
+    if not project or not await RLSService.can_view_project(db, user, pid):
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+    return project
+
+
+def _validate_status_fields(project_stage: Optional[str], pipeline_status: Optional[str]) -> None:
+    valid_stages = {s.value for s in ProjectStage}
+    valid_statuses = {s.value for s in PipelineStatus}
+    if project_stage is not None and project_stage not in valid_stages:
+        raise HTTPException(status_code=422, detail=f"Invalid project_stage. Allowed: {sorted(valid_stages)}")
+    if pipeline_status is not None and pipeline_status not in valid_statuses:
+        raise HTTPException(status_code=422, detail=f"Invalid pipeline_status. Allowed: {sorted(valid_statuses)}")
+
+
 def _get_response_meta(page: Optional[int] = None, page_size: Optional[int] = None, total_count: Optional[int] = None) -> ResponseMeta:
     """Create response metadata."""
     return ResponseMeta(
@@ -59,6 +89,7 @@ def _get_response_meta(page: Optional[int] = None, page_size: Optional[int] = No
 @router.get("", response_model=ApiResponse[list[ProjectListResponse]])
 async def list_projects(
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
     status: Optional[str] = Query(None, description="Filter by pipeline_status"),
     stage: Optional[str] = Query(None, description="Filter by project_stage"),
     province: Optional[str] = Query(None, description="Filter by province"),
@@ -91,6 +122,10 @@ async def list_projects(
         count_query = count_query.where(Project.project_stage == stage)
     if province:
         count_query = count_query.where(Project.province == province)
+
+    # Row-level security: the page and the total see the same rows
+    query = await RLSService.scope_query(db, current_user, query)
+    count_query = await RLSService.scope_query(db, current_user, count_query)
 
     total_count = await db.execute(count_query)
     total_count = total_count.scalar() or 0
@@ -125,7 +160,7 @@ async def list_projects(
     return ApiResponse(
         data=items,
         meta=_get_response_meta(page=page, page_size=page_size, total_count=total_count),
-        audit=_get_audit_metadata(action="list_projects"),
+        audit=_get_audit_metadata(user_id=current_user.username, action="list_projects"),
     )
 
 
@@ -133,6 +168,7 @@ async def list_projects(
 async def get_project(
     project_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> ApiResponse[ProjectDetailResponse]:
     """Get detailed project view with COD history and linked entities.
 
@@ -140,13 +176,8 @@ async def get_project(
     - project_id: Project UUID
     """
 
-    # Get project
-    query = select(Project).where(Project.id == project_id)
-    result = await db.execute(query)
-    project = result.scalar_one_or_none()
-
-    if not project:
-        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+    project = await _get_visible_project(db, current_user, project_id)
+    project_id = project.id
 
     # Build COD history
     cod_history = [
@@ -215,7 +246,7 @@ async def get_project(
     return ApiResponse(
         data=response,
         meta=_get_response_meta(),
-        audit=_get_audit_metadata(action="get_project"),
+        audit=_get_audit_metadata(user_id=current_user.username, action="get_project"),
     )
 
 
@@ -223,7 +254,7 @@ async def get_project(
 async def create_project(
     req: ProjectCreateRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Query("anonymous"),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> ApiResponse[ProjectDetailResponse]:
     """Create new project.
 
@@ -234,8 +265,15 @@ async def create_project(
     - installed_capacity_mw: MW capacity
     - project_stage: feasibility, construction, operation
     - pipeline_status: proposal_under_pipeline, under_review, approved, etc.
+
+    Requires maker or admin. The creator becomes the project's direct owner.
     """
 
+    if not await RLSService.can_create_project(current_user):
+        raise HTTPException(status_code=403, detail="Maker or admin role required")
+    _validate_status_fields(req.project_stage, req.pipeline_status)
+
+    user_id = current_user.username
     project = Project(
         id=uuid.uuid4(),
         project_code=req.project_code,
@@ -255,9 +293,12 @@ async def create_project(
 
     try:
         await db.flush()
-    except Exception as e:
-        logger.error(f"Failed to create project: {e}")
-        raise HTTPException(status_code=400, detail=f"Failed to create project: {str(e)}")
+        await RLSService.assign_project_ownership(db, current_user.uuid, project.id, "direct")
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=f"Project code {req.project_code} already exists")
+    await db.refresh(project)
 
     # Return created project
     response = ProjectDetailResponse(
@@ -296,6 +337,7 @@ async def create_project(
 async def get_project_loan_accounts(
     project_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> ApiResponse[list[LoanAccountListResponse]]:
     """Get all loan accounts linked to a project.
 
@@ -303,16 +345,12 @@ async def get_project_loan_accounts(
     - project_id: Project UUID
     """
 
-    # Verify project exists
-    query = select(Project).where(Project.id == project_id)
-    result = await db.execute(query)
-    if not result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+    p = await _get_visible_project(db, current_user, project_id)
 
     # Get loan accounts
     query = (
         select(LoanAccount)
-        .where(LoanAccount.project_id == project_id)
+        .where(LoanAccount.project_id == p.id)
         .order_by(LoanAccount.created_at.desc())
     )
     result = await db.execute(query)
@@ -340,8 +378,45 @@ async def get_project_loan_accounts(
     return ApiResponse(
         data=items,
         meta=_get_response_meta(),
-        audit=_get_audit_metadata(action="list_loan_accounts"),
+        audit=_get_audit_metadata(user_id=current_user.username, action="list_loan_accounts"),
     )
+
+
+@router.patch("/{project_id}", response_model=ApiResponse[ProjectDetailResponse])
+async def update_project(
+    project_id: str,
+    req: ProjectUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ApiResponse[ProjectDetailResponse]:
+    """Update project fields.
+
+    Admins may update any project; makers only projects they own.
+    Moving to "dropped" requires a drop_reason.
+    """
+
+    project = await _get_visible_project(db, current_user, project_id)
+    if not await RLSService.can_update_project(db, current_user, project.id):
+        raise HTTPException(status_code=403, detail="Not allowed to update this project")
+
+    _validate_status_fields(req.project_stage, req.pipeline_status)
+    changes = req.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(status_code=422, detail="No fields to update")
+
+    if changes.get("pipeline_status") == PipelineStatus.DROPPED.value:
+        if not (changes.get("drop_reason") or project.drop_reason):
+            raise HTTPException(status_code=422, detail="drop_reason is required when dropping a project")
+
+    for field, value in changes.items():
+        setattr(project, field, value)
+    project.updated_by = current_user.username
+
+    await db.commit()
+    logger.info(f"Updated project {project.project_code} fields {sorted(changes)} by {current_user.username}")
+
+    # Reuse the detail view for a consistent response shape
+    return await get_project(str(project.id), db=db, current_user=current_user)
 
 
 # Import Document model (deferred to avoid circular imports)

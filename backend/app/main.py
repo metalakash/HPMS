@@ -7,8 +7,10 @@ from slowapi.util import get_remote_address
 import logging
 from datetime import datetime
 
+from sqlalchemy import text
+
 from .config import settings
-from .database import get_db, init_db, close_db
+from .database import get_db, engine, close_db
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +57,13 @@ app.add_middleware(LanguageDetectionMiddleware)
 # CORS - Internal intranet only (to be configured per SBL infra)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost", "http://localhost:3000", "http://localhost:8080"],  # DEV ONLY
+    allow_origins=[
+        "http://localhost",
+        "http://localhost:3000",  # React old dev server
+        "http://localhost:5173",  # Vite dev server (Phase 6 frontend)
+        "http://127.0.0.1:5173",
+        "http://localhost:8080",  # Alternative dev port
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -69,7 +77,6 @@ app.add_middleware(
 
 # Rate limiting
 app.state.limiter = limiter
-app.add_exception_handler(HTTPException, lambda r, e: HTTPException(status_code=e.status_code, detail=e.detail))
 
 # Register API routes
 from backend.app.api.routes_auth import router as auth_router
@@ -109,7 +116,7 @@ async def ready_check(db=Depends(get_db)):
     """Readiness check - confirms DB connectivity."""
     try:
         # Simple check that DB session works
-        await db.execute("SELECT 1")
+        await db.execute(text("SELECT 1"))
         return {"status": "ready"}
     except Exception as e:
         logger.error(f"Readiness check failed: {e}")
@@ -120,12 +127,15 @@ async def ready_check(db=Depends(get_db)):
 async def startup_event():
     """Initialize on startup."""
     logger.info("SBL HPMS Starting up")
+    # Schema is owned by Alembic (`alembic upgrade head`); never create_all here,
+    # which would bypass migrations and turn views like consortium_exposure_v into tables.
+    # A DB outage should not stop the process: /ready reports it and requests fail with 503.
     try:
-        await init_db()
-        logger.info("Database initialized")
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        logger.info("Database reachable")
     except Exception as e:
-        logger.error(f"Failed to initialize database: {e}")
-        raise
+        logger.error(f"Database not reachable at startup: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -143,4 +153,4 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("backend.app.main:app", host="0.0.0.0", port=8000, reload=True)

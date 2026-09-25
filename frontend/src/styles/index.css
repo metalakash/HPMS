@@ -1,0 +1,99 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens. Components use the semantic utilities (bg-surface, text-muted,
+ * border-line, ...) and never hard-coded colors, so dark mode is a token swap.
+ * Base hues follow PHASE-6-KICKOFF.md; status text steps are darkened (light)
+ * or lightened (dark) to meet WCAG AA 4.5:1 on their tinted backgrounds.
+ */
+:root {
+  color-scheme: light;
+  --c-bg: #f6f7f9;
+  --c-surface: #ffffff;
+  --c-surface-2: #f1f3f6;
+  --c-line: #e2e5ea;
+  --c-fg: #111827;
+  --c-muted: #5b6472;
+  --c-primary: #1976d2;
+  --c-primary-hover: #1565c0;
+  --c-primary-fg: #ffffff;
+  --c-primary-soft: #e3effb;
+  --c-success: #1e7b34;
+  --c-success-soft: #e3f4e7;
+  --c-warning: #8a5a00;
+  --c-warning-soft: #fff4d6;
+  --c-danger: #b42332;
+  --c-danger-soft: #fbe6e8;
+  --c-neutral-soft: #eceef1;
+  --c-focus: #1976d2;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --c-bg: #0f1216;
+  --c-surface: #171b21;
+  --c-surface-2: #1f242c;
+  --c-line: #2b313a;
+  --c-fg: #eef1f5;
+  --c-muted: #a3acb9;
+  --c-primary: #4c9be8;
+  --c-primary-hover: #6aaeee;
+  --c-primary-fg: #0b1a2b;
+  --c-primary-soft: #16283d;
+  --c-success: #6fd08a;
+  --c-success-soft: #13291a;
+  --c-warning: #f2c351;
+  --c-warning-soft: #2e2510;
+  --c-danger: #f28791;
+  --c-danger-soft: #331618;
+  --c-neutral-soft: #242a33;
+  --c-focus: #6aaeee;
+}
+
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+@theme inline {
+  --color-bg: var(--c-bg);
+  --color-surface: var(--c-surface);
+  --color-surface-2: var(--c-surface-2);
+  --color-line: var(--c-line);
+  --color-fg: var(--c-fg);
+  --color-muted: var(--c-muted);
+  --color-primary: var(--c-primary);
+  --color-primary-hover: var(--c-primary-hover);
+  --color-primary-fg: var(--c-primary-fg);
+  --color-primary-soft: var(--c-primary-soft);
+  --color-success: var(--c-success);
+  --color-success-soft: var(--c-success-soft);
+  --color-warning: var(--c-warning);
+  --color-warning-soft: var(--c-warning-soft);
+  --color-danger: var(--c-danger);
+  --color-danger-soft: var(--c-danger-soft);
+  --color-neutral-soft: var(--c-neutral-soft);
+  --color-focus: var(--c-focus);
+}
+
+@theme {
+  --font-sans: 'Inter', 'Segoe UI', system-ui, -apple-system, 'Noto Sans Devanagari', sans-serif;
+  /* Type scale from the kickoff doc: h1 32 / h2 24 / h3 20 / body 16 / small 14. */
+  --text-h1: 2rem;
+  --text-h1--line-height: 2.5rem;
+  --text-h2: 1.5rem;
+  --text-h2--line-height: 2rem;
+  --text-h3: 1.25rem;
+  --text-h3--line-height: 1.75rem;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-bg font-sans text-fg antialiased;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-focus;
+  }
+}

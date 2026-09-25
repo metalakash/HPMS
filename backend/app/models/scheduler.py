@@ -1,6 +1,6 @@
 """Scheduler models for automated exports and jobs."""
 
-from sqlalchemy import Column, String, Boolean, Date, DateTime, Text, Index, Enum as SQLEnum
+from sqlalchemy import Column, String, Boolean, Date, DateTime, Text, Index, ForeignKey, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from datetime import datetime
@@ -23,6 +23,8 @@ class ExportJob(Base, TimestampedMixin):
 
     Defines when and how to export reports (daily, weekly, monthly).
     """
+
+    __tablename__ = 'export_job'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
@@ -63,6 +65,8 @@ class ExportJobRun(Base, TimestampedMixin):
 
     One record per run (successful, failed, or skipped).
     """
+
+    __tablename__ = 'export_job_run'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_id = Column(UUID(as_uuid=True), ForeignKey("export_job.id"), nullable=False, index=True)

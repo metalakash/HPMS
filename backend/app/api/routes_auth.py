@@ -4,13 +4,18 @@ import logging
 from typing import Optional
 from pydantic import BaseModel
 
+from datetime import date
+
 from fastapi import APIRouter, HTTPException, status, Depends
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.database import get_db
 from backend.app.config import settings
-from backend.app.security.ldap_provider import LDAPAuthProvider, LocalDevAuthProvider
-from backend.app.security.auth_middleware import TokenManager
+from backend.app.security.ldap_provider import ADUser, LDAPAuthProvider, LocalDevAuthProvider
+from backend.app.models.auth import User, UserRole as DBUserRole
+from backend.app.security.auth_middleware import TokenManager, CurrentUser, get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +32,34 @@ if settings.USE_LDAP:
     )
 else:
     auth_provider = LocalDevAuthProvider()
+
+
+async def sync_user(db: AsyncSession, ad_user: ADUser) -> User:
+    """Create or refresh the DB user row for an authenticated AD user.
+
+    Other tables (MFA, preferences, notifications) reference ``user.id``,
+    so every login must resolve to a row.
+    """
+
+    result = await db.execute(select(User).where(User.username == ad_user.username))
+    user = result.scalar_one_or_none()
+    default_role = DBUserRole(ad_user.roles[0].value) if ad_user.roles else DBUserRole.GUEST
+
+    if user is None:
+        user = User(username=ad_user.username, created_by="auth")
+        db.add(user)
+
+    user.email = ad_user.email
+    user.full_name = ad_user.full_name
+    user.ad_distinguished_name = ad_user.ad_distinguished_name
+    user.is_ad_synced = settings.USE_LDAP
+    user.default_role = default_role
+    user.last_login_at = date.today()
+    user.updated_by = "auth"
+
+    await db.commit()
+    await db.refresh(user)
+    return user
 
 
 class LoginRequest(BaseModel):
@@ -102,8 +135,24 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
             detail="Invalid username or password",
         )
 
+    try:
+        user = await sync_user(db, ad_user)
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Could not sync user {request.username} to database: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="User store unavailable",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is disabled",
+        )
+
     # Create JWT token
-    token = TokenManager.create_token(ad_user)
+    token = TokenManager.create_token(ad_user, user.id)
 
     logger.info(f"Login successful for user: {request.username} with roles: {[r.value for r in ad_user.roles]}")
 
@@ -111,37 +160,33 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
         access_token=token,
         token_type="bearer",
         expires_in_seconds=TokenManager.TOKEN_EXPIRY_MINUTES * 60,
-        user=ad_user.to_dict(),
+        user={"id": str(user.id), **ad_user.to_dict()},
     )
 
 
 @router.get("/me")
 async def get_current_user_info(
-    current_user: dict = Depends(TokenManager.verify_token),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Get information about the current authenticated user.
 
     **Response:**
+    - id: User UUID (from sub claim)
     - username: AD username
     - email: Email address
     - full_name: Display name
     - roles: List of assigned roles
 
     **Authorization:**
-    - Requires valid Bearer token
+    - Requires valid Bearer token in Authorization header
     """
 
-    if current_user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-        )
-
     return {
-        "username": current_user.get("username"),
-        "email": current_user.get("email"),
-        "full_name": current_user.get("full_name"),
-        "roles": current_user.get("roles"),
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "full_name": current_user.full_name,
+        "roles": [r.value for r in current_user.roles],
     }
 
 

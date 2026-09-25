@@ -4,10 +4,13 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import date
 import uuid
+from decimal import Decimal
 from .base import Base, TimestampedMixin
 
 class ConsortiumFacility(Base, TimestampedMixin):
     """Consortium credit facility structure."""
+    
+    __tablename__ = 'consortium_facilities'
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), nullable=False, unique=True, index=True)
@@ -25,10 +28,13 @@ class ConsortiumFacility(Base, TimestampedMixin):
     security_type = Column(String(100))
     charge_ranking = Column(String(50))
     
+    project = relationship("Project", back_populates="consortium")
     members = relationship("ConsortiumMember", back_populates="facility")
 
 class ConsortiumMember(Base, TimestampedMixin):
     """Consortium member with effective-dating for changes."""
+    
+    __tablename__ = 'consortium_members'
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     consortium_facility_id = Column(UUID(as_uuid=True), ForeignKey('consortium_facilities.id'), nullable=False, index=True)
@@ -42,7 +48,7 @@ class ConsortiumMember(Base, TimestampedMixin):
     committed_amount = Column(Numeric(20, 4), nullable=False)
     share_pct = Column(Numeric(9, 6), nullable=False)
     
-    disbursed_to_date = Column(Numeric(20, 4), default=0)
+    disbursed_to_date = Column(Numeric(20, 4), default=Decimal("0"))
     
     # Effective dating
     valid_from_ad = Column(Date, nullable=False)

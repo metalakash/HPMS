@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from datetime import datetime
 import enum
 import uuid
+from decimal import Decimal
 from .base import Base, TimestampedMixin
 
 class SyncType(str, enum.Enum):
@@ -16,6 +17,8 @@ class SyncType(str, enum.Enum):
 class LoanAccount(Base, TimestampedMixin):
     """Finacle loan account linked to a project."""
     
+    __tablename__ = 'loan_accounts'
+    
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), nullable=False, index=True)
     
@@ -24,14 +27,14 @@ class LoanAccount(Base, TimestampedMixin):
     
     facility_type = Column(String(100))
     sanctioned_amount = Column(Numeric(20, 4), nullable=False)
-    disbursed_amount = Column(Numeric(20, 4), default=0)
-    outstanding_principal = Column(Numeric(20, 4), default=0)
-    outstanding_interest = Column(Numeric(20, 4), default=0)
-    overdue_principal = Column(Numeric(20, 4), default=0)
-    overdue_interest = Column(Numeric(20, 4), default=0)
+    disbursed_amount = Column(Numeric(20, 4), default=Decimal("0"))
+    outstanding_principal = Column(Numeric(20, 4), default=Decimal("0"))
+    outstanding_interest = Column(Numeric(20, 4), default=Decimal("0"))
+    overdue_principal = Column(Numeric(20, 4), default=Decimal("0"))
+    overdue_interest = Column(Numeric(20, 4), default=Decimal("0"))
     
     currency_code = Column(String(3), default='NPR')
-    fx_rate_to_npr = Column(Numeric(18, 8), default=1)
+    fx_rate_to_npr = Column(Numeric(18, 8), default=Decimal("1"))
     fx_rate_asof_ad = Column(Date)
     
     interest_rate_pct = Column(Numeric(7, 4))
@@ -57,6 +60,8 @@ class LoanAccount(Base, TimestampedMixin):
 
 class DisbursementTranche(Base, TimestampedMixin):
     """Disbursement tranche schedule and tracking."""
+    
+    __tablename__ = 'disbursement_tranches'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     loan_account_id = Column(UUID(as_uuid=True), ForeignKey('loan_accounts.id'), nullable=False, index=True)
@@ -81,6 +86,8 @@ class DisbursementTranche(Base, TimestampedMixin):
 class Repayment(Base, TimestampedMixin):
     """Repayment schedule and tracking."""
     
+    __tablename__ = 'repayments'
+    
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     loan_account_id = Column(UUID(as_uuid=True), ForeignKey('loan_accounts.id'), nullable=False, index=True)
     
@@ -89,8 +96,8 @@ class Repayment(Base, TimestampedMixin):
     principal_due = Column(Numeric(20, 4))
     interest_due = Column(Numeric(20, 4))
     
-    principal_paid = Column(Numeric(20, 4), default=0)
-    interest_paid = Column(Numeric(20, 4), default=0)
+    principal_paid = Column(Numeric(20, 4), default=Decimal("0"))
+    interest_paid = Column(Numeric(20, 4), default=Decimal("0"))
     paid_date_ad = Column(Date)
     paid_date_bs = Column(String(10))
     
@@ -105,6 +112,8 @@ class Repayment(Base, TimestampedMixin):
 
 class LoanAccountRateHistory(Base, TimestampedMixin):
     """Effective-dated interest rate history for loan accounts."""
+    
+    __tablename__ = 'loan_account_rate_history'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     loan_account_id = Column(UUID(as_uuid=True), ForeignKey('loan_accounts.id'), nullable=False, index=True)
@@ -131,6 +140,8 @@ class LoanAccountRateHistory(Base, TimestampedMixin):
 class CBSSyncLog(Base, TimestampedMixin):
     """Finacle CBS synchronisation audit log."""
     
+    __tablename__ = 'cbs_sync_logs'
+    
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     loan_account_id = Column(UUID(as_uuid=True), ForeignKey('loan_accounts.id'), nullable=True, index=True)
     
@@ -152,12 +163,14 @@ class CBSSyncLog(Base, TimestampedMixin):
 class BudgetLine(Base, TimestampedMixin):
     """Project budget and actual expense tracking."""
     
+    __tablename__ = 'budget_lines'
+    
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), nullable=False, index=True)
     
     category = Column(String(100))
     budgeted_amount = Column(Numeric(20, 4))
-    actual_amount = Column(Numeric(20, 4), default=0)
+    actual_amount = Column(Numeric(20, 4), default=Decimal("0"))
     
     # Derived columns
     variance_amount = Column(Numeric(20, 4))

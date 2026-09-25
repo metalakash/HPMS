@@ -1,62 +1,69 @@
-"""Tests for mobile GraphQL API."""
+"""Tests for the GraphQL API used by mobile and web clients."""
 
 import pytest
+from datetime import date
 from uuid import UUID
 import base64
 from typing import Dict, Any
+
+from graphql import parse, validate
 
 from backend.app.schemas.graphql_schema import (
     ProjectType,
     LoanAccountType,
     UserType,
     PortfolioMetricsType,
-    CovenantMetricsType,
     ProjectConnectionType,
     PageInfoType,
+    schema,
 )
+
+
+def schema_errors(document: str) -> list:
+    """Validation errors for a query/mutation against the real schema."""
+    return [e.message for e in validate(schema._schema, parse(document))]
 
 
 class TestGraphQLTypes:
     """Test GraphQL type definitions."""
 
     def test_project_type(self):
-        """Test ProjectType creation."""
         project = ProjectType(
             id=UUID("12345678-1234-5678-1234-567812345678"),
-            name="Test Project",
-            capacity_mw=50.0,
-            province="Kathmandu",
+            project_code="SBL-HPP-0001",
+            name_en="Test Project",
+            name_np="परीक्षण",
+            installed_capacity_mw=50.0,
+            province="Bagmati",
             district="Kathmandu",
-            status="active",
-            facility_type="run_of_river",
-            rate=8.5,
+            pipeline_status="under_operation",
+            project_stage="operation",
+            forecast_cod_ad=date(2027, 1, 1),
         )
 
-        assert project.name == "Test Project"
-        assert project.capacity_mw == 50.0
-        assert project.status == "active"
-        assert project.rate == 8.5
+        assert project.name_en == "Test Project"
+        assert project.installed_capacity_mw == 50.0
+        assert project.pipeline_status == "under_operation"
+        assert project.actual_cod_ad is None
 
     def test_loan_account_type(self):
-        """Test LoanAccountType creation."""
         loan = LoanAccountType(
             id=UUID("87654321-4321-8765-4321-876543218765"),
             project_id=UUID("12345678-1234-5678-1234-567812345678"),
-            bank_name="Test Bank",
-            loan_amount=1000000.0,
+            facility_type="term_loan",
+            currency_code="NPR",
+            sanctioned_amount=1000000.0,
             disbursed_amount=750000.0,
-            remaining_amount=250000.0,
-            status="active",
-            interest_rate=8.5,
-            tenor_years=15,
+            outstanding_principal=700000.0,
+            interest_rate_pct=8.5,
+            maturity_ad=None,
+            sync_status="success",
         )
 
-        assert loan.bank_name == "Test Bank"
-        assert loan.loan_amount == 1000000.0
-        assert loan.tenor_years == 15
+        assert loan.sanctioned_amount == 1000000.0
+        assert loan.interest_rate_pct == 8.5
 
     def test_user_type(self):
-        """Test UserType creation."""
         user = UserType(
             id=UUID("11111111-1111-1111-1111-111111111111"),
             username="testuser",
@@ -64,46 +71,25 @@ class TestGraphQLTypes:
             full_name="Test User",
             is_active=True,
             default_role="maker",
+            language_preference="ne",
         )
 
         assert user.username == "testuser"
-        assert user.email == "test@example.com"
-        assert user.is_active is True
         assert user.default_role == "maker"
+        assert user.language_preference == "ne"
 
     def test_portfolio_metrics_type(self):
-        """Test PortfolioMetricsType creation."""
         metrics = PortfolioMetricsType(
             total_projects=10,
-            total_capacity_mw=500.0,
-            total_loan_amount=5000000.0,
-            total_disbursed=3750000.0,
             active_projects=9,
-            average_rate=8.5,
-            average_tenor_years=15,
+            total_capacity_mw=500.0,
+            total_sanctioned=5000000.0,
+            total_disbursed=3750000.0,
+            average_rate_pct=None,
         )
 
         assert metrics.total_projects == 10
-        assert metrics.total_capacity_mw == 500.0
-        assert metrics.active_projects == 9
-
-    def test_covenant_metrics_type(self):
-        """Test CovenantMetricsType creation."""
-        metrics = CovenantMetricsType(
-            dscr=1.35,
-            ltv=65.0,
-            icr=2.5,
-            dscr_pass=True,
-            ltv_pass=True,
-            icr_pass=True,
-        )
-
-        assert metrics.dscr == 1.35
-        assert metrics.ltv == 65.0
-        assert metrics.icr == 2.5
-        assert metrics.dscr_pass is True
-        assert metrics.ltv_pass is True
-        assert metrics.icr_pass is True
+        assert metrics.average_rate_pct is None
 
 
 class TestPaginationCursors:
@@ -150,113 +136,56 @@ class TestPaginationCursors:
 
 
 class TestGraphQLQueries:
-    """Test GraphQL query structure."""
+    """Queries clients send must validate against the schema."""
 
-    def test_simple_project_query(self):
-        """Test simple project query structure."""
-        query = """
+    def test_project_detail_query(self):
+        assert schema_errors("""
         query GetProject($id: UUID!) {
-            project(id: $id) {
-                id
-                name
-                capacity_mw
-                rate
-            }
+            project(id: $id) { id projectCode nameEn installedCapacityMw pipelineStatus forecastCodAd }
+            loanAccounts(projectId: $id) { id sanctionedAmount interestRatePct }
         }
-        """
-
-        assert "GetProject" in query
-        assert "project" in query
-        assert "id" in query
-        assert "capacity_mw" in query
+        """) == []
 
     def test_projects_with_pagination_query(self):
-        """Test projects query with pagination."""
-        query = """
-        query GetProjects($first: Int, $after: String, $status: String) {
-            projects(first: $first, after: $after, status: $status) {
-                edges {
-                    node {
-                        id
-                        name
-                        capacity_mw
-                    }
-                    cursor
-                }
-                pageInfo {
-                    hasNextPage
-                    endCursor
-                    totalCount
-                }
+        assert schema_errors("""
+        query GetProjects($first: Int, $after: String, $pipelineStatus: String) {
+            projects(first: $first, after: $after, pipelineStatus: $pipelineStatus) {
+                edges { node { id nameEn installedCapacityMw } cursor }
+                pageInfo { hasNextPage endCursor totalCount }
             }
         }
-        """
-
-        assert "first" in query
-        assert "after" in query
-        assert "status" in query
-        assert "edges" in query
-        assert "pageInfo" in query
-        assert "totalCount" in query
+        """) == []
 
     def test_portfolio_metrics_query(self):
-        """Test portfolio metrics query."""
-        query = """
-        query GetPortfolioMetrics {
-            portfolio_metrics {
-                total_projects
-                total_capacity_mw
-                average_rate
-                active_projects
-            }
-        }
-        """
+        assert schema_errors("""
+        query { portfolioMetrics { totalProjects activeProjects totalCapacityMw totalSanctioned averageRatePct } }
+        """) == []
 
-        assert "portfolio_metrics" in query
-        assert "total_capacity_mw" in query
-        assert "average_rate" in query
+    def test_snake_case_fields_are_rejected(self):
+        assert schema_errors("query { portfolio_metrics { total_projects } }") != []
 
-    def test_covenant_metrics_query(self):
-        """Test covenant metrics query."""
-        query = """
-        query GetCovenantMetrics {
-            covenant_metrics {
-                dscr
-                ltv
-                icr
-                dscr_pass
-                ltv_pass
-                icr_pass
-            }
-        }
-        """
-
-        assert "covenant_metrics" in query
-        assert "dscr_pass" in query
-        assert "ltv_pass" in query
+    def test_removed_placeholder_fields_are_gone(self):
+        # covenantMetrics returned hard-coded numbers; rate/capacity_mw never existed on Project
+        assert schema_errors("query { covenantMetrics { dscr } }") != []
+        assert schema_errors("query { projects { edges { node { rate } } } }") != []
 
 
 class TestGraphQLMutations:
-    """Test GraphQL mutations."""
+    """Mutations clients send must validate against the schema."""
 
     def test_update_project_mutation(self):
-        """Test update project mutation structure."""
-        mutation = """
-        mutation UpdateProject($id: UUID!, $name: String, $rate: Float) {
-            update_project(id: $id, name: $name, rate: $rate) {
-                id
-                name
-                rate
-                status
+        assert schema_errors("""
+        mutation UpdateProject($id: UUID!, $nameEn: String, $pipelineStatus: String, $dropReason: String) {
+            updateProject(id: $id, nameEn: $nameEn, pipelineStatus: $pipelineStatus, dropReason: $dropReason) {
+                id nameEn pipelineStatus dropReason
             }
         }
-        """
+        """) == []
 
-        assert "UpdateProject" in mutation
-        assert "update_project" in mutation
-        assert "id" in mutation
-        assert "name" in mutation
-        assert "rate" in mutation
+    def test_update_project_rejects_nonexistent_columns(self):
+        assert schema_errors("""
+        mutation { updateProject(id: "12345678-1234-5678-1234-567812345678", rate: 9.0) { id } }
+        """) != []
 
 
 class TestMobileOptimizations:

@@ -271,8 +271,8 @@ class TestReportTypes:
 
     def test_report_type_string_conversion(self):
         """Test report type conversion to string."""
-        assert str(ReportType.PORTFOLIO) == "ReportType.portfolio"
-        assert ReportType.PORTFOLIO.value in str(ReportType.PORTFOLIO)
+        assert ReportType.PORTFOLIO.value == "portfolio"
+        assert ReportType("portfolio") is ReportType.PORTFOLIO
 
 
 class TestPDFPerformance:

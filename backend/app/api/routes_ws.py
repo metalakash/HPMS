@@ -7,10 +7,10 @@ import logging
 import asyncio
 from datetime import datetime
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status, Query, Depends
-from fastapi.security import HTTPBearer, HTTPAuthCredentials
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status, Depends, HTTPException
 
-from backend.app.security.auth_middleware import TokenManager
+from backend.app.config import settings
+from backend.app.security.auth_middleware import TokenManager, CurrentUser, require_admin
 from backend.app.websocket.ws_handler import (
     WebSocketConnectionHandler,
     connection_manager,
@@ -21,9 +21,6 @@ from backend.app.services.notification_service import notification_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ws", tags=["websocket"])
-
-# HTTP Bearer for WebSocket auth
-security = HTTPBearer()
 
 
 @router.websocket("/notifications")
@@ -80,7 +77,7 @@ async def websocket_notifications(websocket: WebSocket):
     # Validate JWT token
     try:
         payload = TokenManager.verify_token(token)
-        user_id = payload.get("sub")
+        user_id = payload.get("sub") if payload else None
 
         if not user_id:
             await websocket.close(
@@ -104,6 +101,7 @@ async def websocket_notifications(websocket: WebSocket):
 
     # Create connection handler
     handler = WebSocketConnectionHandler(websocket, user_id)
+    heartbeat_task = None
 
     try:
         # Accept connection
@@ -171,7 +169,8 @@ async def websocket_notifications(websocket: WebSocket):
 
     finally:
         # Cleanup
-        heartbeat_task.cancel()
+        if heartbeat_task:
+            heartbeat_task.cancel()
         await handler.unsubscribe()
         await handler.close()
         await connection_manager.unregister(handler)
@@ -200,7 +199,7 @@ async def heartbeat_loop(handler: WebSocketConnectionHandler) -> None:
 
 
 @router.get("/stats")
-async def websocket_stats():
+async def websocket_stats(_admin: CurrentUser = Depends(require_admin)):
     """Get WebSocket connection statistics.
 
     Returns:
@@ -222,7 +221,7 @@ async def websocket_stats():
 
 
 @router.get("/user/{user_id}/connections")
-async def get_user_connections(user_id: str):
+async def get_user_connections(user_id: str, _admin: CurrentUser = Depends(require_admin)):
     """Get active connections for a user.
 
     Args:
@@ -258,8 +257,9 @@ async def get_user_connections(user_id: str):
 async def broadcast_test_notification(
     user_id: str,
     message: str = "Test notification",
+    _admin: CurrentUser = Depends(require_admin),
 ):
-    """Send test notification to user (development only).
+    """Send test notification to user (development only, admin only).
 
     Args:
         user_id: Target user UUID
@@ -268,6 +268,9 @@ async def broadcast_test_notification(
     Returns:
         Broadcast result
     """
+
+    if not settings.DEBUG:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
     from uuid import UUID
 

@@ -12,6 +12,11 @@ from enum import Enum
 logger = logging.getLogger(__name__)
 
 
+def _fmt_pct(value) -> str:
+    """Format a percentage, showing a dash when there is no data rather than a fake 0.00."""
+    return f"{value:.2f}" if value is not None else "—"
+
+
 class ReportType(str, Enum):
     """Report types available."""
     PORTFOLIO = "portfolio"
@@ -138,7 +143,7 @@ class PDFService:
             ["Total Projects", str(project_data.get("total_projects", 0))],
             ["Total Capacity (MW)", f"{project_data.get('total_capacity_mw', 0):.2f}"],
             ["Active Projects", str(project_data.get("active_projects", 0))],
-            ["Average Rate (%)", f"{project_data.get('average_rate', 0):.2f}"],
+            ["Average Rate (%)", _fmt_pct(project_data.get("average_rate"))],
         ]
 
         summary_table = Table(
@@ -172,7 +177,7 @@ class PDFService:
                     proj.get("name", "N/A"),
                     f"{proj.get('capacity_mw', 0):.2f}",
                     proj.get("status", "Unknown"),
-                    f"{proj.get('rate', 0):.2f}",
+                    _fmt_pct(proj.get("rate")),
                 ])
 
             projects_table = Table(

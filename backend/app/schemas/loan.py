@@ -35,7 +35,7 @@ class LoanAccountDetailResponse(BaseModel):
 
     # Account identity (sensitive fields masked in logs)
     finacle_account_id: str = Field(description="CBS account ID (encrypted in DB)")
-    facility_type: str
+    facility_type: Optional[str]
 
     # Financial snapshot
     sanctioned_amount: Decimal = Field(description="Loan limit")
@@ -48,7 +48,7 @@ class LoanAccountDetailResponse(BaseModel):
     overdue_interest: Decimal = Field(default=0)
 
     # Current rate
-    interest_rate_pct: Decimal = Field(description="Current rate from active history entry")
+    interest_rate_pct: Optional[Decimal] = Field(description="Current rate; null if not yet known")
     rate_as_of_date: Optional[date] = Field(None, description="When rate last changed")
 
     # Dates
@@ -80,12 +80,12 @@ class LoanAccountListResponse(BaseModel):
     project_code: str
     finacle_account_id: str = Field(description="Masked in logs")
 
-    facility_type: str
+    facility_type: Optional[str]
     sanctioned_amount: Decimal
     disbursed_amount: Decimal
     outstanding_principal: Decimal
 
-    current_rate_pct: Decimal
+    current_rate_pct: Optional[Decimal]  # nullable in DB until CBS provides a rate
     maturity_ad: Optional[date]
 
     sync_status: str
