@@ -25,6 +25,7 @@ from backend.app.schemas.loan import (
     LoanAccountDetailResponse,
     RateHistoryEntry,
     RateSyncResponse,
+    CovenantMetricsResponse,
 )
 from backend.app.services.cbs_sync_service import CBSSyncService
 from backend.app.integration.finacle_adapter import get_adapter
@@ -289,4 +290,57 @@ async def trigger_rate_sync(
         data=response,
         meta=_get_response_meta(),
         audit=_get_audit_metadata(user_id=user_id, action="trigger_sync"),
+    )
+
+
+@router.get("/{loan_id}/covenant-metrics", response_model=ApiResponse[CovenantMetricsResponse])
+async def get_covenant_metrics(
+    loan_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ApiResponse[CovenantMetricsResponse]:
+    """Get covenant metrics for a loan account.
+
+    Returns DSCR, LTV, ICR with pass/fail indicators.
+    RLS: user must have access to the linked project.
+    """
+
+    # Parse UUID
+    try:
+        lid = uuid.UUID(loan_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Loan {loan_id} not found")
+
+    # Load loan
+    result = await db.execute(select(LoanAccount).where(LoanAccount.id == lid))
+    loan = result.scalar_one_or_none()
+    if not loan:
+        raise HTTPException(status_code=404, detail=f"Loan {loan_id} not found")
+
+    # Check RLS via project access
+    if not await RLSService.can_view_project(db, current_user, loan.project_id):
+        raise HTTPException(status_code=404, detail=f"Loan {loan_id} not found")
+
+    # Calculate if missing
+    if not loan.dscr or not loan.metric_as_of_date:
+        from backend.app.services.covenant_service import CovenantService
+        await CovenantService.calculate_metrics(db, loan)
+        await db.flush()
+
+    # Prepare response with pass/fail flags
+    metrics = CovenantMetricsResponse(
+        loan_account_id=str(loan.id),
+        dscr=loan.dscr,
+        ltv=loan.ltv,
+        icr=loan.icr,
+        metric_as_of_date=loan.metric_as_of_date,
+        dscr_pass=(loan.dscr or 0) >= 1.25,
+        ltv_pass=(loan.ltv or 0) <= 70,
+        icr_pass=(loan.icr or 0) >= 2.0,
+    )
+
+    return ApiResponse(
+        data=metrics,
+        meta=_get_response_meta(),
+        audit=_get_audit_metadata(user_id=current_user.username, action="read_covenant_metrics"),
     )

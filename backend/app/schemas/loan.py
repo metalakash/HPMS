@@ -124,3 +124,22 @@ class RateSyncResponse(BaseModel):
 
     class Config:
         strict = True
+
+
+class CovenantMetricsResponse(BaseModel):
+    """Covenant metrics for a loan account."""
+
+    loan_account_id: str = Field(description="Loan account UUID")
+    dscr: Optional[Decimal] = Field(None, description="Debt Service Coverage Ratio")
+    ltv: Optional[Decimal] = Field(None, description="Loan-to-Value ratio (%)")
+    icr: Optional[Decimal] = Field(None, description="Interest Coverage Ratio")
+    metric_as_of_date: Optional[date] = Field(None, description="Date metrics were calculated")
+
+    # Status indicators
+    dscr_pass: bool = Field(description="DSCR >= 1.25 threshold")
+    ltv_pass: bool = Field(description="LTV <= 70% threshold")
+    icr_pass: bool = Field(description="ICR >= 2.0 threshold")
+
+    class Config:
+        strict = True
+        json_encoders = {Decimal: lambda v: str(v)}

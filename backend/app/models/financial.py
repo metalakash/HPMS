@@ -42,6 +42,12 @@ class LoanAccount(Base, TimestampedMixin):
     moratorium_end_bs = Column(String(10))
     maturity_ad = Column(Date)
     maturity_bs = Column(String(10))
+
+    # Covenant metrics (calculated)
+    dscr = Column(Numeric(10, 4), nullable=True)  # Debt Service Coverage Ratio
+    ltv = Column(Numeric(10, 4), nullable=True)   # Loan-to-Value ratio
+    icr = Column(Numeric(10, 4), nullable=True)   # Interest Coverage Ratio
+    metric_as_of_date = Column(Date, nullable=True)  # When metrics were calculated
     
     last_synced_at = Column(String(100))
     sync_status = Column(String(50), default='pending', index=True)

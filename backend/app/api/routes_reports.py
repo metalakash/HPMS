@@ -257,12 +257,47 @@ async def export_covenant_pdf(
     """
 
     try:
-        # DSCR/LTV/ICR are not stored anywhere yet (the compliance engine is in-memory only).
-        # Rendering zeros would print FAIL for every covenant, so refuse instead.
-        raise HTTPException(
-            status_code=501,
-            detail="Covenant metrics (DSCR, LTV, ICR) are not persisted yet; covenant PDF is unavailable",
+        # Fetch covenant metrics from authorized projects
+        authorized_ids = await RLSService.get_authorized_project_ids(db, current_user)
+
+        if not authorized_ids:
+            raise HTTPException(status_code=404, detail="No authorized projects")
+
+        # Get all loans for authorized projects with metrics
+        from backend.app.models.financial import LoanAccount
+        from backend.app.services.covenant_service import CovenantService
+
+        result = await db.execute(
+            select(LoanAccount).where(LoanAccount.project_id.in_(authorized_ids))
         )
+        loans = result.scalars().all()
+
+        # Calculate metrics for loans missing them
+        for loan in loans:
+            if not loan.dscr or not loan.metric_as_of_date:
+                await CovenantService.calculate_metrics(db, loan)
+
+        # Aggregate covenant data
+        dscr_values = [float(l.dscr) for l in loans if l.dscr]
+        ltv_values = [float(l.ltv) for l in loans if l.ltv]
+        icr_values = [float(l.icr) for l in loans if l.icr]
+
+        avg_dscr = sum(dscr_values) / len(dscr_values) if dscr_values else 0
+        avg_ltv = sum(ltv_values) / len(ltv_values) if ltv_values else 0
+        avg_icr = sum(icr_values) / len(icr_values) if icr_values else 0
+
+        covenant_data = {
+            "dscr": avg_dscr,
+            "ltv": avg_ltv,
+            "icr": avg_icr,
+            "dscr_threshold": 1.25,
+            "ltv_threshold": 70,
+            "icr_threshold": 2.0,
+            "dscr_pass": avg_dscr >= 1.25,
+            "ltv_pass": avg_ltv <= 70,
+            "icr_pass": avg_icr >= 2.0,
+            "loan_count": len(loans),
+        }
 
         # Generate PDF
         pdf_bytes = PDFService.generate_covenant_report(
