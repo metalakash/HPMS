@@ -126,6 +126,53 @@ class RateSyncResponse(BaseModel):
         strict = True
 
 
+class DisbursementTrancheItem(BaseModel):
+    """A single disbursement tranche, scoped to its loan account."""
+
+    id: str
+    loan_account_id: str
+    facility_type: Optional[str]
+    tranche_no: Optional[int]
+    planned_amount: Optional[Decimal]
+    actual_amount: Optional[Decimal]
+    planned_date_ad: Optional[date]
+    actual_date_ad: Optional[date]
+
+    class Config:
+        strict = True
+        json_encoders = {Decimal: lambda v: str(v)}
+
+
+class RepaymentItem(BaseModel):
+    """A single repayment installment, scoped to its loan account."""
+
+    id: str
+    loan_account_id: str
+    facility_type: Optional[str]
+    due_date_ad: Optional[date]
+    principal_due: Decimal
+    interest_due: Decimal
+    principal_paid: Decimal
+    interest_paid: Decimal
+    paid_date_ad: Optional[date]
+    days_past_due: int
+    status: str = Field(description="paid, overdue, or upcoming")
+
+    class Config:
+        strict = True
+        json_encoders = {Decimal: lambda v: str(v)}
+
+
+class ProjectDisbursementsResponse(BaseModel):
+    """Disbursement tranches and repayments across all of a project's loan accounts."""
+
+    tranches: List[DisbursementTrancheItem]
+    repayments: List[RepaymentItem]
+
+    class Config:
+        strict = True
+
+
 class CovenantMetricsResponse(BaseModel):
     """Covenant metrics for a loan account."""
 

@@ -10,6 +10,7 @@ export const queryKeys = {
   projectList: (filters: ProjectFilters) => ['projects', 'list', filters] as const,
   project: (id: string) => ['projects', 'detail', id] as const,
   projectLoans: (id: string) => ['projects', 'detail', id, 'loans'] as const,
+  projectDisbursements: (id: string) => ['projects', 'detail', id, 'disbursements'] as const,
   me: ['auth', 'me'] as const,
   loans: ['loans'] as const,
   loanList: (filters: LoanFilters) => ['loans', 'list', filters] as const,
@@ -44,6 +45,13 @@ export function useProjectLoans(id: string) {
   return useQuery({
     queryKey: queryKeys.projectLoans(id),
     queryFn: () => projectsApi.loanAccounts(id),
+  });
+}
+
+export function useProjectDisbursements(id: string) {
+  return useQuery({
+    queryKey: queryKeys.projectDisbursements(id),
+    queryFn: () => projectsApi.disbursements(id),
   });
 }
 

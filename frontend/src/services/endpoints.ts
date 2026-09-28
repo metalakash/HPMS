@@ -6,6 +6,7 @@ import type {
   LoanFilters,
   LoginRequest,
   ProjectDetail,
+  ProjectDisbursements,
   ProjectFilters,
   ProjectListItem,
   TokenResponse,
@@ -36,6 +37,10 @@ export const projectsApi = {
   loanAccounts: (id: string) =>
     api
       .get<ApiResponse<LoanAccountListItem[]>>(`/api/v1/projects/${id}/loan-accounts`)
+      .then((r) => r.data),
+  disbursements: (id: string) =>
+    api
+      .get<ApiResponse<ProjectDisbursements>>(`/api/v1/projects/${id}/disbursements`)
       .then((r) => r.data),
 };
 

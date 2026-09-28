@@ -134,6 +134,36 @@ export interface LoanFilters extends PageParams {
   facility_type?: string;
 }
 
+export interface DisbursementTrancheItem {
+  id: string;
+  loan_account_id: string;
+  facility_type: string | null;
+  tranche_no: number | null;
+  planned_amount: DecimalString | null;
+  actual_amount: DecimalString | null;
+  planned_date_ad: IsoDate | null;
+  actual_date_ad: IsoDate | null;
+}
+
+export interface RepaymentItem {
+  id: string;
+  loan_account_id: string;
+  facility_type: string | null;
+  due_date_ad: IsoDate | null;
+  principal_due: DecimalString;
+  interest_due: DecimalString;
+  principal_paid: DecimalString;
+  interest_paid: DecimalString;
+  paid_date_ad: IsoDate | null;
+  days_past_due: number;
+  status: 'paid' | 'overdue' | 'upcoming';
+}
+
+export interface ProjectDisbursements {
+  tranches: DisbursementTrancheItem[];
+  repayments: RepaymentItem[];
+}
+
 // --- WebSocket (backend/app/websocket/ws_handler.py, services/notification_service.py) ---
 
 export type WsMessageType =

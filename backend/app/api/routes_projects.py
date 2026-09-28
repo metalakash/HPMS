@@ -9,7 +9,7 @@ Implements:
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional
 from decimal import Decimal
 import uuid
@@ -23,7 +23,7 @@ from backend.app.database import get_db
 from backend.app.models.project import Project, RCODEvent, PipelineStatus, ProjectStage
 from backend.app.security.auth_middleware import CurrentUser, get_current_user
 from backend.app.security.rls_service import RLSService
-from backend.app.models.financial import LoanAccount, LoanAccountRateHistory
+from backend.app.models.financial import LoanAccount, LoanAccountRateHistory, DisbursementTranche, Repayment
 from backend.app.schemas.common import ApiResponse, ResponseMeta, AuditMetadata
 from backend.app.schemas.project import (
     ProjectCreateRequest,
@@ -33,7 +33,13 @@ from backend.app.schemas.project import (
     ProjectUpdateRequest,
     CODHistoryEntry,
 )
-from backend.app.schemas.loan import LoanAccountDetailResponse, LoanAccountListResponse
+from backend.app.schemas.loan import (
+    LoanAccountDetailResponse,
+    LoanAccountListResponse,
+    DisbursementTrancheItem,
+    RepaymentItem,
+    ProjectDisbursementsResponse,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
@@ -379,6 +385,86 @@ async def get_project_loan_accounts(
         data=items,
         meta=_get_response_meta(),
         audit=_get_audit_metadata(user_id=current_user.username, action="list_loan_accounts"),
+    )
+
+
+@router.get("/{project_id}/disbursements", response_model=ApiResponse[ProjectDisbursementsResponse])
+async def get_project_disbursements(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ApiResponse[ProjectDisbursementsResponse]:
+    """Get disbursement tranches and repayment schedule for all of a project's loan accounts.
+
+    Path parameters:
+    - project_id: Project UUID
+    """
+
+    p = await _get_visible_project(db, current_user, project_id)
+
+    loan_query = select(LoanAccount).where(LoanAccount.project_id == p.id)
+    loan_result = await db.execute(loan_query)
+    loans = {loan.id: loan for loan in loan_result.scalars().all()}
+
+    tranches: list[DisbursementTrancheItem] = []
+    repayments: list[RepaymentItem] = []
+
+    if loans:
+        tranche_query = (
+            select(DisbursementTranche)
+            .where(DisbursementTranche.loan_account_id.in_(loans.keys()))
+            .order_by(DisbursementTranche.planned_date_ad)
+        )
+        tranche_result = await db.execute(tranche_query)
+        tranches = [
+            DisbursementTrancheItem(
+                id=str(t.id),
+                loan_account_id=str(t.loan_account_id),
+                facility_type=loans[t.loan_account_id].facility_type,
+                tranche_no=t.tranche_no,
+                planned_amount=t.planned_amount,
+                actual_amount=t.actual_amount,
+                planned_date_ad=t.planned_date_ad,
+                actual_date_ad=t.actual_date_ad,
+            )
+            for t in tranche_result.scalars().all()
+        ]
+
+        repayment_query = (
+            select(Repayment)
+            .where(Repayment.loan_account_id.in_(loans.keys()))
+            .order_by(Repayment.due_date_ad)
+        )
+        repayment_result = await db.execute(repayment_query)
+        today = date.today()
+        for r in repayment_result.scalars().all():
+            fully_paid = r.principal_paid >= r.principal_due and r.interest_paid >= r.interest_due
+            if fully_paid:
+                rstatus = "paid"
+            elif r.due_date_ad and r.due_date_ad < today:
+                rstatus = "overdue"
+            else:
+                rstatus = "upcoming"
+            repayments.append(
+                RepaymentItem(
+                    id=str(r.id),
+                    loan_account_id=str(r.loan_account_id),
+                    facility_type=loans[r.loan_account_id].facility_type,
+                    due_date_ad=r.due_date_ad,
+                    principal_due=r.principal_due,
+                    interest_due=r.interest_due,
+                    principal_paid=r.principal_paid,
+                    interest_paid=r.interest_paid,
+                    paid_date_ad=r.paid_date_ad,
+                    days_past_due=r.days_past_due or 0,
+                    status=rstatus,
+                )
+            )
+
+    return ApiResponse(
+        data=ProjectDisbursementsResponse(tranches=tranches, repayments=repayments),
+        meta=_get_response_meta(),
+        audit=_get_audit_metadata(user_id=current_user.username, action="get_project_disbursements"),
     )
 
 
