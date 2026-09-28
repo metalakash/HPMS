@@ -63,6 +63,7 @@ app.add_middleware(
         "http://localhost:5173",  # Vite dev server (Phase 6 frontend)
         "http://127.0.0.1:5173",
         "http://localhost:8080",  # Alternative dev port
+        "https://hpms-web.vercel.app",  # TEMP DEMO: Vercel-hosted frontend
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -72,7 +73,12 @@ app.add_middleware(
 # Trusted hosts
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["localhost", "127.0.0.1", "hpms.sbl.local"],  # DEV ONLY
+    allowed_hosts=[
+        "localhost",
+        "127.0.0.1",
+        "hpms.sbl.local",
+        "*.trycloudflare.com",  # TEMP DEMO: quick tunnel exposing local backend
+    ],  # DEV ONLY
 )
 
 # Rate limiting
