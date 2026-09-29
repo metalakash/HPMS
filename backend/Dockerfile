@@ -8,14 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
-COPY pyproject.toml .
+# Copy application code (setuptools needs backend/ present to resolve packages)
+COPY . .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -e .
-
-# Copy application code
-COPY . .
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
