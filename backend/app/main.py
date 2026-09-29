@@ -98,6 +98,7 @@ from backend.app.api.routes_ws import router as ws_router
 from backend.app.api.routes_i18n import router as i18n_router
 from backend.app.api.routes_compliance import router as compliance_router
 from backend.app.api.routes_analytics import router as analytics_router
+from backend.app.api.routes_admin import router as admin_router
 
 # Auth routes (no auth required)
 app.include_router(auth_router)
@@ -112,6 +113,9 @@ app.include_router(ws_router)
 app.include_router(i18n_router)
 app.include_router(compliance_router)
 app.include_router(analytics_router)
+
+# Admin routes (require ADMIN role)
+app.include_router(admin_router)
 
 # Health check
 @app.get("/health", tags=["monitoring"])
