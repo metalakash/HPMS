@@ -6,7 +6,7 @@ from decimal import Decimal
 from io import StringIO
 import uuid
 
-from fastapi import APIRouter, HTTPException, status, File, UploadFile
+from fastapi import APIRouter, HTTPException, status, File, UploadFile, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -20,8 +20,8 @@ router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 async def seed_projects_from_upload(
     file: UploadFile = File(...),
     limit: int = 50,
-    db: AsyncSession = next(get_db()),
-    current_user = require_admin(),
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(require_admin),
 ):
     """
     Admin-only endpoint to seed projects from CSV upload.
