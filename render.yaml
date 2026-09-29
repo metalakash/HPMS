@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: hpms-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /docs
+    dockerCommand: sh -c "alembic upgrade head && uvicorn backend.app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hpms-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: hpms-redis
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: USE_LDAP
+        value: "false"
+      - key: DEBUG
+        value: "false"
+
+  - type: keyvalue
+    name: hpms-redis
+    plan: free
+    ipAllowList: []
+
+databases:
+  - name: hpms-db
+    plan: free
+    databaseName: sbl_hpms
+    user: hpms

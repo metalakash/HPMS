@@ -5,6 +5,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 import logging
+import os
 from datetime import datetime
 
 from sqlalchemy import text
@@ -78,6 +79,8 @@ app.add_middleware(
         "127.0.0.1",
         "hpms.sbl.local",
         "*.trycloudflare.com",  # TEMP DEMO: quick tunnel exposing local backend
+        "*.onrender.com",  # TEMP DEMO: Render-hosted backend
+        *[h.strip() for h in os.getenv("EXTRA_ALLOWED_HOSTS", "").split(",") if h.strip()],
     ],  # DEV ONLY
 )
 
