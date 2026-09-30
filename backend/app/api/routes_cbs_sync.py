@@ -33,6 +33,50 @@ class CBSDiffLog(BaseModel):
     status: str  # 'changed' or 'same'
 
 
+@router.get("/status", response_model=ApiResponse[Dict[str, Any]])
+async def get_cbs_status(
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ApiResponse[Dict[str, Any]]:
+    """Get Finacle CBS adapter health status.
+
+    Returns:
+    - circuit_breaker: State (CLOSED/OPEN/HALF_OPEN), failure count
+    - rate_limiter: Calls used, remaining, limit
+
+    Requires admin or auditor role.
+    """
+    from backend.app.integration.finacle_adapter import get_adapter
+    from backend.app.services.cbs_sync_real_service import CBSSyncService
+
+    if not current_user.roles or current_user.roles[0].value not in ("admin", "auditor"):
+        raise HTTPException(status_code=403, detail="Admin or auditor role required")
+
+    try:
+        adapter = get_adapter("mock")
+        sync_service = CBSSyncService(adapter)
+        status = sync_service.get_adapter_status()
+
+        return ApiResponse(
+            data=status,
+            meta=ResponseMeta(
+                timestamp=datetime.utcnow().isoformat(),
+                version="0.1.0",
+                page=None,
+                page_size=None,
+                total_count=None,
+            ),
+            audit=AuditMetadata(
+                user_id=current_user.username,
+                action="check_cbs_status",
+                timestamp=datetime.utcnow().isoformat(),
+            ),
+        )
+    except Exception as e:
+        logger.error(f"Error checking CBS status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to check CBS status")
+
+
 @router.post("/sync/{project_id}", response_model=ApiResponse[Dict[str, Any]])
 async def sync_cbs_account(
     project_id: str,
@@ -61,31 +105,20 @@ async def sync_cbs_account(
     """
 
     try:
-        # TODO: Implement actual Finacle API call
-        # For now, return mock diff log
+        from backend.app.integration.finacle_adapter import get_adapter
+        from backend.app.services.cbs_sync_real_service import CBSSyncService
 
-        mock_response = {
-            "sync_timestamp": datetime.utcnow().isoformat(),
-            "status": "success",
-            "changes_count": 1,
-            "diff_log": [
-                {
-                    "field": "outstanding_principal",
-                    "previous_value": 850000000,
-                    "new_value": 842000000,
-                    "status": "changed",
-                },
-                {
-                    "field": "overdue_amount",
-                    "previous_value": 0,
-                    "new_value": 0,
-                    "status": "same",
-                },
-            ],
-        }
+        # Get adapter and service
+        adapter = get_adapter("mock")  # Use mock by default; set via env for production
+        sync_service = CBSSyncService(adapter)
+
+        # Perform sync
+        sync_result = await sync_service.sync_loan_account(
+            db, project_id, request.loan_id, user_id=current_user.username
+        )
 
         return ApiResponse(
-            data=mock_response,
+            data=sync_result,
             meta=ResponseMeta(
                 timestamp=datetime.utcnow().isoformat(),
                 version="0.1.0",

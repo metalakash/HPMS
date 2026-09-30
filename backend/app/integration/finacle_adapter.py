@@ -9,11 +9,12 @@ HPMS does NOT write back to CBS — this is a one-way read-only integration.
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 import logging
 from datetime import datetime, date, timedelta
 import uuid
 from enum import Enum
+from decimal import Decimal
 
 from .finacle_schema import (
     FinacleSyncType,
@@ -23,6 +24,59 @@ from .finacle_schema import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class RateLimiter:
+    """Token-bucket rate limiter for API calls.
+
+    Tracks call frequency to prevent overwhelming Finacle CBS.
+    Default: 1000 calls per 24 hours.
+    """
+
+    def __init__(self, max_calls: int = 1000, time_window_seconds: int = 86400):
+        """Initialize rate limiter.
+
+        Args:
+            max_calls: Maximum calls allowed per time window
+            time_window_seconds: Time window in seconds (default: 24 hours)
+        """
+        self.max_calls = max_calls
+        self.time_window_seconds = time_window_seconds
+        self.call_times: List[datetime] = []
+
+    def is_allowed(self) -> bool:
+        """Check if call is allowed within rate limit."""
+        now = datetime.utcnow()
+
+        # Remove calls older than time window
+        self.call_times = [t for t in self.call_times
+                          if (now - t).total_seconds() < self.time_window_seconds]
+
+        # Check limit
+        if len(self.call_times) < self.max_calls:
+            self.call_times.append(now)
+            return True
+
+        logger.warning(f"Rate limit exceeded: {len(self.call_times)}/{self.max_calls} calls in window")
+        return False
+
+    def get_remaining_calls(self) -> int:
+        """Get remaining calls in current window."""
+        now = datetime.utcnow()
+        self.call_times = [t for t in self.call_times
+                          if (now - t).total_seconds() < self.time_window_seconds]
+        return max(0, self.max_calls - len(self.call_times))
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get rate limiter status."""
+        now = datetime.utcnow()
+        self.call_times = [t for t in self.call_times
+                          if (now - t).total_seconds() < self.time_window_seconds]
+        return {
+            "max_calls_per_day": self.max_calls,
+            "calls_used_today": len(self.call_times),
+            "remaining_calls": self.get_remaining_calls(),
+        }
 
 
 class CircuitBreakerState(str, Enum):
@@ -98,8 +152,13 @@ class CircuitBreaker:
 class FinacleAdapterBase(ABC):
     """Abstract interface for Finacle CBS adapter implementations."""
 
-    def __init__(self, circuit_breaker: Optional[CircuitBreaker] = None):
+    def __init__(
+        self,
+        circuit_breaker: Optional[CircuitBreaker] = None,
+        rate_limiter: Optional[RateLimiter] = None,
+    ):
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
+        self.rate_limiter = rate_limiter or RateLimiter()
 
     @abstractmethod
     async def sync_accounts(
@@ -123,8 +182,79 @@ class FinacleAdapterBase(ABC):
         self,
         request: FinacleSyncRequest,
     ) -> FinacleSyncResponse:
-        """Execute sync with circuit breaker protection."""
+        """Execute sync with circuit breaker and rate limiter protection."""
+        # Check rate limit
+        if not self.rate_limiter.is_allowed():
+            remaining = self.rate_limiter.get_remaining_calls()
+            raise Exception(
+                f"Finacle rate limit exceeded. Remaining calls today: {remaining}"
+            )
+
+        # Execute with circuit breaker
         return self.circuit_breaker.call(self.sync_accounts, request)
+
+    @staticmethod
+    def compute_diff_log(
+        local_account: Dict[str, Any],
+        finacle_account: FinacleAccountRecord,
+    ) -> List[Dict[str, Any]]:
+        """Compute field-level diff between local and Finacle data.
+
+        Args:
+            local_account: Current local account data
+            finacle_account: Fetched Finacle account data
+
+        Returns:
+            List of diffs showing changed/unchanged fields
+        """
+        fields_to_compare = [
+            "disbursed_amount",
+            "outstanding_principal",
+            "outstanding_interest",
+            "overdue_principal",
+            "overdue_interest",
+            "interest_rate_pct",
+            "account_status",
+            "maturity_date",
+        ]
+
+        diff_log = []
+        for field in fields_to_compare:
+            local_value = local_account.get(field)
+            finacle_value = getattr(finacle_account, field, None)
+
+            # Convert Decimal to float for comparison
+            if isinstance(finacle_value, Decimal):
+                finacle_value = float(finacle_value)
+            if isinstance(local_value, Decimal):
+                local_value = float(local_value)
+
+            status = "same" if local_value == finacle_value else "changed"
+
+            diff_log.append({
+                "field": field,
+                "previous_value": local_value,
+                "new_value": finacle_value,
+                "status": status,
+            })
+
+        return diff_log
+
+    def get_circuit_breaker_status(self) -> Dict[str, Any]:
+        """Get circuit breaker status."""
+        return {
+            "state": self.circuit_breaker.state,
+            "failure_count": self.circuit_breaker.failure_count,
+            "last_failure_time": (
+                self.circuit_breaker.last_failure_time.isoformat()
+                if self.circuit_breaker.last_failure_time
+                else None
+            ),
+        }
+
+    def get_rate_limiter_status(self) -> Dict[str, Any]:
+        """Get rate limiter status."""
+        return self.rate_limiter.get_status()
 
 
 class MockFinacleAdapter(FinacleAdapterBase):
