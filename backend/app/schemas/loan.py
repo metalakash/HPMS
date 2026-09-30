@@ -190,3 +190,160 @@ class CovenantMetricsResponse(BaseModel):
     class Config:
         strict = True
         json_encoders = {Decimal: lambda v: str(v)}
+
+
+class LoanExposureImportItem(BaseModel):
+    """Single loan exposure record for CSV/JSON import (Option A)."""
+
+    project_id: str = Field(description="Project UUID (must exist in projects table)")
+    facility_type: str = Field(description="e.g., 'Construction Term Loan', 'Working Capital'")
+    sanctioned_amount: Decimal = Field(description="Total credit limit (NPR)")
+    disbursed_amount: Optional[Decimal] = Field(None, description="Amount drawn")
+    outstanding_principal: Decimal = Field(description="Current outstanding balance")
+    outstanding_interest: Optional[Decimal] = Field(None, description="Accrued interest")
+    interest_rate_pct: Decimal = Field(description="Annual interest rate (%)")
+    tenor_years: int = Field(description="Total loan tenor (years)")
+    grace_years: int = Field(description="Grace period (years, no principal repayment)")
+    sanction_date: date = Field(description="Sanction date (YYYY-MM-DD)")
+    disbursement_date: date = Field(description="First disbursement date")
+    maturity_date: date = Field(description="Final maturity date")
+    risk_rating: Optional[str] = Field(None, description="e.g., 'AAA', 'AA', 'A', 'BBB'")
+    ifrs9_stage: Optional[str] = Field(None, description="'Stage 1' (performing), 'Stage 2' (watch), 'Stage 3' (NPL)")
+    dscr: Optional[Decimal] = Field(None, description="Debt Service Coverage Ratio")
+    ltv: Optional[Decimal] = Field(None, description="Loan-to-Value ratio (%)")
+    icr: Optional[Decimal] = Field(None, description="Interest Coverage Ratio")
+
+    class Config:
+        strict = True
+        json_encoders = {Decimal: lambda v: str(v)}
+
+
+class LoanExposureSyncRequest(BaseModel):
+    """Request payload for loan exposure sync (CSV or JSON)."""
+
+    loan_accounts: List[LoanExposureImportItem] = Field(description="Loan accounts to import")
+    sync_source: str = Field(default="MANUAL_UPLOAD", description="Source: MANUAL_UPLOAD, CSV, API, etc.")
+    source_reference: Optional[str] = Field(None, description="e.g., filename, bank ID, partner name")
+
+    class Config:
+        strict = True
+
+
+class LoanExposureSyncResult(BaseModel):
+    """Result of loan exposure sync operation."""
+
+    sync_id: str = Field(description="Unique sync operation ID (UUID)")
+    total_records: int = Field(description="Total records submitted")
+    created_count: int = Field(description="New loan accounts created")
+    updated_count: int = Field(description="Existing accounts updated")
+    skipped_count: int = Field(description="Records skipped due to errors")
+    errors: List[str] = Field(description="Validation/insert errors")
+    warnings: List[str] = Field(description="Non-fatal warnings")
+    audit_log_id: str = Field(description="Compliance audit log entry ID")
+    timestamp: str = Field(description="Sync completion timestamp")
+
+    class Config:
+        strict = True
+
+
+class LoanExposureSyncScheduleRequest(BaseModel):
+    """Request to create/update a sync schedule (Phase 8.3 Option B)."""
+
+    name: str = Field(description="Schedule name (e.g., 'Daily Bank Export')")
+    description: Optional[str] = Field(None, description="Long description")
+
+    # Frequency
+    frequency: str = Field(description="'daily', 'weekly', 'hourly', 'manual'")
+    scheduled_time_utc: Optional[str] = Field(None, description="Time in HH:MM UTC (for daily/weekly)")
+    day_of_week: Optional[int] = Field(None, description="0=Mon, 6=Sun (for weekly only)")
+
+    # Source
+    sync_source: str = Field(description="'BANK_API', 'FINACLE_CBS', 'CSV_UPLOAD'")
+    source_config: Optional[dict] = Field(None, description="JSON config (webhook URL, API endpoint, etc.)")
+
+    # Alerting thresholds
+    alert_on_dscr_below: Optional[Decimal] = Field(None, description="Alert if DSCR < this value")
+    alert_on_ltv_above: Optional[Decimal] = Field(None, description="Alert if LTV > this value (%)")
+    alert_on_concentration_above: Optional[Decimal] = Field(None, description="Alert if concentration > this value (%)")
+    alert_email_addresses: Optional[str] = Field(None, description="Comma-separated email list")
+
+    class Config:
+        strict = True
+        json_encoders = {Decimal: lambda v: str(v)}
+
+
+class LoanExposureSyncScheduleResponse(BaseModel):
+    """Response containing sync schedule details."""
+
+    id: str = Field(description="Schedule UUID")
+    name: str
+    description: Optional[str]
+    frequency: str
+    scheduled_time_utc: Optional[str]
+    day_of_week: Optional[int]
+    sync_source: str
+    source_config: Optional[dict]
+
+    is_active: str
+
+    last_sync_at: Optional[str]
+    last_sync_status: Optional[str]
+    last_sync_record_count: int
+    last_sync_error: Optional[str]
+
+    alert_on_dscr_below: Optional[Decimal]
+    alert_on_ltv_above: Optional[Decimal]
+    alert_on_concentration_above: Optional[Decimal]
+    alert_email_addresses: Optional[str]
+
+    created_at: str
+    updated_at: str
+
+    class Config:
+        strict = True
+        json_encoders = {Decimal: lambda v: str(v)}
+
+
+class LoanExposureSyncHistoryItem(BaseModel):
+    """Single entry in sync history log."""
+
+    id: str = Field(description="Sync history ID")
+    schedule_id: str = Field(description="Parent schedule ID")
+    sync_source: str
+    status: str = Field(description="'success', 'failed', 'partial_success'")
+
+    total_records: int
+    created_count: int
+    updated_count: int
+    skipped_count: int
+
+    error_message: Optional[str]
+    alerts_triggered: Optional[List[str]]
+
+    started_at: Optional[str]
+    completed_at: Optional[str]
+    duration_seconds: Optional[int]
+
+    created_at: str
+
+    class Config:
+        strict = True
+
+
+class LoanExposureSyncAlertResponse(BaseModel):
+    """Alert triggered during sync operation."""
+
+    alert_type: str = Field(description="'dscr_violation', 'ltv_violation', 'concentration_violation'")
+    severity: str = Field(description="'critical', 'high', 'medium', 'low'")
+    project_id: str = Field(description="Affected project UUID")
+    project_code: str = Field(description="Project code")
+
+    current_value: Decimal = Field(description="Current metric value")
+    threshold_value: Decimal = Field(description="Configured threshold")
+
+    message: str = Field(description="Human-readable alert message")
+    timestamp: str
+
+    class Config:
+        strict = True
+        json_encoders = {Decimal: lambda v: str(v)}

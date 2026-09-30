@@ -87,6 +87,10 @@ app.add_middleware(
 # Rate limiting
 app.state.limiter = limiter
 
+# Background scheduler for Phase 8.3.1
+scheduler = None
+sync_executor = None
+
 # Register API routes
 from backend.app.api.routes_auth import router as auth_router
 from backend.app.api.routes_projects import router as projects_router
@@ -143,6 +147,8 @@ async def ready_check(db=Depends(get_db)):
 @app.on_event("startup")
 async def startup_event():
     """Initialize on startup."""
+    global scheduler, sync_executor
+
     logger.info("SBL HPMS Starting up")
     # Schema is owned by Alembic (`alembic upgrade head`); never create_all here,
     # which would bypass migrations and turn views like consortium_exposure_v into tables.
@@ -154,10 +160,61 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Database not reachable at startup: {e}")
 
+    # Initialize background scheduler for loan sync (Phase 8.3.1)
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from backend.app.database import SessionLocal
+        from backend.app.services.background_sync_executor import BackgroundSyncExecutor
+
+        # Create executor
+        sync_executor = BackgroundSyncExecutor(SessionLocal)
+        await sync_executor.initialize_http_client()
+
+        # Create scheduler
+        scheduler = BackgroundScheduler()
+
+        # Add job to check for due syncs every minute
+        scheduler.add_job(
+            sync_executor.execute_due_syncs,
+            "interval",
+            minutes=1,
+            id="loan_sync_executor",
+            name="Loan Exposure Sync Executor",
+            misfire_grace_time=30,
+        )
+
+        scheduler.start()
+        logger.info("✅ Background loan sync scheduler started")
+
+    except ImportError:
+        logger.warning("APScheduler not installed; loan sync scheduler disabled")
+        logger.info("   Install with: pip install apscheduler")
+    except Exception as e:
+        logger.error(f"Failed to start background scheduler: {e}", exc_info=True)
+
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown."""
+    global scheduler, sync_executor
+
     logger.info("SBL HPMS Shutting down")
+
+    # Shutdown background scheduler
+    if scheduler:
+        try:
+            scheduler.shutdown(wait=True)
+            logger.info("✅ Background scheduler shutdown")
+        except Exception as e:
+            logger.error(f"Error shutting down scheduler: {e}")
+
+    # Cleanup HTTP client
+    if sync_executor:
+        try:
+            await sync_executor.shutdown_http_client()
+            logger.info("✅ HTTP client cleanup")
+        except Exception as e:
+            logger.error(f"Error cleaning up HTTP client: {e}")
+
     await close_db()
 
 # API Routes (Phase 2):
