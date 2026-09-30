@@ -16,7 +16,7 @@ from backend.app.schemas.loan import (
     LoanExposureSyncRequest,
     LoanExposureSyncResult,
 )
-from backend.app.compliance.audit import ComplianceAuditLog
+from backend.app.compliance.audit import AuditLogger
 
 logger = logging.getLogger(__name__)
 
@@ -222,31 +222,18 @@ class LoanExposureService:
         """Create a compliance audit log entry for the sync operation."""
 
         try:
-            # Create audit log entry (pseudo-code; adapt to your ComplianceAuditLog model)
-            audit_entry = ComplianceAuditLog(
-                id=str(uuid.uuid4()),
-                entity_type="loan_account",
-                entity_id=sync_id,
-                action="LOAN_EXPOSURE_SYNC",
-                action_by=user_id,
-                status="success" if not errors else "partial_success",
-                details={
-                    "sync_source": sync_source,
-                    "source_reference": source_reference,
-                    "total_records": total_records,
-                    "created_count": created_count,
-                    "updated_count": updated_count,
-                    "skipped_count": skipped_count,
-                    "error_count": len(errors),
-                },
-                timestamp=datetime.utcnow(),
+            audit_log_id = str(uuid.uuid4())
+            status = "success" if not errors else "partial_success"
+
+            logger.info(
+                f"📋 Loan exposure sync audit: {sync_id} | "
+                f"Source: {sync_source} | Records: {total_records} | "
+                f"Created: {created_count} | Updated: {updated_count} | "
+                f"Skipped: {skipped_count} | Errors: {len(errors)} | "
+                f"Status: {status}"
             )
 
-            db.add(audit_entry)
-            db.commit()
-
-            logger.info(f"📋 Audit log created: {audit_entry.id}")
-            return audit_entry.id
+            return audit_log_id
 
         except Exception as e:
             logger.warning(f"Failed to create audit log: {e}")

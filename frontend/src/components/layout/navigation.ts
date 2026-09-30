@@ -22,10 +22,10 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, available: true },
   { to: '/projects', label: 'Projects', icon: FolderKanban, available: true },
   { to: '/loans', label: 'Loan accounts', icon: Banknote, available: true },
-  { to: '/compliance', label: 'Compliance', icon: ShieldCheck, available: false },
-  { to: '/analytics', label: 'Analytics', icon: LineChart, available: false },
-  { to: '/maintenance', label: 'Maintenance', icon: Wrench, available: false },
-  { to: '/admin', label: 'Admin', icon: Settings, available: false, roles: ['admin'] },
+  { to: '/compliance', label: 'Compliance', icon: ShieldCheck, available: true },
+  { to: '/analytics', label: 'Analytics', icon: LineChart, available: true },
+  { to: '/maintenance', label: 'Maintenance', icon: Wrench, available: true },
+  { to: '/admin', label: 'Admin', icon: Settings, available: true, roles: ['admin'] },
 ];
 
 export function visibleNavItems(roles: string[] | undefined): NavItem[] {
