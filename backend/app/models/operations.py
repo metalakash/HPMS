@@ -76,6 +76,7 @@ class EnergyGenerationData(Base, TimestampedMixin):
     data_provenance = Column(String(50), default='MANUAL_ENTRY')
     source_reference = Column(String(255))  # SCADA export, manual reading, etc.
 
+    project = relationship("Project", back_populates="energy_generation_data", foreign_keys=[project_id])
     ppa_agreement = relationship("PPAAgreement", back_populates="generation_data")
 
     __table_args__ = (
@@ -110,6 +111,8 @@ class NEAPPARate(Base, TimestampedMixin):
     data_provenance = Column(String(50), default='NEA_OFFICIAL')
     source_reference = Column(String(255))
 
+    project = relationship("Project", back_populates="nea_ppa_rates", foreign_keys=[project_id])
+
     __table_args__ = (
         Index('ix_nea_rates_project_current', 'project_id', 'is_current'),
         Index('ix_nea_rates_validity', 'valid_from_ad', 'valid_to_ad'),
@@ -136,6 +139,7 @@ class TariffStructure(Base, TimestampedMixin):
     valid_to_ad = Column(Date)
     is_current = Column(Boolean, default=True, index=True)
 
+    project = relationship("Project", back_populates="tariff_structures", foreign_keys=[project_id])
     ppa_agreement = relationship("PPAAgreement", back_populates="tariff_structures")
 
     __table_args__ = (
@@ -171,6 +175,8 @@ class HydrologyDetailed(Base, TimestampedMixin):
     data_provenance = Column(String(50), default='CONSULTANT_REPORT')
     source_reference = Column(String(255))  # DPR, DHM report, etc.
 
+    project = relationship("Project", back_populates="hydrology_detailed", foreign_keys=[project_id])
+
     __table_args__ = (
         Index('ix_hydrology_project', 'project_id'),
         Index('ix_hydrology_basin', 'river_basin'),
@@ -202,6 +208,8 @@ class LandAcquisitionTracking(Base, TimestampedMixin):
     updated_by = Column(String(255))
     remarks = Column(Text)
 
+    project = relationship("Project", back_populates="land_acquisition", foreign_keys=[project_id], uselist=False)
+
     __table_args__ = (
         Index('ix_land_project', 'project_id'),
     )
@@ -227,6 +235,8 @@ class BoardOfDirectors(Base, TimestampedMixin):
     is_current = Column(Boolean, default=True, index=True)
 
     seon_reference = Column(String(100))  # Company Registrar reference
+
+    project = relationship("Project", back_populates="board_members", foreign_keys=[project_id])
 
     __table_args__ = (
         Index('ix_bod_project_current', 'project_id', 'is_current'),
@@ -254,6 +264,8 @@ class ShareholdingHierarchy(Base, TimestampedMixin):
     is_current = Column(Boolean, default=True, index=True)
 
     seon_reference = Column(String(100))  # Company Registrar reference
+
+    project = relationship("Project", back_populates="shareholders", foreign_keys=[project_id])
 
     __table_args__ = (
         Index('ix_shareholding_project_current', 'project_id', 'is_current'),
@@ -289,6 +301,8 @@ class ESGMetrics(Base, TimestampedMixin):
     data_provenance = Column(String(50), default='MANUAL_ENTRY')
     source_reference = Column(String(255))
 
+    project = relationship("Project", back_populates="esg_metrics", foreign_keys=[project_id])
+
     __table_args__ = (
         Index('ix_esg_project_date', 'project_id', 'metric_date_ad'),
     )
@@ -317,6 +331,8 @@ class EIAMitigationChecklist(Base, TimestampedMixin):
 
     created_by = Column(String(255))
     updated_by = Column(String(255))
+
+    project = relationship("Project", back_populates="eia_mitigations", foreign_keys=[project_id])
 
     __table_args__ = (
         Index('ix_eia_project_status', 'project_id', 'status'),
@@ -351,6 +367,8 @@ class MaintenanceSchedule(Base, TimestampedMixin):
     created_by = Column(String(255))
     updated_by = Column(String(255))
 
+    project = relationship("Project", back_populates="maintenance_schedules", foreign_keys=[project_id])
+
     __table_args__ = (
         Index('ix_maint_sched_project_date', 'project_id', 'scheduled_date_ad'),
         Index('ix_maint_sched_status', 'project_id', 'status'),
@@ -381,6 +399,8 @@ class MaintenanceLog(Base, TimestampedMixin):
     notes = Column(Text)
 
     created_by = Column(String(255))
+
+    project = relationship("Project", back_populates="maintenance_logs", foreign_keys=[project_id])
 
     __table_args__ = (
         Index('ix_maint_log_project_date', 'project_id', 'actual_date_ad'),
@@ -413,6 +433,8 @@ class PlantPerformance(Base, TimestampedMixin):
 
     data_provenance = Column(String(50), default='SCADA')
     source_reference = Column(String(255))
+
+    project = relationship("Project", back_populates="plant_performance", foreign_keys=[project_id])
 
     __table_args__ = (
         Index('ix_perf_project_month', 'project_id', 'month_ad'),
@@ -455,6 +477,8 @@ class CovenantHistory(Base, TimestampedMixin):
     calculation_date_ad = Column(Date)
     data_provenance = Column(String(50), default='CALCULATED')
     source_reference = Column(String(255))
+
+    project = relationship("Project", back_populates="covenant_history", foreign_keys=[project_id])
 
     __table_args__ = (
         Index('ix_covenant_project_quarter', 'project_id', 'quarter_ad'),
