@@ -193,109 +193,69 @@ async def export_compliance(
     )
 
 
-@router.get("/covenants/{project_id}/history", response_model=ApiResponse[list[dict]])
+@router.get("/covenants/{project_id}/history", response_model=ApiResponse[dict])
 async def get_covenant_history(
     project_id: str,
+    quarters: int = Query(8, ge=1, le=20, description="Number of quarters to fetch"),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
-) -> ApiResponse[list[dict]]:
-    """Get 8-quarter covenant history for a project.
+) -> ApiResponse[dict]:
+    """Get covenant history for last N quarters (default 8 = 2 years).
 
     Returns DSCR, LTV, and ICR trends with status (compliant/warning/breached).
-    Required for drill-down views in compliance module.
+    Includes variance %, trend direction, and breach alerts.
 
-    TODO: Implement actual query from loan_accounts + covenant_metrics tables
-    For now returns mock data.
+    Query parameters:
+    - quarters: Number of quarters to fetch (1-20, default 8)
     """
-    # Mock data structure: 8 quarters of covenant trends
-    mock_trends = [
-        {
-            "covenant_type": "DSCR",
-            "periods": [
-                {"period": "Q1 2025", "value": 1.45, "threshold": 1.20, "status": "compliant"},
-                {"period": "Q2 2025", "value": 1.38, "threshold": 1.20, "status": "compliant"},
-                {"period": "Q3 2025", "value": 1.28, "threshold": 1.20, "status": "warning"},
-                {"period": "Q4 2025", "value": 1.22, "threshold": 1.20, "status": "warning"},
-                {"period": "Q1 2026", "value": 1.18, "threshold": 1.20, "status": "warning"},
-                {"period": "Q2 2026", "value": 1.15, "threshold": 1.20, "status": "warning"},
-                {"period": "Q3 2026", "value": 1.12, "threshold": 1.20, "status": "breached"},
-                {"period": "Q4 2026", "value": 1.25, "threshold": 1.20, "status": "compliant"},
-            ]
-        }
-    ]
+    from backend.app.services.covenant_service import CovenantService
 
-    return ApiResponse(
-        data=mock_trends,
-        meta=_get_response_meta(),
-        audit=_get_audit_metadata(user_id=current_user.username, action="view_covenant_history"),
-    )
+    try:
+        data = await CovenantService.get_covenant_history(db, project_id, quarters=quarters)
+        return ApiResponse(
+            data=data,
+            meta=_get_response_meta(),
+            audit=_get_audit_metadata(user_id=current_user.username, action="view_covenant_history"),
+        )
+    except Exception as e:
+        logger.error(f"Error fetching covenant history for {project_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch covenant history")
 
 
-@router.get("/alerts/{project_id}/remediations", response_model=ApiResponse[list[dict]])
+@router.get("/alerts/{project_id}/remediations", response_model=ApiResponse[dict])
 async def get_alert_remediations(
     project_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
-) -> ApiResponse[list[dict]]:
-    """Get pre-expiry compliance alerts for license, PPA, and insurance.
+) -> ApiResponse[dict]:
+    """Get expiry alerts for licenses and PPAs.
 
-    Returns upcoming expirations with days until expiry and required actions.
-    Used for alert remediation drawer in compliance module.
+    Returns upcoming expirations grouped by urgency (critical/warning/ok).
+    Critical: expiring within 30 days
+    Warning: expiring within 90 days
+    OK: expiring later
 
-    TODO: Implement actual query from water_licenses + ppa_agreements + documents tables
-    For now returns mock data.
+    Includes action buttons for renewal workflows.
     """
-    # Mock data structure: License, PPA, and Insurance expirations
-    mock_alerts = [
-        {
-            "id": "lic-001",
-            "type": "license",
-            "name": "DoED Generation License",
-            "expiryDate": "2026-12-15",
-            "daysUntilExpiry": 76,
-            "status": "warning",
-            "description": "Nepal Ministry of Energy generation license",
-        },
-        {
-            "id": "ppa-001",
-            "type": "ppa",
-            "name": "NEA Power Purchase Agreement",
-            "expiryDate": "2054-06-30",
-            "daysUntilExpiry": 10325,
-            "status": "ok",
-            "description": "30-year PPA starting from Commercial Operation Date",
-        },
-        {
-            "id": "ins-001",
-            "type": "insurance",
-            "name": "Plant All-Risk Insurance",
-            "expiryDate": "2027-03-31",
-            "daysUntilExpiry": 183,
-            "status": "warning",
-            "description": "Comprehensive all-risk insurance covering plant and equipment",
-        },
-        {
-            "id": "ins-002",
-            "type": "insurance",
-            "name": "Third-Party Liability Insurance",
-            "expiryDate": "2026-11-30",
-            "daysUntilExpiry": 61,
-            "status": "critical",
-            "description": "Professional liability and third-party coverage",
-        },
-    ]
+    from backend.app.services.alert_service import AlertService
 
-    return ApiResponse(
-        data=mock_alerts,
-        meta=_get_response_meta(),
-        audit=_get_audit_metadata(user_id=current_user.username, action="view_alerts"),
-    )
+    try:
+        data = await AlertService.get_expiry_alerts(db, project_id)
+        return ApiResponse(
+            data=data,
+            meta=_get_response_meta(),
+            audit=_get_audit_metadata(user_id=current_user.username, action="view_alerts"),
+        )
+    except Exception as e:
+        logger.error(f"Error fetching expiry alerts for {project_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch expiry alerts")
 
 
 @router.post("/alert-actions/initiate", response_model=ApiResponse[dict])
 async def initiate_alert_action(
-    alert_id: str,
-    alert_type: str,
+    alert_id: str = Query(..., description="Alert ID (entity_type:entity_id)"),
+    action_type: str = Query(..., description="Action type: RENEWAL, ESCALATE, NOTIFY"),
+    remarks: str = Query("", description="Optional remarks/comments"),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> ApiResponse[dict]:
@@ -304,22 +264,22 @@ async def initiate_alert_action(
     Creates a workflow task for the compliance officer/legal team.
     Logs the action in the audit trail.
 
-    TODO: Implement actual creation of workflow task and ApprovalRequest
-    For now returns mock response.
+    Query parameters:
+    - alert_id: Alert ID in format "entity_type:entity_id" (e.g., "PPA:abc-123")
+    - action_type: RENEWAL, ESCALATE, or NOTIFY
+    - remarks: Optional user comments
     """
-    # Mock response: workflow task created
-    workflow_response = {
-        "approval_request_id": f"apr-{alert_id}-{datetime.utcnow().timestamp()}",
-        "alert_id": alert_id,
-        "alert_type": alert_type,
-        "status": "submitted",
-        "created_at": datetime.utcnow().isoformat(),
-        "assigned_to": "legal@bank.com",
-        "message": f"Renewal workflow initiated for {alert_type}",
-    }
+    from backend.app.services.alert_service import AlertService
 
-    return ApiResponse(
-        data=workflow_response,
-        meta=_get_response_meta(),
-        audit=_get_audit_metadata(user_id=current_user.username, action="initiate_alert_action"),
-    )
+    try:
+        data = await AlertService.initiate_renewal_workflow(
+            db, alert_id, action_type, remarks, user_id=current_user.username
+        )
+        return ApiResponse(
+            data=data,
+            meta=_get_response_meta(),
+            audit=_get_audit_metadata(user_id=current_user.username, action="initiate_alert_action"),
+        )
+    except Exception as e:
+        logger.error(f"Error initiating alert action {alert_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to initiate alert action")
