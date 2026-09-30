@@ -8,7 +8,10 @@ const DashboardPage = lazy(() => import('@/pages/DashboardPage'));
 const ProjectsPage = lazy(() => import('@/pages/ProjectsPage'));
 const ProjectDetailPage = lazy(() => import('@/pages/ProjectDetailPage'));
 const LoansPage = lazy(() => import('@/pages/LoansPage'));
-const UnavailablePage = lazy(() => import('@/pages/UnavailablePage'));
+const CompliancePage = lazy(() => import('@/pages/CompliancePage'));
+const AnalyticsPage = lazy(() => import('@/pages/AnalyticsPage'));
+const MaintenancePage = lazy(() => import('@/pages/MaintenancePage'));
+const AdminPage = lazy(() => import('@/pages/AdminPage'));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
 
 export const routes: RouteObject[] = [
@@ -20,39 +23,10 @@ export const routes: RouteObject[] = [
       { path: 'projects', element: <ProjectsPage /> },
       { path: 'projects/:id', element: <ProjectDetailPage /> },
       { path: 'loans', element: <LoansPage /> },
-      {
-        path: 'compliance',
-        element: (
-          <UnavailablePage
-            title="Compliance"
-            description="Covenant monitoring, alerts and audit trail"
-          />
-        ),
-      },
-      {
-        path: 'analytics',
-        element: (
-          <UnavailablePage
-            title="Analytics"
-            description="Generation forecasts, anomalies and risk scores"
-          />
-        ),
-      },
-      {
-        path: 'maintenance',
-        element: (
-          <UnavailablePage
-            title="Maintenance"
-            description="Schedules, work orders and equipment history"
-          />
-        ),
-      },
-      {
-        path: 'admin',
-        element: (
-          <UnavailablePage title="Admin" description="Users, organization settings and API keys" />
-        ),
-      },
+      { path: 'compliance', element: <CompliancePage /> },
+      { path: 'analytics', element: <AnalyticsPage /> },
+      { path: 'maintenance', element: <MaintenancePage /> },
+      { path: 'admin', element: <AdminPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

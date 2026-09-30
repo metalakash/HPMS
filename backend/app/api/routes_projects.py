@@ -9,7 +9,7 @@ Implements:
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional
 from decimal import Decimal
 import uuid
@@ -23,7 +23,7 @@ from backend.app.database import get_db
 from backend.app.models.project import Project, RCODEvent, PipelineStatus, ProjectStage
 from backend.app.security.auth_middleware import CurrentUser, get_current_user
 from backend.app.security.rls_service import RLSService
-from backend.app.models.financial import LoanAccount, LoanAccountRateHistory
+from backend.app.models.financial import LoanAccount, LoanAccountRateHistory, DisbursementTranche, Repayment
 from backend.app.schemas.common import ApiResponse, ResponseMeta, AuditMetadata
 from backend.app.schemas.project import (
     ProjectCreateRequest,
@@ -33,7 +33,13 @@ from backend.app.schemas.project import (
     ProjectUpdateRequest,
     CODHistoryEntry,
 )
-from backend.app.schemas.loan import LoanAccountDetailResponse, LoanAccountListResponse
+from backend.app.schemas.loan import (
+    LoanAccountDetailResponse,
+    LoanAccountListResponse,
+    DisbursementTrancheItem,
+    RepaymentItem,
+    ProjectDisbursementsResponse,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
@@ -382,6 +388,86 @@ async def get_project_loan_accounts(
     )
 
 
+@router.get("/{project_id}/disbursements", response_model=ApiResponse[ProjectDisbursementsResponse])
+async def get_project_disbursements(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ApiResponse[ProjectDisbursementsResponse]:
+    """Get disbursement tranches and repayment schedule for all of a project's loan accounts.
+
+    Path parameters:
+    - project_id: Project UUID
+    """
+
+    p = await _get_visible_project(db, current_user, project_id)
+
+    loan_query = select(LoanAccount).where(LoanAccount.project_id == p.id)
+    loan_result = await db.execute(loan_query)
+    loans = {loan.id: loan for loan in loan_result.scalars().all()}
+
+    tranches: list[DisbursementTrancheItem] = []
+    repayments: list[RepaymentItem] = []
+
+    if loans:
+        tranche_query = (
+            select(DisbursementTranche)
+            .where(DisbursementTranche.loan_account_id.in_(loans.keys()))
+            .order_by(DisbursementTranche.planned_date_ad)
+        )
+        tranche_result = await db.execute(tranche_query)
+        tranches = [
+            DisbursementTrancheItem(
+                id=str(t.id),
+                loan_account_id=str(t.loan_account_id),
+                facility_type=loans[t.loan_account_id].facility_type,
+                tranche_no=t.tranche_no,
+                planned_amount=t.planned_amount,
+                actual_amount=t.actual_amount,
+                planned_date_ad=t.planned_date_ad,
+                actual_date_ad=t.actual_date_ad,
+            )
+            for t in tranche_result.scalars().all()
+        ]
+
+        repayment_query = (
+            select(Repayment)
+            .where(Repayment.loan_account_id.in_(loans.keys()))
+            .order_by(Repayment.due_date_ad)
+        )
+        repayment_result = await db.execute(repayment_query)
+        today = date.today()
+        for r in repayment_result.scalars().all():
+            fully_paid = r.principal_paid >= r.principal_due and r.interest_paid >= r.interest_due
+            if fully_paid:
+                rstatus = "paid"
+            elif r.due_date_ad and r.due_date_ad < today:
+                rstatus = "overdue"
+            else:
+                rstatus = "upcoming"
+            repayments.append(
+                RepaymentItem(
+                    id=str(r.id),
+                    loan_account_id=str(r.loan_account_id),
+                    facility_type=loans[r.loan_account_id].facility_type,
+                    due_date_ad=r.due_date_ad,
+                    principal_due=r.principal_due,
+                    interest_due=r.interest_due,
+                    principal_paid=r.principal_paid,
+                    interest_paid=r.interest_paid,
+                    paid_date_ad=r.paid_date_ad,
+                    days_past_due=r.days_past_due or 0,
+                    status=rstatus,
+                )
+            )
+
+    return ApiResponse(
+        data=ProjectDisbursementsResponse(tranches=tranches, repayments=repayments),
+        meta=_get_response_meta(),
+        audit=_get_audit_metadata(user_id=current_user.username, action="get_project_disbursements"),
+    )
+
+
 @router.patch("/{project_id}", response_model=ApiResponse[ProjectDetailResponse])
 async def update_project(
     project_id: str,
@@ -417,6 +503,165 @@ async def update_project(
 
     # Reuse the detail view for a consistent response shape
     return await get_project(str(project.id), db=db, current_user=current_user)
+
+
+# ============================================================================
+# Phase 10: Project Tab Data Endpoints
+# ============================================================================
+
+@router.get("/{project_id}/generation-ppa", response_model=ApiResponse[dict])
+async def get_generation_ppa_data(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ApiResponse[dict]:
+    """Get generation and PPA data with revenue calculations.
+
+    Returns:
+    - PPA agreement details (purchaser, tariff type, escalation)
+    - Monthly generation data (contract vs actual, variance %)
+    - Tariff rates (seasonal or flat)
+    - Revenue calculations
+    - Summary metrics
+    """
+    from backend.app.services.generation_service import GenerationService
+
+    _ = await _get_visible_project(db, current_user, project_id)
+
+    try:
+        data = await GenerationService.get_generation_ppa_data(db, project_id)
+        return ApiResponse(
+            data=data,
+            meta=_get_response_meta(),
+            audit=_get_audit_metadata(user_id=current_user.username, action="get_generation_ppa"),
+        )
+    except Exception as e:
+        logger.error(f"Error fetching generation data for {project_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch generation data")
+
+
+@router.get("/{project_id}/hydrology", response_model=ApiResponse[dict])
+async def get_hydrology_data(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ApiResponse[dict]:
+    """Get hydrology and water license data.
+
+    Returns:
+    - River basin information
+    - Design discharge (Q90) and median flow (Q50)
+    - Catchment area
+    - Water licenses with validity status
+    - Flow duration curve reference
+    """
+    from backend.app.services.hydrology_service import HydrologyService
+
+    _ = await _get_visible_project(db, current_user, project_id)
+
+    try:
+        data = await HydrologyService.get_hydrology_data(db, project_id)
+        return ApiResponse(
+            data=data,
+            meta=_get_response_meta(),
+            audit=_get_audit_metadata(user_id=current_user.username, action="get_hydrology"),
+        )
+    except Exception as e:
+        logger.error(f"Error fetching hydrology data for {project_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch hydrology data")
+
+
+@router.get("/{project_id}/land-governance", response_model=ApiResponse[dict])
+async def get_land_governance_data(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ApiResponse[dict]:
+    """Get land acquisition and governance data.
+
+    Returns:
+    - Land acquisition progress (% complete, area in ropani)
+    - Compensation tracking (paid vs outstanding)
+    - Board of Directors members
+    - Shareholding hierarchy
+    """
+    from backend.app.services.land_governance_service import LandGovernanceService
+
+    _ = await _get_visible_project(db, current_user, project_id)
+
+    try:
+        data = await LandGovernanceService.get_land_governance_data(db, project_id)
+        return ApiResponse(
+            data=data,
+            meta=_get_response_meta(),
+            audit=_get_audit_metadata(user_id=current_user.username, action="get_land_governance"),
+        )
+    except Exception as e:
+        logger.error(f"Error fetching land governance data for {project_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch land governance data")
+
+
+@router.get("/{project_id}/esg", response_model=ApiResponse[dict])
+async def get_esg_data(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ApiResponse[dict]:
+    """Get environmental, social, and governance metrics.
+
+    Returns:
+    - Environmental: Carbon credits, GHG avoided, CO2/year
+    - Social: Local employment, grievances, resolution rate
+    - EIA mitigation checklist with progress tracking
+    """
+    from backend.app.services.esg_service import ESGService
+
+    _ = await _get_visible_project(db, current_user, project_id)
+
+    try:
+        data = await ESGService.get_esg_data(db, project_id)
+        return ApiResponse(
+            data=data,
+            meta=_get_response_meta(),
+            audit=_get_audit_metadata(user_id=current_user.username, action="get_esg"),
+        )
+    except Exception as e:
+        logger.error(f"Error fetching ESG data for {project_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch ESG data")
+
+
+@router.get("/{project_id}/maintenance", response_model=ApiResponse[dict])
+async def get_maintenance_data(
+    project_id: str,
+    months: int = Query(12, ge=1, le=36, description="Number of months to fetch"),
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ApiResponse[dict]:
+    """Get maintenance schedules, logs, and plant performance.
+
+    Query parameters:
+    - months: Number of months of history to retrieve (1-36, default 12)
+
+    Returns:
+    - Upcoming maintenance schedules (next 90 days)
+    - Recent maintenance logs with downtime and cost
+    - Monthly plant performance (PLF %, availability %, efficiency %)
+    - Outage analysis (forced vs scheduled)
+    """
+    from backend.app.services.maintenance_service import MaintenanceService
+
+    _ = await _get_visible_project(db, current_user, project_id)
+
+    try:
+        data = await MaintenanceService.get_maintenance_data(db, project_id, months=months)
+        return ApiResponse(
+            data=data,
+            meta=_get_response_meta(),
+            audit=_get_audit_metadata(user_id=current_user.username, action="get_maintenance"),
+        )
+    except Exception as e:
+        logger.error(f"Error fetching maintenance data for {project_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch maintenance data")
 
 
 # Import Document model (deferred to avoid circular imports)

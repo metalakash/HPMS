@@ -8,9 +8,9 @@ import { DataTable, type Column } from '@/components/common/DataTable';
 import { Skeleton } from '@/components/common/Skeleton';
 import { EmptyState, ErrorState } from '@/components/common/States';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { useProject, useProjectLoans } from '@/hooks/queries';
+import { useProject, useProjectDisbursements, useProjectLoans } from '@/hooks/queries';
 import { useUIStore } from '@/store/useUIStore';
-import type { CodHistoryEntry, LoanAccountListItem } from '@/types/api';
+import type { CodHistoryEntry, DisbursementTrancheItem, LoanAccountListItem, RepaymentItem } from '@/types/api';
 import { formatDate, formatMW, formatNPR, formatPercent, humanize } from '@/utils/format';
 import { projectName, statusTone } from '@/utils/status';
 
@@ -19,6 +19,7 @@ export default function ProjectDetailPage() {
   const language = useUIStore((s) => s.language);
   const project = useProject(id);
   const loans = useProjectLoans(id);
+  const disbursements = useProjectDisbursements(id);
 
   const back = (
     <Link
@@ -80,6 +81,56 @@ export default function ProjectDetailPage() {
       key: 'sync',
       header: 'CBS sync',
       render: (l) => <Badge tone={statusTone(l.sync_status)}>{humanize(l.sync_status)}</Badge>,
+    },
+  ];
+
+  const trancheColumns: Column<DisbursementTrancheItem>[] = [
+    { key: 'tranche', header: 'Tranche', render: (t) => `#${t.tranche_no ?? '—'}` },
+    { key: 'facility', header: 'Facility', hideOnMobile: true, render: (t) => humanize(t.facility_type) },
+    {
+      key: 'planned',
+      header: 'Planned',
+      align: 'right',
+      render: (t) => formatNPR(t.planned_amount, language),
+    },
+    {
+      key: 'actual',
+      header: 'Actual',
+      align: 'right',
+      render: (t) => formatNPR(t.actual_amount, language),
+    },
+    {
+      key: 'date',
+      header: 'Date',
+      render: (t) => formatDate(t.actual_date_ad ?? t.planned_date_ad, language),
+    },
+  ];
+
+  const repaymentColumns: Column<RepaymentItem>[] = [
+    { key: 'due', header: 'Due date', render: (r) => formatDate(r.due_date_ad, language) },
+    {
+      key: 'principal',
+      header: 'Principal due',
+      align: 'right',
+      render: (r) => formatNPR(r.principal_due, language),
+    },
+    {
+      key: 'interest',
+      header: 'Interest due',
+      align: 'right',
+      hideOnMobile: true,
+      render: (r) => formatNPR(r.interest_due, language),
+    },
+    {
+      key: 'paid',
+      header: 'Paid date',
+      hideOnMobile: true,
+      render: (r) => formatDate(r.paid_date_ad, language),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (r) => <Badge tone={statusTone(r.status)}>{humanize(r.status)}</Badge>,
     },
   ];
 
@@ -150,6 +201,38 @@ export default function ProjectDetailPage() {
               rowKey={(l) => l.id}
               loading={loans.isLoading}
               empty={<EmptyState title="No loan accounts linked" />}
+            />
+          )}
+        </Card>
+
+        <Card className="lg:col-span-3">
+          <CardHeader title="Disbursement tranches" />
+          {disbursements.isError ? (
+            <ErrorState error={disbursements.error} onRetry={() => void disbursements.refetch()} />
+          ) : (
+            <DataTable
+              caption="Disbursement tranches"
+              columns={trancheColumns}
+              rows={disbursements.data?.data.tranches ?? []}
+              rowKey={(t) => t.id}
+              loading={disbursements.isLoading}
+              empty={<EmptyState title="No disbursements recorded" />}
+            />
+          )}
+        </Card>
+
+        <Card className="lg:col-span-3">
+          <CardHeader title="Repayment schedule" />
+          {disbursements.isError ? (
+            <ErrorState error={disbursements.error} onRetry={() => void disbursements.refetch()} />
+          ) : (
+            <DataTable
+              caption="Repayment schedule"
+              columns={repaymentColumns}
+              rows={disbursements.data?.data.repayments ?? []}
+              rowKey={(r) => r.id}
+              loading={disbursements.isLoading}
+              empty={<EmptyState title="No repayments scheduled" />}
             />
           )}
         </Card>

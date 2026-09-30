@@ -75,7 +75,23 @@ class Project(Base, TimestampedMixin):
         secondaryjoin="ConsortiumFacility.id == ConsortiumMember.consortium_facility_id",
         viewonly=True,
     )
-    
+
+    # Phase 10: Operations data relationships
+    ppa_agreements = relationship("PPAAgreement", back_populates="project")
+    energy_generation_data = relationship("EnergyGenerationData", back_populates="project")
+    nea_ppa_rates = relationship("NEAPPARate", back_populates="project")
+    tariff_structures = relationship("TariffStructure", back_populates="project")
+    hydrology_detailed = relationship("HydrologyDetailed", back_populates="project")
+    land_acquisition = relationship("LandAcquisitionTracking", back_populates="project", uselist=False)
+    board_members = relationship("BoardOfDirectors", back_populates="project")
+    shareholders = relationship("ShareholdingHierarchy", back_populates="project")
+    esg_metrics = relationship("ESGMetrics", back_populates="project")
+    eia_mitigations = relationship("EIAMitigationChecklist", back_populates="project")
+    maintenance_schedules = relationship("MaintenanceSchedule", back_populates="project")
+    maintenance_logs = relationship("MaintenanceLog", back_populates="project")
+    plant_performance = relationship("PlantPerformance", back_populates="project")
+    covenant_history = relationship("CovenantHistory", back_populates="project")
+
     __table_args__ = (
         UniqueConstraint('project_code', name='uq_project_code'),
         Index('ix_pipeline_status', 'pipeline_status'),

@@ -5,6 +5,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 import logging
+import os
 from datetime import datetime
 
 from sqlalchemy import text
@@ -63,6 +64,7 @@ app.add_middleware(
         "http://localhost:5173",  # Vite dev server (Phase 6 frontend)
         "http://127.0.0.1:5173",
         "http://localhost:8080",  # Alternative dev port
+        "https://hpms-web.vercel.app",  # Vercel-hosted frontend
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -72,11 +74,22 @@ app.add_middleware(
 # Trusted hosts
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["localhost", "127.0.0.1", "hpms.sbl.local"],  # DEV ONLY
+    allowed_hosts=[
+        "localhost",
+        "127.0.0.1",
+        "hpms.sbl.local",
+        "hpms-api.onrender.com",  # Render-hosted backend
+        "*.onrender.com",  # TEMP DEMO: Render-hosted backend
+        *[h.strip() for h in os.getenv("EXTRA_ALLOWED_HOSTS", "").split(",") if h.strip()],
+    ],  # DEV ONLY
 )
 
 # Rate limiting
 app.state.limiter = limiter
+
+# Background scheduler for Phase 8.3.1
+scheduler = None
+sync_executor = None
 
 # Register API routes
 from backend.app.api.routes_auth import router as auth_router
@@ -87,6 +100,9 @@ from backend.app.api.routes_mfa import router as mfa_router
 from backend.app.api.routes_graphql import router as graphql_router
 from backend.app.api.routes_ws import router as ws_router
 from backend.app.api.routes_i18n import router as i18n_router
+from backend.app.api.routes_compliance import router as compliance_router
+from backend.app.api.routes_analytics import router as analytics_router
+from backend.app.api.routes_admin import router as admin_router
 
 # Auth routes (no auth required)
 app.include_router(auth_router)
@@ -99,6 +115,11 @@ app.include_router(mfa_router)
 app.include_router(graphql_router)
 app.include_router(ws_router)
 app.include_router(i18n_router)
+app.include_router(compliance_router)
+app.include_router(analytics_router)
+
+# Admin routes (require ADMIN role)
+app.include_router(admin_router)
 
 # Health check
 @app.get("/health", tags=["monitoring"])
@@ -126,6 +147,8 @@ async def ready_check(db=Depends(get_db)):
 @app.on_event("startup")
 async def startup_event():
     """Initialize on startup."""
+    global scheduler, sync_executor
+
     logger.info("SBL HPMS Starting up")
     # Schema is owned by Alembic (`alembic upgrade head`); never create_all here,
     # which would bypass migrations and turn views like consortium_exposure_v into tables.
@@ -137,10 +160,61 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Database not reachable at startup: {e}")
 
+    # Initialize background scheduler for loan sync (Phase 8.3.1)
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from backend.app.database import SessionLocal
+        from backend.app.services.background_sync_executor import BackgroundSyncExecutor
+
+        # Create executor
+        sync_executor = BackgroundSyncExecutor(SessionLocal)
+        await sync_executor.initialize_http_client()
+
+        # Create scheduler
+        scheduler = BackgroundScheduler()
+
+        # Add job to check for due syncs every minute
+        scheduler.add_job(
+            sync_executor.execute_due_syncs,
+            "interval",
+            minutes=1,
+            id="loan_sync_executor",
+            name="Loan Exposure Sync Executor",
+            misfire_grace_time=30,
+        )
+
+        scheduler.start()
+        logger.info("✅ Background loan sync scheduler started")
+
+    except ImportError:
+        logger.warning("APScheduler not installed; loan sync scheduler disabled")
+        logger.info("   Install with: pip install apscheduler")
+    except Exception as e:
+        logger.error(f"Failed to start background scheduler: {e}", exc_info=True)
+
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown."""
+    global scheduler, sync_executor
+
     logger.info("SBL HPMS Shutting down")
+
+    # Shutdown background scheduler
+    if scheduler:
+        try:
+            scheduler.shutdown(wait=True)
+            logger.info("✅ Background scheduler shutdown")
+        except Exception as e:
+            logger.error(f"Error shutting down scheduler: {e}")
+
+    # Cleanup HTTP client
+    if sync_executor:
+        try:
+            await sync_executor.shutdown_http_client()
+            logger.info("✅ HTTP client cleanup")
+        except Exception as e:
+            logger.error(f"Error cleaning up HTTP client: {e}")
+
     await close_db()
 
 # API Routes (Phase 2):

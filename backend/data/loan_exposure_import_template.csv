@@ -1,0 +1,4 @@
+project_id,facility_type,sanctioned_amount,disbursed_amount,outstanding_principal,outstanding_interest,interest_rate_pct,tenor_years,grace_years,sanction_date,disbursement_date,maturity_date,risk_rating,ifrs9_stage,dscr,ltv,icr
+550e8400-e29b-41d4-a716-446655440000,Construction Term Loan,50000000,40000000,35000000,0,11.5,15,3,2023-01-15,2023-02-01,2038-02-01,AA,Stage 1,2.5,50.0,3.2
+550e8400-e29b-41d4-a716-446655440001,Working Capital,10000000,8000000,7000000,0,12.0,10,0,2023-06-01,2023-06-15,2033-06-15,A,Stage 1,1.8,35.0,2.1
+550e8400-e29b-41d4-a716-446655440002,Construction Term Loan,75000000,60000000,55000000,250000,10.8,12,2,2022-12-01,2023-01-15,2035-01-15,AA,Stage 2,2.2,45.0,2.8

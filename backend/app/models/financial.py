@@ -42,6 +42,12 @@ class LoanAccount(Base, TimestampedMixin):
     moratorium_end_bs = Column(String(10))
     maturity_ad = Column(Date)
     maturity_bs = Column(String(10))
+
+    # Covenant metrics (calculated)
+    dscr = Column(Numeric(10, 4), nullable=True)  # Debt Service Coverage Ratio
+    ltv = Column(Numeric(10, 4), nullable=True)   # Loan-to-Value ratio
+    icr = Column(Numeric(10, 4), nullable=True)   # Interest Coverage Ratio
+    metric_as_of_date = Column(Date, nullable=True)  # When metrics were calculated
     
     last_synced_at = Column(String(100))
     sync_status = Column(String(50), default='pending', index=True)
@@ -175,7 +181,89 @@ class BudgetLine(Base, TimestampedMixin):
     # Derived columns
     variance_amount = Column(Numeric(20, 4))
     variance_pct = Column(Numeric(7, 4))
-    
+
     upload_batch_id = Column(String(255))  # For bulk imports
-    
+
     data_provenance = Column(String(50), default='MANUAL_ENTRY')
+
+
+class LoanExposureSyncSchedule(Base, TimestampedMixin):
+    """Scheduled automatic loan exposure sync (Phase 8.3 Option B)."""
+
+    __tablename__ = 'loan_exposure_sync_schedules'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # Schedule definition
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+
+    # Frequency: 'daily', 'weekly', 'hourly', 'manual'
+    frequency = Column(String(50), nullable=False, index=True)
+
+    # Time of day (HH:MM UTC) - only for daily/weekly
+    scheduled_time_utc = Column(String(5))  # e.g., "02:00"
+
+    # Day of week (0=Mon, 6=Sun) - only for weekly
+    day_of_week = Column(Integer)
+
+    # Data source
+    sync_source = Column(String(100), nullable=False)  # 'BANK_API', 'FINACLE_CBS', 'CSV_UPLOAD'
+    source_config = Column(JSONB)  # JSON config for the source (webhook URL, credentials reference, etc.)
+
+    # Status
+    is_active = Column(String(1), default='Y', index=True)
+
+    # Last sync tracking
+    last_sync_at = Column(String(100))
+    last_sync_status = Column(String(50))  # 'success', 'failed', 'partial_success'
+    last_sync_record_count = Column(Integer, default=0)
+    last_sync_error = Column(Text)
+
+    # Alerting configuration
+    alert_on_dscr_below = Column(Numeric(10, 4))  # e.g., 1.2
+    alert_on_ltv_above = Column(Numeric(10, 4))  # e.g., 75
+    alert_on_concentration_above = Column(Numeric(10, 4))  # e.g., 30 (% of portfolio)
+    alert_email_addresses = Column(String(500))  # Comma-separated
+
+    # Audit
+    created_by = Column(String(255))
+    updated_by = Column(String(255))
+
+    __table_args__ = (
+        Index('ix_sync_schedule_active', 'is_active', 'frequency'),
+    )
+
+
+class LoanExposureSyncHistory(Base, TimestampedMixin):
+    """History of loan exposure sync operations (Phase 8.3)."""
+
+    __tablename__ = 'loan_exposure_sync_history'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    schedule_id = Column(UUID(as_uuid=True), ForeignKey('loan_exposure_sync_schedules.id'), index=True)
+
+    # Operation details
+    sync_source = Column(String(100), nullable=False)
+    status = Column(String(50), nullable=False, index=True)  # 'success', 'failed', 'partial_success'
+
+    total_records = Column(Integer, default=0)
+    created_count = Column(Integer, default=0)
+    updated_count = Column(Integer, default=0)
+    skipped_count = Column(Integer, default=0)
+
+    error_message = Column(Text)
+    alerts_triggered = Column(JSONB)  # JSON array of alerts
+
+    # Timing
+    started_at = Column(String(100))
+    completed_at = Column(String(100))
+    duration_seconds = Column(Integer)
+
+    # Data provenance
+    data_provenance = Column(String(50), default='AUTO_SYNC')
+    source_reference = Column(String(255))
+
+    __table_args__ = (
+        Index('ix_sync_history_status_date', 'status', 'created_at'),
+    )

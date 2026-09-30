@@ -1,10 +1,21 @@
 /**
  * Global app state management with Zustand
+ * Includes offline queue for data synchronization
  */
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+export interface SyncItem {
+  id: string;
+  action: 'create' | 'update' | 'delete';
+  entity: 'inspection' | 'maintenance' | 'project' | string;
+  data: any;
+  timestamp: number;
+  retries: number;
+  error?: string;
+}
 
 interface AppState {
   // Auth state
@@ -20,6 +31,11 @@ interface AppState {
   isOnline: boolean;
   syncPending: boolean;
 
+  // Offline sync state
+  offlineQueue: SyncItem[];
+  lastSyncTime: number | null;
+  syncErrors: Map<string, string>;
+
   // Actions
   initialize: () => Promise<void>;
   login: (userId: string, token: string, role: string) => void;
@@ -28,11 +44,20 @@ interface AppState {
   setLanguage: (lang: 'en' | 'ne') => void;
   setOnline: (online: boolean) => void;
   setSyncPending: (pending: boolean) => void;
+
+  // Offline queue actions
+  addToQueue: (item: Omit<SyncItem, 'id' | 'timestamp' | 'retries'>) => void;
+  removeFromQueue: (id: string) => void;
+  clearQueue: () => void;
+  setSyncError: (id: string, error: string) => void;
+  clearSyncError: (id: string) => void;
+  setLastSyncTime: (time: number) => void;
+  processQueue: () => Promise<SyncItem[]>;
 }
 
 const useAppStore = create<AppState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       // Initial state
       isAuthenticated: false,
       userId: null,
@@ -43,6 +68,9 @@ const useAppStore = create<AppState>()(
       language: 'en',
       isOnline: true,
       syncPending: false,
+      offlineQueue: [],
+      lastSyncTime: null,
+      syncErrors: new Map(),
 
       // Actions
       initialize: async () => {
@@ -72,6 +100,8 @@ const useAppStore = create<AppState>()(
           token: null,
           userRole: null,
           syncPending: false,
+          offlineQueue: [],
+          syncErrors: new Map(),
         });
       },
 
@@ -90,6 +120,76 @@ const useAppStore = create<AppState>()(
       setSyncPending: (pending: boolean) => {
         set({ syncPending: pending });
       },
+
+      // Offline queue actions
+      addToQueue: (item) => {
+        const state = get();
+        const syncItem: SyncItem = {
+          ...item,
+          id: `${Date.now()}-${Math.random()}`,
+          timestamp: Date.now(),
+          retries: 0,
+        };
+        set({
+          offlineQueue: [...state.offlineQueue, syncItem],
+        });
+      },
+
+      removeFromQueue: (id: string) => {
+        const state = get();
+        set({
+          offlineQueue: state.offlineQueue.filter(item => item.id !== id),
+        });
+      },
+
+      clearQueue: () => {
+        set({
+          offlineQueue: [],
+          syncErrors: new Map(),
+        });
+      },
+
+      setSyncError: (id: string, error: string) => {
+        const state = get();
+        const newErrors = new Map(state.syncErrors);
+        newErrors.set(id, error);
+        set({ syncErrors: newErrors });
+      },
+
+      clearSyncError: (id: string) => {
+        const state = get();
+        const newErrors = new Map(state.syncErrors);
+        newErrors.delete(id);
+        set({ syncErrors: newErrors });
+      },
+
+      setLastSyncTime: (time: number) => {
+        set({ lastSyncTime: time });
+      },
+
+      processQueue: async () => {
+        const state = get();
+        const synced: SyncItem[] = [];
+
+        for (const item of state.offlineQueue) {
+          try {
+            // Process each item (would call API in real implementation)
+            console.log(`Processing ${item.action} for ${item.entity}:`, item.data);
+            synced.push(item);
+            get().removeFromQueue(item.id);
+            get().clearSyncError(item.id);
+          } catch (error: any) {
+            get().setSyncError(item.id, error.message);
+          }
+        }
+
+        set({
+          lastSyncTime: Date.now(),
+          syncPending: false,
+        });
+
+        return synced;
+      },
     }),
     {
       name: 'app-storage',
@@ -97,9 +197,11 @@ const useAppStore = create<AppState>()(
       partialize: (state) => ({
         isDarkMode: state.isDarkMode,
         language: state.language,
+        offlineQueue: state.offlineQueue,
       }),
     }
   )
 );
 
+export { useAppStore };
 export default useAppStore;

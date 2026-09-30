@@ -233,3 +233,115 @@ async def test_reports(api, db_session):
 
 async def test_readiness_uses_database(api):
     assert (await api.get("/ready")).json() == {"status": "ready"}
+
+
+async def test_compliance_audit_log_access_control(api, db_session):
+    """Test that audit log endpoint enforces role-based access."""
+    maker = await login(api, "maker", "maker123")
+    auditor = await login(api, "auditor", "auditor123")
+    guest = await login(api, "guest", "guest123")
+
+    # Auditor can list (returns empty but succeeds)
+    r = await api.get("/api/v1/compliance/audit-log", headers=auditor)
+    assert r.status_code == 200
+    assert r.json()["data"] == []
+
+    # Maker can list (returns empty but succeeds)
+    r = await api.get("/api/v1/compliance/audit-log", headers=maker)
+    assert r.status_code == 200
+    assert r.json()["data"] == []
+
+    # Guest can list (returns empty, no error)
+    r = await api.get("/api/v1/compliance/audit-log", headers=guest)
+    assert r.status_code == 200
+    assert r.json()["data"] == []
+
+
+async def test_compliance_export_requires_auditor_or_admin(api, db_session):
+    """Test that compliance export is restricted to auditors and admins."""
+    maker = await login(api, "maker", "maker123")
+    auditor = await login(api, "auditor", "auditor123")
+    guest = await login(api, "guest", "guest123")
+
+    # Auditor can export
+    r = await api.post("/api/v1/compliance/export", json={}, headers=auditor)
+    assert r.status_code == 200
+    body = r.json()["data"]
+    assert body["record_count"] == 0
+    assert "export_timestamp" in body
+    assert body["generated_by"] == "auditor"
+
+    # Maker cannot export
+    r = await api.post("/api/v1/compliance/export", json={}, headers=maker)
+    assert r.status_code == 403
+
+    # Guest cannot export
+    r = await api.post("/api/v1/compliance/export", json={}, headers=guest)
+    assert r.status_code == 403
+
+
+async def test_analytics_portfolio_metrics_with_rls(api, db_session):
+    """Test portfolio analytics respects RLS and aggregates correctly."""
+    maker = await login(api, "maker", "maker123")
+    admin = await login(api, "admin", "admin123")
+    other_maker = await extra_user(db_session, "maker2", UserRole.MAKER)
+
+    # Create projects and loans
+    p1_id = (await api.post("/api/v1/projects", json=PROJECT, headers=maker)).json()["data"]["id"]
+    p2 = Project(
+        project_code="ANALYTICS-2", name_en="Other", name_np="अन्य", province="Koshi",
+        installed_capacity_mw=Decimal("30"), project_stage="feasibility", pipeline_status="under_review",
+    )
+    db_session.add(p2)
+    await db_session.flush()
+
+    # Add loans to maker's project
+    db_session.add(LoanAccount(
+        project_id=uuid.UUID(p1_id),
+        finacle_account_id="FIN-1",
+        facility_type="Term Loan",
+        sanctioned_amount=Decimal("5000000"),
+        disbursed_amount=Decimal("3000000"),
+        outstanding_principal=Decimal("2500000"),
+        interest_rate_pct=Decimal("8.5"),
+    ))
+    await db_session.flush()
+
+    # Maker sees only their project metrics
+    r = await api.get("/api/v1/analytics/portfolio", headers=maker)
+    assert r.status_code == 200
+    body = r.json()["data"]
+    assert body["total_projects"] == 1
+    assert body["total_capacity_mw"] == 42.5
+    assert body["total_sanctioned_amount"] == 5000000
+    assert body["total_outstanding_principal"] == 2500000
+
+    # Admin sees both projects
+    r = await api.get("/api/v1/analytics/portfolio", headers=admin)
+    assert r.status_code == 200
+    body = r.json()["data"]
+    assert body["total_projects"] == 2
+    assert body["total_capacity_mw"] == 72.5  # 42.5 + 30
+
+
+async def test_analytics_project_detail_with_rls(api, db_session):
+    """Test per-project analytics enforces RLS."""
+    maker = await login(api, "maker", "maker123")
+    other_maker = await extra_user(db_session, "maker2", UserRole.MAKER)
+
+    project_id = (await api.post("/api/v1/projects", json=PROJECT, headers=maker)).json()["data"]["id"]
+
+    # Maker can view their own project analytics
+    r = await api.get(f"/api/v1/analytics/project/{project_id}", headers=maker)
+    assert r.status_code == 200
+    body = r.json()["data"]
+    assert body["project_id"] == project_id
+    assert body["project_code"] == "E2E-001"
+
+    # Other maker cannot view
+    r = await api.get(f"/api/v1/analytics/project/{project_id}", headers=other_maker)
+    assert r.status_code == 404
+
+    # Malformed ID is 404
+    r = await api.get("/api/v1/analytics/project/not-a-uuid", headers=maker)
+    assert r.status_code == 404
