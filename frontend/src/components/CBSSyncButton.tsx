@@ -35,7 +35,7 @@ export function CBSSyncButton({ projectId, loanId, onSyncComplete }: CBSSyncButt
     setDiffLog(null);
 
     try {
-      const response = await apiClient.post(`/cbs/sync/${projectId}`, {
+      await apiClient.post(`/cbs/sync/${projectId}`, {
         loan_id: loanId,
       });
 
@@ -79,7 +79,7 @@ export function CBSSyncButton({ projectId, loanId, onSyncComplete }: CBSSyncButt
         className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         {isLoading ? (
-          <Spinner className="size-4" />
+          <Spinner />
         ) : (
           <Zap className="size-4" />
         )}

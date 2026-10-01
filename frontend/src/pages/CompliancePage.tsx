@@ -89,7 +89,7 @@ export default function CompliancePage() {
       render: (item) => (
         <Badge
           tone={
-            item.status === 'compliant' ? 'success' : item.status === 'warning' ? 'warning' : 'error'
+            item.status === 'compliant' ? 'success' : item.status === 'warning' ? 'warning' : 'danger'
           }
         >
           {item.status === 'compliant' ? 'Compliant' : item.status === 'warning' ? 'Warning' : 'Breached'}
@@ -134,7 +134,6 @@ export default function CompliancePage() {
           label="Active Alerts"
           icon={<AlertCircle className="size-4" />}
           value="3"
-          tone="warning"
         />
         <StatCard
           label="Last Sync"

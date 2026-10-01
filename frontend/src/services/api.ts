@@ -9,6 +9,8 @@ export const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+export const apiClient = api;
+
 api.interceptors.request.use((config) => {
   const token = getValidToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;

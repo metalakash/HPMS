@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ModalState, ModalConfig } from '@/types/modal';
+import type { ModalState } from '@/types/modal';
 
 /**
  * Global modal state management using Zustand.

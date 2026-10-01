@@ -6,7 +6,7 @@ import uuid
 
 # revision identifiers, used by Alembic.
 revision = '010_phase_8_4_etl'
-down_revision = '009_add_covenant_metrics'
+down_revision = '009'
 branch_labels = None
 depends_on = None
 

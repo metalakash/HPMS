@@ -81,7 +81,7 @@ export function JustificationModal({
         disabled={!isFormValid || isLoading}
         className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium flex items-center gap-2 hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
-        {isLoading && <Spinner className="size-4" />}
+        {isLoading && <Spinner size="sm" />}
         Submit for Approval
       </button>
     </div>

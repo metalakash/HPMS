@@ -83,13 +83,19 @@ export function bsYearToAdYear(bsYear: number): number {
  * @param date - Date in any format (AD ISO string or Date object)
  * @returns Object with both AD and BS dates
  */
-export function getDatePair(date: string | Date): DatePair {
+export function getDatePair(date: string | Date | null | undefined): DatePair {
+  if (!date) {
+    return {
+      ad: '',
+      bs: '',
+    };
+  }
   const adDate = typeof date === 'string' ? date : date.toISOString().split('T')[0];
   const bsDate = adToBs(adDate);
 
   return {
-    ad: adDate,
-    bs: bsDate,
+    ad: adDate || '',
+    bs: bsDate || '',
   };
 }
 

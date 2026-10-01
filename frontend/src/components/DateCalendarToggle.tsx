@@ -2,7 +2,6 @@
  * DateCalendarToggle: Switch between BS (Bikram Sambat) and AD (Anno Domini) dates
  */
 
-import { useUIStore } from '@/store/useUIStore';
 import { useEffect, useState } from 'react';
 
 export interface CalendarPreference {

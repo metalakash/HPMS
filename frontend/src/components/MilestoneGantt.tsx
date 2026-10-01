@@ -94,8 +94,7 @@ export function MilestoneGantt({ projectName, milestones }: MilestoneGanttProps)
                       <span className="font-medium text-fg">{milestone.name}</span>
                     </div>
                     <Badge
-                      tone={status === 'ontime' ? 'success' : status === 'warning' ? 'warning' : 'error'}
-                      className="text-xs"
+                      tone={status === 'ontime' ? 'success' : status === 'warning' ? 'warning' : 'danger'}
                     >
                       {slippage === 0 ? 'On Time' : `${slippage} days late`}
                     </Badge>

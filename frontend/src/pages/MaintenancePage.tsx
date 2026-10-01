@@ -101,19 +101,16 @@ export default function MaintenancePage() {
           label="Scheduled Tasks"
           icon={<Clock className="size-4" />}
           value={String(scheduled)}
-          tone="warning"
         />
         <StatCard
           label="In Progress"
           icon={<AlertCircle className="size-4" />}
           value={String(inProgress)}
-          tone="info"
         />
         <StatCard
           label="Completed"
           icon={<CheckCircle className="size-4" />}
           value={String(completed)}
-          tone="success"
         />
       </div>
 

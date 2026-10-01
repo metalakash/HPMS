@@ -124,8 +124,9 @@ def upgrade():
         sa.Column('created_at', sa.DateTime, server_default=sa.func.now()),
         sa.Column('updated_at', sa.DateTime, server_default=sa.func.now(), onupdate=sa.func.now()),
     )
-    op.create_index('ix_hydrology_project', 'hydrology_detailed', ['project_id'])
-    op.create_index('ix_hydrology_basin', 'hydrology_detailed', ['river_basin'])
+    # Note: hydrology_detailed already has indexes from existing table
+    # op.create_index('ix_hydrology_project', 'hydrology_detailed', ['project_id'])
+    # op.create_index('ix_hydrology_basin', 'hydrology_detailed', ['river_basin'])
 
     op.create_table(
         'land_acquisition_tracking',

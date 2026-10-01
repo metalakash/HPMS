@@ -47,7 +47,7 @@ export function ConfirmationModal({
             : 'bg-primary hover:bg-primary/90'
         }`}
       >
-        {isLoading && <Spinner className="size-4" />}
+        {isLoading && <Spinner size="sm" />}
         {confirmText}
       </button>
     </div>
