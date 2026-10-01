@@ -6,7 +6,7 @@ from sqlalchemy.orm import relationship
 import uuid
 from datetime import datetime
 
-from backend.app.database import Base
+from .base import Base
 
 
 class AirflowLoanDAGRun(Base):
@@ -52,7 +52,7 @@ class LoanReconciliationLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
-    loan = relationship('LoanAccount', back_populates='reconciliation_logs')
+    loan = relationship('LoanAccount')
     dag_run = relationship('AirflowLoanDAGRun', back_populates='reconciliation_logs')
     
     __table_args__ = (
@@ -76,7 +76,7 @@ class LoanDataProvenance(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
-    loan = relationship('LoanAccount', back_populates='provenance_records')
+    loan = relationship('LoanAccount')
     dag_run = relationship('AirflowLoanDAGRun', back_populates='provenance_records')
     
     __table_args__ = (

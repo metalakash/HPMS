@@ -100,7 +100,7 @@ class MockEmailProvider(EmailProvider):
     async def send(self, message: EmailMessage) -> bool:
         """Log email without sending."""
         logger.info(
-            f"📧 [MOCK] Email to {'"'"'{'"'"', '"'"'{'"'"'.join(message.to)}\n"
+            f"[MOCK] Email to {', '.join(message.to)}\n"
             f"   Subject: {message.subject}\n"
             f"   Body ({len(message.body_text)} chars)"
         )

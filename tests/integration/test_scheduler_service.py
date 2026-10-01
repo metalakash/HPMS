@@ -7,17 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.models.scheduler import ExportJob, ExportJobRun, JobStatus
 from backend.app.models.project import Project
 from backend.app.services.scheduler_service import SchedulerService
-from backend.app.services.email_service import MockEmailService
+from backend.app.services.email_service import EmailService, MockEmailProvider
 
 
 @pytest.fixture
 def scheduler_service():
     """Create scheduler service with mock email."""
-    email_service = MockEmailService(
-        smtp_server="localhost",
-        smtp_port=1025,
-        sender_email="hpms@sbl.local",
-    )
+    email_service = EmailService(provider=MockEmailProvider())
     return SchedulerService(email_service=email_service)
 
 
