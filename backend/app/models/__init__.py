@@ -19,6 +19,11 @@ from .operations import (
     PlantPerformance, CovenantHistory,
 )
 
+from .risk import (
+    Milestone, RiskRegisterEntry, InsurancePolicy, ProjectPermit,
+    EsiaMonitoringRecord, CommunityEngagement,
+)
+
 __all__ = [
     "Base",
     "Project",

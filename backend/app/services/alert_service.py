@@ -5,7 +5,9 @@ from sqlalchemy import select, and_, func
 from typing import List, Dict, Any
 import logging
 
-from backend.app.models.operations import PPAAgreement, WaterLicense
+from backend.app.models.operations import PPAAgreement
+from backend.app.models.project import WaterLicense
+from backend.app.models.risk import InsurancePolicy, ProjectPermit, Milestone
 from backend.app.models.financial import LoanAccount
 
 logger = logging.getLogger(__name__)
@@ -44,11 +46,12 @@ class AlertService:
             license_alerts = await AlertService._check_water_license_expiry(db, project_id, today)
             alerts.extend(license_alerts)
 
-            # Check insurance (from loan accounts - if expiry_date field exists)
-            # TODO: Implement when insurance data model is available
+            alerts.extend(await AlertService._check_insurance_expiry(db, project_id, today))
+            alerts.extend(await AlertService._check_permit_expiry(db, project_id, today))
+            alerts.extend(await AlertService._check_milestone_slippage(db, project_id, today))
 
             # Group by urgency
-            critical = [a for a in alerts if a["urgency"] == "critical"]
+            critical = [a for a in alerts if a["urgency"] in ("critical", "expired")]
             warning = [a for a in alerts if a["urgency"] == "warning"]
             ok = [a for a in alerts if a["urgency"] == "ok"]
 
@@ -205,6 +208,91 @@ class AlertService:
                     ],
                 })
 
+        return alerts
+
+    @staticmethod
+    async def _check_insurance_expiry(db, project_id: str, today) -> List[Dict[str, Any]]:
+        """Insurance policies expiring within the warning window (RFP E.11, E.16)."""
+        result = await db.execute(
+            select(InsurancePolicy)
+            .where(InsurancePolicy.project_id == project_id)
+            .where(InsurancePolicy.status.in_(["active", "renewed"]))
+        )
+        alerts = []
+        for pol in result.scalars().all():
+            days = (pol.valid_to_ad - today).days
+            if days <= AlertService.WARNING_THRESHOLD:
+                alerts.append({
+                    "alert_id": f"INSURANCE:{pol.id}",
+                    "entity_type": "INSURANCE",
+                    "entity_id": str(pol.id),
+                    "description": f"{pol.policy_type} policy {pol.policy_number} expiring",
+                    "expiry_date": pol.valid_to_ad.isoformat(),
+                    "days_remaining": days,
+                    "urgency": AlertService._get_urgency(days),
+                    "authority": pol.insurer,
+                    "action_available": [{"type": "RENEWAL", "label": "Initiate Renewal"}],
+                })
+        return alerts
+
+    @staticmethod
+    async def _check_permit_expiry(db, project_id: str, today) -> List[Dict[str, Any]]:
+        """Environmental / regulatory permits expiring within the warning window (RFP E.2, E.16)."""
+        result = await db.execute(
+            select(ProjectPermit)
+            .where(ProjectPermit.project_id == project_id)
+            .where(ProjectPermit.status != "expired")
+            .where(ProjectPermit.valid_to_ad.is_not(None))
+        )
+        alerts = []
+        for permit in result.scalars().all():
+            days = (permit.valid_to_ad - today).days
+            if days <= AlertService.WARNING_THRESHOLD:
+                alerts.append({
+                    "alert_id": f"PERMIT:{permit.id}",
+                    "entity_type": "PERMIT",
+                    "entity_id": str(permit.id),
+                    "description": f"{permit.permit_type} {permit.permit_number} expiring",
+                    "expiry_date": permit.valid_to_ad.isoformat(),
+                    "days_remaining": days,
+                    "urgency": AlertService._get_urgency(days),
+                    "authority": permit.issuing_authority,
+                    "action_available": [{"type": "RENEWAL", "label": "Initiate Renewal"}],
+                })
+        return alerts
+
+    @staticmethod
+    def milestone_slippage_days(planned, forecast, actual, today) -> int:
+        """Days a milestone is late: forecast (or today if overdue and incomplete) vs planned."""
+        if actual:
+            return max((actual - planned).days, 0)
+        effective = forecast or today
+        return max((effective - planned).days, 0)
+
+    @staticmethod
+    async def _check_milestone_slippage(db, project_id: str, today) -> List[Dict[str, Any]]:
+        """Incomplete milestones past plan or forecast to slip (RFP C.5, F.15)."""
+        result = await db.execute(
+            select(Milestone)
+            .where(Milestone.project_id == project_id)
+            .where(Milestone.actual_date_ad.is_(None))
+            .where(Milestone.status != "completed")
+        )
+        alerts = []
+        for m in result.scalars().all():
+            slip = AlertService.milestone_slippage_days(m.planned_date_ad, m.forecast_date_ad, None, today)
+            if slip > 0:
+                alerts.append({
+                    "alert_id": f"MILESTONE:{m.id}",
+                    "entity_type": "MILESTONE",
+                    "entity_id": str(m.id),
+                    "description": f"Milestone '{m.name}' slipped {slip} days",
+                    "expiry_date": m.planned_date_ad.isoformat(),
+                    "days_remaining": -slip,
+                    "urgency": "expired" if slip > AlertService.CRITICAL_THRESHOLD else "critical",
+                    "authority": None,
+                    "action_available": [{"type": "ESCALATE", "label": "Escalate Delay"}],
+                })
         return alerts
 
     @staticmethod
