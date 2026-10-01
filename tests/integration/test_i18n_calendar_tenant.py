@@ -26,12 +26,9 @@ class TestCalendarConverter:
 
     def test_ad_to_bs_known_date(self):
         """Test converting known AD date."""
-        # 2000-01-01 AD should be around 1943-09-17 BS
-        ad_date = datetime(2000, 1, 1)
-        bs_year, bs_month, bs_day = CalendarConverter.ad_to_bs(ad_date)
-
-        # Should be approximately year 1943
-        assert bs_year >= 1942 and bs_year <= 1944
+        assert CalendarConverter.ad_to_bs(datetime(2000, 1, 1)) == (2056, 9, 17)
+        assert CalendarConverter.ad_to_bs(datetime(2026, 4, 14)) == (2083, 1, 1)
+        assert CalendarConverter.bs_to_ad(2083, 1, 1) == datetime(2026, 4, 14)
 
     def test_bs_to_ad_basic(self):
         """Test converting BS date to AD."""
@@ -51,9 +48,7 @@ class TestCalendarConverter:
         # Convert back to AD
         recovered_ad = CalendarConverter.bs_to_ad(bs_year, bs_month, bs_day)
 
-        # Should be close to original (within a few days due to lunar calendar)
-        diff = abs((recovered_ad - original_ad).days)
-        assert diff <= 1
+        assert recovered_ad == original_ad
 
     def test_format_bs_english(self):
         """Test formatting BS date in English."""
