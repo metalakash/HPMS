@@ -49,6 +49,44 @@ export const handlers = [
   ),
   http.get('*/api/v1/projects/:id/loan-accounts', () => HttpResponse.json(envelope([makeLoan()]))),
 
+  http.get('*/api/v1/projects/:id/milestones', () =>
+    HttpResponse.json(
+      envelope([
+        {
+          id: 'm-1',
+          project_id: 'p-1',
+          name: 'Headworks complete',
+          category: 'CIVIL',
+          sequence: 1,
+          planned_date_ad: '2026-01-01',
+          planned_date_bs: '2082-09-17',
+          forecast_date_ad: '2026-03-15',
+          actual_date_ad: null,
+          status: 'delayed',
+          percent_complete: '60.00',
+        },
+      ]),
+    ),
+  ),
+  http.get('*/api/v1/projects/:id/risks', () =>
+    HttpResponse.json(
+      envelope([
+        {
+          id: 'r-1',
+          project_id: 'p-1',
+          title: 'Milestone delay: Headworks complete',
+          risk_type: 'technical',
+          likelihood: 3,
+          impact: 3,
+          severity: 'medium',
+          mitigation_status: 'open',
+          mitigation_owner: null,
+          trigger_source: 'milestone_delay',
+        },
+      ]),
+    ),
+  ),
+
   http.get('*/api/v1/loan-accounts', ({ request }) => {
     const pageSize = Number(new URL(request.url).searchParams.get('page_size') ?? 20);
     return HttpResponse.json(

@@ -5,10 +5,12 @@ import type {
   LoanAccountListItem,
   LoanFilters,
   LoginRequest,
+  MilestoneItem,
   ProjectDetail,
   ProjectDisbursements,
   ProjectFilters,
   ProjectListItem,
+  RiskItem,
   TokenResponse,
 } from '@/types/api';
 
@@ -38,6 +40,12 @@ export const projectsApi = {
     api
       .get<ApiResponse<LoanAccountListItem[]>>(`/api/v1/projects/${id}/loan-accounts`)
       .then((r) => r.data),
+  milestones: (id: string) =>
+    api
+      .get<ApiResponse<MilestoneItem[]>>(`/api/v1/projects/${id}/milestones`)
+      .then((r) => r.data),
+  risks: (id: string) =>
+    api.get<ApiResponse<RiskItem[]>>(`/api/v1/projects/${id}/risks`).then((r) => r.data),
   disbursements: (id: string) =>
     api
       .get<ApiResponse<ProjectDisbursements>>(`/api/v1/projects/${id}/disbursements`)

@@ -3,14 +3,27 @@ import { Link, useParams } from 'react-router';
 import { AxiosError } from 'axios';
 import { ArrowLeft } from 'lucide-react';
 import { Badge } from '@/components/common/Badge';
+import { MilestoneGantt } from '@/components/MilestoneGantt';
 import { Card, CardBody, CardHeader } from '@/components/common/Card';
 import { DataTable, type Column } from '@/components/common/DataTable';
 import { Skeleton } from '@/components/common/Skeleton';
 import { EmptyState, ErrorState } from '@/components/common/States';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { useProject, useProjectDisbursements, useProjectLoans } from '@/hooks/queries';
+import {
+  useProject,
+  useProjectDisbursements,
+  useProjectLoans,
+  useProjectMilestones,
+  useProjectRisks,
+} from '@/hooks/queries';
 import { useUIStore } from '@/store/useUIStore';
-import type { CodHistoryEntry, DisbursementTrancheItem, LoanAccountListItem, RepaymentItem } from '@/types/api';
+import type {
+  CodHistoryEntry,
+  DisbursementTrancheItem,
+  LoanAccountListItem,
+  RepaymentItem,
+  RiskItem,
+} from '@/types/api';
 import { formatDate, formatMW, formatNPR, formatPercent, humanize } from '@/utils/format';
 import { projectName, statusTone } from '@/utils/status';
 
@@ -20,6 +33,8 @@ export default function ProjectDetailPage() {
   const project = useProject(id);
   const loans = useProjectLoans(id);
   const disbursements = useProjectDisbursements(id);
+  const milestones = useProjectMilestones(id);
+  const risks = useProjectRisks(id);
 
   const back = (
     <Link
@@ -106,6 +121,36 @@ export default function ProjectDetailPage() {
     },
   ];
 
+  const severityTone = { low: 'neutral', medium: 'warning', high: 'danger', critical: 'danger' } as const;
+  const riskColumns: Column<RiskItem>[] = [
+    { key: 'title', header: 'Risk', render: (r) => r.title },
+    { key: 'type', header: 'Type', hideOnMobile: true, render: (r) => humanize(r.risk_type) },
+    {
+      key: 'severity',
+      header: 'Severity',
+      render: (r) => <Badge tone={severityTone[r.severity]}>{humanize(r.severity)}</Badge>,
+    },
+    {
+      key: 'mitigation',
+      header: 'Mitigation',
+      render: (r) => <Badge tone={statusTone(r.mitigation_status)}>{humanize(r.mitigation_status)}</Badge>,
+    },
+    {
+      key: 'source',
+      header: 'Source',
+      hideOnMobile: true,
+      render: (r) => humanize(r.trigger_source ?? 'manual'),
+    },
+  ];
+
+  const ganttMilestones = (milestones.data?.data ?? []).map((m) => ({
+    id: m.id,
+    name: m.name,
+    originalDate: m.planned_date_ad,
+    currentDate: m.actual_date_ad ?? m.forecast_date_ad ?? m.planned_date_ad,
+    status: 'ontime' as const,
+  }));
+
   const repaymentColumns: Column<RepaymentItem>[] = [
     { key: 'due', header: 'Due date', render: (r) => formatDate(r.due_date_ad, language) },
     {
@@ -187,6 +232,45 @@ export default function ProjectDetailPage() {
             loading={project.isLoading}
             empty={<EmptyState title="No COD dates recorded" />}
           />
+        </Card>
+
+        <div className="lg:col-span-3">
+          {milestones.isError ? (
+            <Card>
+              <CardHeader title="Project timeline & milestones" />
+              <ErrorState error={milestones.error} onRetry={() => void milestones.refetch()} />
+            </Card>
+          ) : ganttMilestones.length > 0 ? (
+            <MilestoneGantt
+              projectName={p ? projectName(p, language) : ''}
+              milestones={ganttMilestones}
+            />
+          ) : (
+            <Card>
+              <CardHeader title="Project timeline & milestones" />
+              {milestones.isLoading ? (
+                <Skeleton className="m-4 h-24" />
+              ) : (
+                <EmptyState title="No milestones recorded" />
+              )}
+            </Card>
+          )}
+        </div>
+
+        <Card className="lg:col-span-3">
+          <CardHeader title="Risk register" />
+          {risks.isError ? (
+            <ErrorState error={risks.error} onRetry={() => void risks.refetch()} />
+          ) : (
+            <DataTable
+              caption="Risk register"
+              columns={riskColumns}
+              rows={risks.data?.data ?? []}
+              rowKey={(r) => r.id}
+              loading={risks.isLoading}
+              empty={<EmptyState title="No risks recorded" />}
+            />
+          )}
         </Card>
 
         <Card className="lg:col-span-3">

@@ -89,6 +89,7 @@ app.state.limiter = limiter
 
 # Background scheduler for Phase 8.3.1
 scheduler = None
+alert_task = None
 sync_executor = None
 
 # Register API routes
@@ -103,6 +104,7 @@ from backend.app.api.routes_i18n import router as i18n_router
 from backend.app.api.routes_compliance import router as compliance_router
 from backend.app.api.routes_analytics import router as analytics_router
 from backend.app.api.routes_admin import router as admin_router
+from backend.app.api.routes_risk import router as risk_router
 
 # Auth routes (no auth required)
 app.include_router(auth_router)
@@ -120,6 +122,7 @@ app.include_router(analytics_router)
 
 # Admin routes (require ADMIN role)
 app.include_router(admin_router)
+app.include_router(risk_router)
 
 # Health check
 @app.get("/health", tags=["monitoring"])
@@ -160,6 +163,18 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Database not reachable at startup: {e}")
 
+    # Daily alert scan (expiry/slippage alerts, automatic risks, email digest)
+    try:
+        import asyncio
+        from backend.app.database import async_session_maker
+        from backend.app.services.alert_daemon import daily_loop
+        from backend.app.services.email_service import get_email_service
+        global alert_task
+        alert_task = asyncio.create_task(daily_loop(async_session_maker, get_email_service()))
+        logger.info("Daily alert scan scheduled")
+    except Exception as e:
+        logger.error(f"Failed to schedule daily alert scan: {e}", exc_info=True)
+
     # Initialize background scheduler for loan sync (Phase 8.3.1)
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
@@ -198,6 +213,8 @@ async def shutdown_event():
     global scheduler, sync_executor
 
     logger.info("SBL HPMS Shutting down")
+    if alert_task:
+        alert_task.cancel()
 
     # Shutdown background scheduler
     if scheduler:

@@ -134,6 +134,33 @@ export interface LoanFilters extends PageParams {
   facility_type?: string;
 }
 
+export interface MilestoneItem {
+  id: string;
+  project_id: string;
+  name: string;
+  category: string | null;
+  sequence: number;
+  planned_date_ad: IsoDate;
+  planned_date_bs: string | null;
+  forecast_date_ad: IsoDate | null;
+  actual_date_ad: IsoDate | null;
+  status: 'planned' | 'in_progress' | 'completed' | 'delayed';
+  percent_complete: DecimalString | null;
+}
+
+export interface RiskItem {
+  id: string;
+  project_id: string;
+  title: string;
+  risk_type: string;
+  likelihood: number;
+  impact: number;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  mitigation_status: 'open' | 'in_progress' | 'mitigated' | 'accepted';
+  mitigation_owner: string | null;
+  trigger_source: string | null;
+}
+
 export interface DisbursementTrancheItem {
   id: string;
   loan_account_id: string;

@@ -85,12 +85,6 @@ describe('routing and auth', () => {
     renderRoute('/nope');
     expect(await screen.findByText('Page not found')).toBeInTheDocument();
   });
-
-  it('shows placeholders for screens without backend routes', async () => {
-    signIn();
-    renderRoute('/compliance');
-    expect(await screen.findByText('Coming in Task 6.2')).toBeInTheDocument();
-  });
 });
 
 describe('DashboardPage', () => {
@@ -186,6 +180,17 @@ describe('ProjectDetailPage', () => {
     expect(screen.getByText('2083-08-16')).toBeInTheDocument();
     const loans = await screen.findByRole('table', { name: 'Loan accounts for this project' });
     expect(within(loans).getByText('9.25%')).toBeInTheDocument();
+  });
+
+  it('shows the milestone timeline and risk register', async () => {
+    signIn();
+    renderRoute('/projects/p-1');
+
+    expect(await screen.findByText('Headworks complete')).toBeInTheDocument();
+    expect(screen.getByText('73 days late')).toBeInTheDocument();
+    const risks = await screen.findByRole('table', { name: 'Risk register' });
+    expect(within(risks).getByText('Milestone delay: Headworks complete')).toBeInTheDocument();
+    expect(within(risks).getByText('Medium')).toBeInTheDocument();
   });
 
   it('shows not-found for an unknown project', async () => {
