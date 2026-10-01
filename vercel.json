@@ -2,6 +2,8 @@
   "buildCommand": "cd frontend && npm run build",
   "outputDirectory": "frontend/dist",
   "rewrites": [
+    { "source": "/api/:path*", "destination": "https://hpms-api.onrender.com/api/:path*" },
+    { "source": "/graphql", "destination": "https://hpms-api.onrender.com/graphql" },
     { "source": "/((?!api/|ws/|graphql).*)", "destination": "/index.html" }
   ]
 }
