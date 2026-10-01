@@ -36,7 +36,7 @@ export function HydrologyTab({ projectId }: { projectId: string }) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Spinner className="size-8" />
+        <Spinner />
       </div>
     );
   }
@@ -82,7 +82,6 @@ export function HydrologyTab({ projectId }: { projectId: string }) {
               </div>
               <Badge
                 tone={data.water_license_status === 'valid' ? 'success' : 'warning'}
-                className="capitalize"
               >
                 {data.water_license_status}
               </Badge>

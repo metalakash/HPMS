@@ -153,7 +153,7 @@ export default function ApprovalQueuePage() {
           approved: 'success' as const,
         };
         return (
-          <Badge tone={tones[item.current_state]} className="capitalize">
+          <Badge tone={tones[item.current_state]}>
             {item.current_state.replace('_', ' ')}
           </Badge>
         );
@@ -187,7 +187,7 @@ export default function ApprovalQueuePage() {
           description="Pending approvals and recommendations"
         />
         <div className="flex items-center justify-center py-12">
-          <Spinner className="size-8" />
+          <Spinner />
         </div>
       </>
     );
@@ -205,19 +205,16 @@ export default function ApprovalQueuePage() {
           label="Pending Approvals"
           icon={<Clock className="size-4" />}
           value={state.stats.pending.toString()}
-          tone="warning"
         />
         <StatCard
           label="Recommended"
           icon={<AlertCircle className="size-4" />}
           value={state.stats.recommended.toString()}
-          tone="info"
         />
         <StatCard
           label="Approved"
           icon={<CheckCircle className="size-4" />}
           value={state.stats.approved.toString()}
-          tone="success"
         />
       </div>
 
@@ -337,7 +334,7 @@ function ApprovalDetailsModal({
           <div>
             <p className="text-sm text-muted">Status</p>
             <p className="mt-1">
-              <Badge tone="warning" className="capitalize">
+              <Badge tone="warning">
                 {approval.current_state.replace('_', ' ')}
               </Badge>
             </p>

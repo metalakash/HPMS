@@ -233,7 +233,7 @@ export function AlertRemediationDrawer({
                       </div>
                     </div>
                   </div>
-                  <Badge tone="success" className="text-xs">OK</Badge>
+                  <Badge tone="success">OK</Badge>
                 </div>
               </div>
             ))}
@@ -312,8 +312,7 @@ function AlertCard({
           </div>
         </div>
         <Badge
-          tone={alert.status === 'critical' ? 'error' : alert.status === 'warning' ? 'warning' : 'success'}
-          className="capitalize text-xs flex-shrink-0"
+          tone={alert.status === 'critical' ? 'danger' : alert.status === 'warning' ? 'warning' : 'success'}
         >
           {alert.status}
         </Badge>
@@ -326,7 +325,7 @@ function AlertCard({
           disabled={isActioning}
           className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          {isActioning && <Spinner className="size-3" />}
+          {isActioning && <Spinner size="sm" />}
           <span>Initiate Renewal</span>
           <ChevronRight className="size-4" />
         </button>

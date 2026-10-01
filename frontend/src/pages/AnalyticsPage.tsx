@@ -58,7 +58,7 @@ export default function AnalyticsPage() {
     {
       key: 'risk_score',
       header: 'Risk Score',
-      align: 'center',
+      align: 'right',
       render: (item) => (
         <Badge tone={item.risk_score > 20 ? 'warning' : 'success'}>{item.risk_score}</Badge>
       ),
@@ -66,7 +66,7 @@ export default function AnalyticsPage() {
     {
       key: 'anomalies',
       header: 'Anomalies',
-      align: 'center',
+      align: 'right',
       render: (item) => (item.anomalies > 0 ? <Badge tone="warning">{item.anomalies}</Badge> : <span>—</span>),
     },
     {
@@ -101,7 +101,6 @@ export default function AnalyticsPage() {
           label="Total Anomalies"
           icon={<AlertTriangle className="size-4" />}
           value="2"
-          tone="warning"
         />
         <StatCard
           label="Avg. Generation"

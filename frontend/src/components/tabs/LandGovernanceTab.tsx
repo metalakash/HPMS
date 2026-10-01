@@ -26,7 +26,7 @@ export function LandGovernanceTab({ projectId }: { projectId: string }) {
     setLoading(false);
   }, [projectId]);
 
-  if (loading) return <Spinner className="size-8" />;
+  if (loading) return <Spinner />;
   if (!data) return <div>No data</div>;
 
   return (

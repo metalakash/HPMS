@@ -131,7 +131,7 @@ export function GenerationPPATab({ projectId, projectName }: GenerationPPATabPro
       key: 'season',
       header: 'Season',
       render: (r) => (
-        <Badge tone={r.season === 'wet' ? 'info' : 'warning'} className="capitalize">
+        <Badge tone={r.season === 'wet' ? 'info' : 'warning'}>
           {r.season}
         </Badge>
       ),
@@ -179,7 +179,7 @@ export function GenerationPPATab({ projectId, projectName }: GenerationPPATabPro
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Spinner className="size-8" />
+        <Spinner />
       </div>
     );
   }
@@ -231,7 +231,6 @@ export function GenerationPPATab({ projectId, projectName }: GenerationPPATabPro
                 <p className="mt-1">
                   <Badge
                     tone={ppaAgreement.status === 'active' ? 'success' : 'warning'}
-                    className="capitalize"
                   >
                     {ppaAgreement.status}
                   </Badge>

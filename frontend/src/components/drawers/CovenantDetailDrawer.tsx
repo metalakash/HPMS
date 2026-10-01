@@ -118,8 +118,7 @@ export function CovenantDetailDrawer({
               <p className="mt-1 text-xs text-muted">{getCovenantDescription()}</p>
             </div>
             <Badge
-              tone={currentStatus === 'compliant' ? 'success' : 'error'}
-              className="capitalize"
+              tone={currentStatus === 'compliant' ? 'success' : 'danger'}
             >
               {currentStatus}
             </Badge>
@@ -183,9 +182,8 @@ export function CovenantDetailDrawer({
                               ? 'success'
                               : trend.status === 'warning'
                                 ? 'warning'
-                                : 'error'
+                                : 'danger'
                           }
-                          className="capitalize text-xs"
                         >
                           {trend.status}
                         </Badge>
