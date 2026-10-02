@@ -16,13 +16,49 @@ from typing import Optional, Dict, Any
 from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import false, select
 
 from backend.app.models.governance import ApprovalRequest, ApprovalState, ApprovalStep
 from backend.app.models.audit import AuditAction
 from backend.app.security.auth_middleware import CurrentUser
+from backend.app.security import field_policy
+from backend.app.security.ldap_provider import UserRole
 from backend.app.services.audit_chain import append_audit_log
 from backend.app.schemas.common import AuditMetadata
+
+
+def _has_any_role(user: CurrentUser, roles) -> bool:
+    return any(r in user.roles for r in roles)
+
+
+async def _authorize_target(db: AsyncSession, user: CurrentUser, entity_type: str, entity_id: str) -> None:
+    """Row-level security for the entity a change request targets (PROJECT and LOAN; other types pass).
+
+    Raises LookupError when the caller cannot see it (reported as not found) and PermissionError when
+    they can see it but may not modify it.
+    """
+    from uuid import UUID
+    from backend.app.models.financial import LoanAccount
+    from backend.app.security.rls_service import RLSService
+
+    kind = entity_type.upper()
+    if kind not in ("PROJECT", "LOAN"):
+        return
+    try:
+        target = UUID(str(entity_id))
+    except ValueError:
+        raise LookupError(f"{entity_type} {entity_id} not found")
+
+    project_id = target
+    if kind == "LOAN":
+        project_id = (await db.execute(
+            select(LoanAccount.project_id).where(LoanAccount.id == target))).scalar()
+        if project_id is None:
+            raise LookupError(f"{entity_type} {entity_id} not found")
+    if not await RLSService.can_view_project(db, user, project_id):
+        raise LookupError(f"{entity_type} {entity_id} not found")
+    if not await RLSService.can_update_project(db, user, project_id):
+        raise PermissionError("Not permitted to change this project")
 
 
 class MutationService:
@@ -98,6 +134,11 @@ class MutationService:
 
         if not entity_type or not entity_id:
             raise ValueError("entity_type and entity_id are required")
+
+        if not _has_any_role(current_user, (UserRole.MAKER, UserRole.ADMIN)):
+            raise PermissionError("Only makers and admins can submit changes")
+        field_policy.check_write(entity_type, changes, current_user.roles)
+        await _authorize_target(db, current_user, entity_type, entity_id)
 
         timestamp = datetime.utcnow().isoformat()
 
@@ -192,17 +233,14 @@ class MutationService:
         # Build query
         query = select(ApprovalRequest)
 
-        # Filter by current user's role
-        if current_user.roles and current_user.roles[0].value == "recommender":
-            query = query.where(
-                (ApprovalRequest.recommender_id == current_user.id) |
-                (ApprovalRequest.current_state == ApprovalState.UNDER_RECOMMENDATION.value)
-            )
-        elif current_user.roles and current_user.roles[0].value == "approver":
-            query = query.where(
-                (ApprovalRequest.approver_id == current_user.id) |
-                (ApprovalRequest.current_state == ApprovalState.RECOMMENDED.value)
-            )
+        # Visibility by role: checkers and auditors see every request, makers only their own, others none
+        roles = set(current_user.roles)
+        if roles & {UserRole.ADMIN, UserRole.APPROVER, UserRole.AUDITOR}:
+            pass
+        elif UserRole.MAKER in roles:
+            query = query.where(ApprovalRequest.maker_id == str(current_user.id))
+        else:
+            query = query.where(false())
 
         # Apply filters
         if entity_type:
@@ -256,6 +294,9 @@ class MutationService:
             Updated approval request info
         """
 
+        if not _has_any_role(current_user, (UserRole.APPROVER, UserRole.ADMIN)):
+            raise PermissionError("Only approvers and admins can approve changes")
+
         # Fetch approval request
         query = select(ApprovalRequest).where(ApprovalRequest.id == approval_request_id)
         result = await db.execute(query)
@@ -274,10 +315,21 @@ class MutationService:
         else:
             raise ValueError(f"Cannot approve from state: {current_state}")
 
+        # Dual control: nobody checks their own work, and the two checks come from different people
+        actor = str(current_user.id)
+        if actor == str(approval.maker_id):
+            raise PermissionError("A change cannot be approved by the person who submitted it")
+        if new_state == ApprovalState.APPROVED and actor == str(approval.recommender_id):
+            raise PermissionError("The final approval must come from a different person than the recommender")
+
         # Update approval request
         timestamp = datetime.utcnow().isoformat()
         approval.current_state = new_state.value
-        approval.approver_id = current_user.id
+        if new_state == ApprovalState.RECOMMENDED:
+            approval.recommender_id = actor
+        else:
+            approval.approver_id = actor
+            approval.completed_at = timestamp
 
         # Create approval step
         approval_step = ApprovalStep(
@@ -341,6 +393,8 @@ class MutationService:
             Updated approval request info
         """
 
+        if not _has_any_role(current_user, (UserRole.APPROVER, UserRole.ADMIN)):
+            raise PermissionError("Only approvers and admins can reject changes")
         if not remarks or len(remarks.strip()) < 10:
             raise ValueError("Rejection remarks are mandatory (min 10 characters)")
 
@@ -351,6 +405,8 @@ class MutationService:
 
         if not approval:
             raise ValueError(f"Approval request {approval_request_id} not found")
+        if approval.current_state not in (ApprovalState.SUBMITTED.value, ApprovalState.RECOMMENDED.value):
+            raise ValueError(f"Cannot reject from state: {approval.current_state}")
 
         # Update state
         timestamp = datetime.utcnow().isoformat()

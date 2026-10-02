@@ -11,11 +11,13 @@ import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.config import settings
 from backend.app.database import get_db
+from backend.app.middleware.security import client_ip
 from backend.app.security.auth_middleware import CurrentUser, get_current_user
 from backend.app.schemas.common import ApiResponse, ResponseMeta, AuditMetadata
 from backend.app.services.mutation_service import MutationService
@@ -50,6 +52,11 @@ class RejectionRequest(BaseModel):
 
 # ========== Helpers ==========
 
+def _source_ip(http_request: Request) -> str:
+    """Caller address for the audit trail (honours TRUSTED_PROXY_HOPS)."""
+    return client_ip(http_request.scope, settings.TRUSTED_PROXY_HOPS) or "unknown"
+
+
 def _get_audit_metadata(user_id: str, action: str) -> AuditMetadata:
     """Create audit metadata for response."""
     return AuditMetadata(
@@ -75,6 +82,7 @@ def _get_response_meta() -> ResponseMeta:
 @router.post("/submit-with-justification", response_model=ApiResponse[Dict[str, Any]])
 async def submit_mutation_with_justification(
     request: SubmitMutationRequest,
+    http_request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> ApiResponse[Dict[str, Any]]:
@@ -107,7 +115,7 @@ async def submit_mutation_with_justification(
             changes=request.changes,
             justification=request.justification,
             document_url=request.document_url,
-            source_ip="0.0.0.0",  # TODO: Extract from request.client
+            source_ip=_source_ip(http_request),
         )
 
         return ApiResponse(
@@ -118,6 +126,10 @@ async def submit_mutation_with_justification(
                 action="submit_mutation"
             ),
         )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -173,6 +185,7 @@ async def get_approval_queue(
 @router.post("/approve", response_model=ApiResponse[Dict[str, Any]])
 async def approve_mutation(
     request: ApprovalActionRequest,
+    http_request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> ApiResponse[Dict[str, Any]]:
@@ -198,7 +211,7 @@ async def approve_mutation(
             current_user=current_user,
             approval_request_id=request.approval_request_id,
             remarks=request.remarks,
-            source_ip="0.0.0.0",
+            source_ip=_source_ip(http_request),
         )
 
         return ApiResponse(
@@ -209,6 +222,10 @@ async def approve_mutation(
                 action="approve_mutation"
             ),
         )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -219,6 +236,7 @@ async def approve_mutation(
 @router.post("/reject", response_model=ApiResponse[Dict[str, Any]])
 async def reject_mutation(
     request: RejectionRequest,
+    http_request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> ApiResponse[Dict[str, Any]]:
@@ -246,7 +264,7 @@ async def reject_mutation(
             current_user=current_user,
             approval_request_id=request.approval_request_id,
             remarks=request.remarks,
-            source_ip="0.0.0.0",
+            source_ip=_source_ip(http_request),
         )
 
         # TODO: Send notification email to maker
@@ -260,6 +278,10 @@ async def reject_mutation(
                 action="reject_mutation"
             ),
         )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
