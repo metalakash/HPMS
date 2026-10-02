@@ -49,6 +49,8 @@ class AlertService:
             alerts.extend(await AlertService._check_insurance_expiry(db, project_id, today))
             alerts.extend(await AlertService._check_permit_expiry(db, project_id, today))
             alerts.extend(await AlertService._check_milestone_slippage(db, project_id, today))
+            from backend.app.services.regulatory_service import open_filing_alerts
+            alerts.extend(await open_filing_alerts(db, today, project_id=project_id))
 
             # Group by urgency
             critical = [a for a in alerts if a["urgency"] in ("critical", "expired")]

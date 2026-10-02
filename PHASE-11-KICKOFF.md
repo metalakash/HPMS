@@ -1,6 +1,6 @@
 # Phase 11: RFP Reporting & Hardening — Kickoff
 
-**Status:** 🚀 11.1 done, 11.2 done except PowerPoint (decision-gated), 11.4 Phase 10 tests done; next 11.3
+**Status:** 🚀 11.1 done, 11.2 done except PowerPoint (decision-gated), 11.4 Phase 10 tests done; 11.3 backend done (no seed data), next 11.4 hardening
 **Driver:** `docs/RFP-TRACEABILITY-MATRIX.md` (116 requirements) — the matrix's "Week 4 / P4" scope
 **Audit:** [`docs/RFP-GAP-AUDIT.md`](docs/RFP-GAP-AUDIT.md)
 
@@ -31,10 +31,15 @@ nothing was executed — so the first task is to establish a baseline.
 - [ ] PowerPoint output (F.11) — still waiting on the "is it required?" decision
 - Unverified: DB-backed tests (`test_report_builder_db.py`) are skipped here — the `hpms` Postgres role lacks CREATEDB
 
-### 11.3 Regulatory calendar & alerts (E.7, E.22, E.23, E.2, E.15, E.16)
-- `regulatory_requirements` and `filing_calendar` tables (NRB, Ministry, NEA) + migration `012`
-- User-defined reminders on milestones/deadlines
-- Extend `alert_service` to permits, insurance, and external-stakeholder recipients
+### 11.3 Regulatory calendar & alerts (E.7, E.22, E.23, E.2, E.15, E.16) — ✅ backend done
+- [x] `regulatory_requirements`, `filing_calendar`, `user_reminders`, `stakeholder_contacts` — migration `014`
+- [x] BS fiscal periods (FY starts Shrawan; quarters end Ashwin/Poush/Chaitra/Ashadh) — `services/filing_calendar.py`
+- [x] Generate/track/mark-filed API (`/regulatory/*`, `/projects/{id}/filings`); overdue flip in the daily scan
+- [x] User reminders (`/reminders`) emailed by the daily scan; permits/insurance alerts were already in (70880f2)
+- [x] Stakeholder contacts route alerts by project, type and urgency (`/stakeholders`, C.9 seed)
+- [ ] **No requirement data is shipped.** NRB / Ministry / NEA filing names, frequencies and lags must come from the compliance team (research item) and be entered via `POST /regulatory/requirements`
+- [ ] Frontend (calendar view, reminders, contacts) not built
+- Unverified: `test_regulatory_calendar_db.py` skipped (Postgres role lacks CREATEDB)
 
 ### 11.4 Hardening (A.2, A.5, A.7, D.5, E.4, A.1)
 - IP whitelist middleware for service and admin consoles
