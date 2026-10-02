@@ -228,3 +228,26 @@ def test_daemon_and_routes_are_wired():
     paths = app.openapi()["paths"]
     assert {"get", "post"} <= set(paths["/api/v1/reports/schedules"])
     assert "post" in paths["/api/v1/reports/schedules/{job_id}/run"]
+
+
+async def test_auditor_can_read_schedules_but_not_change_them(api):
+    """Scheduling mails reports to arbitrary recipients, so it is an admin action; auditors stay read-only."""
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser({
+        "sub": str(uuid.uuid4()), "username": "aud", "roles": ["auditor"], "is_authenticated": True})
+    # list needs the DB: a fake that returns no jobs
+    api_db = SimpleNamespace(execute=None)
+
+    class Empty:
+        async def execute(self, stmt):
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+
+    async def fake_db():
+        yield Empty()
+
+    app.dependency_overrides[get_db] = fake_db
+    assert (await api.get("/api/v1/reports/schedules")).status_code == 200
+    assert (await api.post("/api/v1/reports/schedules", json=GOOD)).status_code == 403
+    jid = uuid.uuid4()
+    assert (await api.patch(f"/api/v1/reports/schedules/{jid}", json={"is_enabled": False})).status_code == 403
+    assert (await api.delete(f"/api/v1/reports/schedules/{jid}")).status_code == 403
+    assert (await api.post(f"/api/v1/reports/schedules/{jid}/run")).status_code == 403

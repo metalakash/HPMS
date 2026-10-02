@@ -1,6 +1,6 @@
 # Phase 11: RFP Reporting & Hardening — Kickoff
 
-**Status:** 🚀 11.1 done, 11.2 done except PowerPoint (decision-gated), 11.4 Phase 10 tests done; 11.3 backend done (no seed data), 11.4 hardening done except VAPT/DB-level RLS; next 11.5 docs
+**Status:** 🚀 11.1 done, 11.2 done except PowerPoint (decision-gated), 11.4 Phase 10 tests done; 11.3 backend done (no seed data), 11.4 hardening done except VAPT/DB-level RLS; 11.5 docs done pending Compliance review
 **Driver:** `docs/RFP-TRACEABILITY-MATRIX.md` (116 requirements) — the matrix's "Week 4 / P4" scope
 **Audit:** [`docs/RFP-GAP-AUDIT.md`](docs/RFP-GAP-AUDIT.md)
 
@@ -52,10 +52,11 @@ nothing was executed — so the first task is to establish a baseline.
 - [ ] **A.6 DB-level RLS / pgcrypto** — not built
 - Unverified: migrations `013`–`015` and the DB-backed tests have never run (Postgres role lacks CREATEDB)
 
-### 11.5 Documentation (D.7, D.12, D.4)
-- Data dictionary generated from SQLAlchemy metadata (script, committed output)
-- Admin and user manuals
-- NRB / Nepal data-privacy compliance mapping
+### 11.5 Documentation (D.7, D.12, D.4) — ✅ drafted
+- [x] Data dictionary generated from the models → [`docs/DATA-DICTIONARY.md`](docs/DATA-DICTIONARY.md); stale-file and model-without-migration tests
+- [x] Administrator manual → [`docs/ADMIN-MANUAL.md`](docs/ADMIN-MANUAL.md); user manual → [`docs/USER-MANUAL.md`](docs/USER-MANUAL.md)
+- [x] NRB / data-privacy mapping → [`docs/NRB-PRIVACY-COMPLIANCE-MAPPING.md`](docs/NRB-PRIVACY-COMPLIANCE-MAPPING.md) (**requirement texts unverified; needs Compliance/Legal**)
+- Found while documenting: migration `016` (loan sync tables had none), project edits now audited, report schedules admin-only
 
 ### Decision-gated (not scheduled until answered)
 Domain tables absent from the backend: **risk register** (E.9/E.19/E.20), **insurance** (E.11),

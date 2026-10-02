@@ -14,7 +14,7 @@ from typing import Optional
 from decimal import Decimal
 import uuid
 
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -70,6 +70,19 @@ async def _get_visible_project(db: AsyncSession, user: CurrentUser, project_id: 
     if not project or not await RLSService.can_view_project(db, user, pid):
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     return project
+
+
+async def _audit_project(db, http_request: Request, user: CurrentUser, project_id, action: str, reason: str,
+                         pre_state, post_state) -> None:
+    """Append a hash-chained audit row in the same transaction as the change (RFP E.1)."""
+    from backend.app.config import settings
+    from backend.app.middleware.security import client_ip
+    from backend.app.services.audit_chain import append_audit_log
+
+    await append_audit_log(
+        db, user_id=user.id or user.username, user_role=user.roles[0].value if user.roles else None,
+        entity_type="PROJECT", entity_id=project_id, action=action, reason=reason, pre_state=pre_state,
+        post_state=post_state, source_ip=client_ip(http_request.scope, settings.TRUSTED_PROXY_HOPS))
 
 
 def _validate_status_fields(project_stage: Optional[str], pipeline_status: Optional[str]) -> None:
@@ -259,6 +272,7 @@ async def get_project(
 @router.post("", response_model=ApiResponse[ProjectDetailResponse], status_code=status.HTTP_201_CREATED)
 async def create_project(
     req: ProjectCreateRequest,
+    http_request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> ApiResponse[ProjectDetailResponse]:
@@ -300,6 +314,8 @@ async def create_project(
     try:
         await db.flush()
         await RLSService.assign_project_ownership(db, current_user.uuid, project.id, "direct")
+        await _audit_project(db, http_request, current_user, project.id, "create", "Project created",
+                             pre_state=None, post_state=req.model_dump(mode="json"))
         await db.commit()
     except IntegrityError:
         await db.rollback()
@@ -472,6 +488,7 @@ async def get_project_disbursements(
 async def update_project(
     project_id: str,
     req: ProjectUpdateRequest,
+    http_request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> ApiResponse[ProjectDetailResponse]:
@@ -494,10 +511,13 @@ async def update_project(
         if not (changes.get("drop_reason") or project.drop_reason):
             raise HTTPException(status_code=422, detail="drop_reason is required when dropping a project")
 
+    pre_state = {field: getattr(project, field, None) for field in changes}
     for field, value in changes.items():
         setattr(project, field, value)
     project.updated_by = current_user.username
 
+    await _audit_project(db, http_request, current_user, project.id, "update",
+                         changes.get("drop_reason") or "Project updated", pre_state=pre_state, post_state=changes)
     await db.commit()
     logger.info(f"Updated project {project.project_code} fields {sorted(changes)} by {current_user.username}")
 

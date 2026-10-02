@@ -255,3 +255,41 @@ def test_mutation_service_no_longer_writes_blank_hashes():
     src = inspect.getsource(mutation_service)
     assert 'state_hash=""' not in src and 'prev_hash=""' not in src
     assert src.count("append_audit_log(") >= 3
+
+
+# ------------------------------------------------------------------ direct project edits are audited too
+
+async def test_project_update_writes_a_chained_audit_row_with_before_and_after(monkeypatch):
+    from backend.app.api import routes_projects as rp
+    from backend.app.schemas.project import ProjectUpdateRequest
+
+    project = SimpleNamespace(id=uuid.uuid4(), name_en="Old", project_stage="feasibility", drop_reason=None,
+                              updated_by=None, project_code="P1")
+
+    async def visible(db, user, pid):
+        return project
+
+    async def can(db, user, pid):
+        return True
+
+    async def detail(pid, db, current_user):
+        return "detail"
+
+    class Db(ScriptedDB):
+        async def commit(self):
+            self.committed = True
+
+    monkeypatch.setattr(rp, "_get_visible_project", visible)
+    monkeypatch.setattr(rp.RLSService, "can_update_project", can)
+    monkeypatch.setattr(rp, "get_project", detail)
+    db = Db(Result(), Result(scalar="e" * 64), Result())  # advisory lock, last hash, checkpoint
+    user = CurrentUser({"sub": str(uuid.uuid4()), "username": "maker1", "roles": ["maker"], "is_authenticated": True})
+    request = SimpleNamespace(scope={"client": ("198.51.100.9", 1), "headers": []})
+
+    await rp.update_project(str(project.id), ProjectUpdateRequest(name_en="New"), request, db=db, current_user=user)
+
+    audit = next(o for o in db.added if hasattr(o, "state_hash"))
+    assert audit.entity_type == "PROJECT" and audit.action_performed == "update"
+    assert audit.pre_state == '{"name_en": "Old"}' and audit.post_state == '{"name_en": "New"}'
+    assert audit.prev_hash == "e" * 64 and audit.source_ip == "198.51.100.9" and db.committed
+    assert project.name_en == "New"

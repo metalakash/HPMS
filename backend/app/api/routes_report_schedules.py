@@ -14,7 +14,7 @@ from backend.app.database import get_db
 from backend.app.models.reporting import ReportDefinition
 from backend.app.models.scheduler import ExportJob, ExportJobRun
 from backend.app.schemas.report_schema import ExportFilter
-from backend.app.security.auth_middleware import CurrentUser
+from backend.app.security.auth_middleware import CurrentUser, require_admin
 from backend.app.services.report_builder import SOURCES
 from backend.app.services.scheduler_service import EXPORT_FORMATS, SchedulerService, next_run_after, _now
 from backend.app.services.email_service import get_email_service
@@ -103,7 +103,7 @@ async def list_schedules(db: AsyncSession = Depends(get_db), user: CurrentUser =
 
 @router.post("", status_code=201)
 async def create_schedule(body: ScheduleBody, db: AsyncSession = Depends(get_db),
-                          user: CurrentUser = Depends(require_portfolio_access)):
+                          user: CurrentUser = Depends(require_admin)):
     _validate_cron(body.schedule)
     report_id = body.report_id
     if body.definition_id:
@@ -129,7 +129,7 @@ async def create_schedule(body: ScheduleBody, db: AsyncSession = Depends(get_db)
 
 @router.patch("/{job_id}")
 async def update_schedule(job_id: str, body: SchedulePatch, db: AsyncSession = Depends(get_db),
-                          user: CurrentUser = Depends(require_portfolio_access)):
+                          user: CurrentUser = Depends(require_admin)):
     job = await _get_job(db, job_id)
     changes = body.model_dump(exclude_unset=True)
     if "schedule" in changes:
@@ -146,7 +146,7 @@ async def update_schedule(job_id: str, body: SchedulePatch, db: AsyncSession = D
 
 @router.delete("/{job_id}", status_code=204)
 async def delete_schedule(job_id: str, db: AsyncSession = Depends(get_db),
-                          user: CurrentUser = Depends(require_portfolio_access)):
+                          user: CurrentUser = Depends(require_admin)):
     job = await _get_job(db, job_id)
     await db.delete(job)
     await db.flush()
@@ -155,7 +155,7 @@ async def delete_schedule(job_id: str, db: AsyncSession = Depends(get_db),
 
 @router.post("/{job_id}/run")
 async def run_now(job_id: str, db: AsyncSession = Depends(get_db),
-                  user: CurrentUser = Depends(require_portfolio_access)):
+                  user: CurrentUser = Depends(require_admin)):
     """Deliver the report immediately (does not change the regular schedule)."""
     job = await _get_job(db, job_id)
     saved_next = job.next_run_at
