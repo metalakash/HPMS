@@ -117,6 +117,7 @@ from backend.app.api.routes_cbs_sync import router as cbs_router
 from backend.app.api.routes_report_builder import router as report_builder_router
 from backend.app.api.routes_report_schedules import router as report_schedules_router
 from backend.app.api.routes_regulatory import router as regulatory_router
+from backend.app.api.routes_audit_admin import router as audit_admin_router
 
 # Auth routes (no auth required)
 app.include_router(auth_router)
@@ -135,6 +136,7 @@ app.include_router(cbs_router)
 app.include_router(report_builder_router)
 app.include_router(report_schedules_router)
 app.include_router(regulatory_router)
+app.include_router(audit_admin_router)
 
 # Admin routes (require ADMIN role)
 app.include_router(admin_router)

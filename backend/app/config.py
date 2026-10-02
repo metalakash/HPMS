@@ -43,7 +43,9 @@ class Settings(BaseSettings):
     TRUSTED_PROXY_HOPS: int = int(os.getenv("TRUSTED_PROXY_HOPS", "0"))  # proxies in front of the app (X-Forwarded-For)
 
     # Audit
+    # Not a confirmed NRB figure: set from the bank's records-retention policy. Purging is manual and off by default.
     AUDIT_RETENTION_YEARS: int = int(os.getenv("AUDIT_RETENTION_YEARS", "7"))
+    AUDIT_PURGE_ENABLED: bool = os.getenv("AUDIT_PURGE_ENABLED", "false").lower() == "true"
 
     # S3 / File Storage (Phase 3)
     STORAGE_BACKEND: str = os.getenv("STORAGE_BACKEND", "s3")  # s3, minio, local

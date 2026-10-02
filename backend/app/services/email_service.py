@@ -103,7 +103,7 @@ class SMTPEmailProvider(EmailProvider):
                 
                 server.sendmail(self.from_address, recipients, msg.as_string())
             
-            logger.info(f"✅ Email sent to {'"'"'{'"'"', '"'"'{'"'"'.join(message.to)}: {message.subject}")
+            logger.info("✅ Email sent to %s: %s", ", ".join(message.to), message.subject)
             return True
         
         except Exception as e:

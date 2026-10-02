@@ -80,3 +80,22 @@ class AuditLogRead(Base):
     __table_args__ = (
         Index('ix_read_user_timestamp', 'user_id', 'timestamp'),
     )
+
+
+class AuditRetentionCheckpoint(Base):
+    """Left behind by a retention purge so the remaining hash chain still verifies.
+
+    ``last_purged_hash`` is the state_hash of the newest deleted row: the oldest remaining row's
+    prev_hash must equal it.
+    """
+
+    __tablename__ = 'audit_retention_checkpoints'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    purged_through_id = Column(BIGINT, nullable=False)
+    last_purged_hash = Column(String(64), nullable=False)
+    purged_count = Column(Integer, nullable=False)
+    retention_years = Column(Integer, nullable=False)
+    cutoff_date = Column(Date, nullable=False)
+    purged_by = Column(String(255), nullable=False)
+    purged_at = Column(String(100), nullable=False, server_default='now()')

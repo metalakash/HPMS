@@ -19,8 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from backend.app.models.governance import ApprovalRequest, ApprovalState, ApprovalStep
-from backend.app.models.audit import AuditLog, AuditAction
+from backend.app.models.audit import AuditAction
 from backend.app.security.auth_middleware import CurrentUser
+from backend.app.services.audit_chain import append_audit_log
 from backend.app.schemas.common import AuditMetadata
 
 
@@ -100,38 +101,21 @@ class MutationService:
 
         timestamp = datetime.utcnow().isoformat()
 
-        # Step 1: Get previous audit log entry for chaining
-        prev_audit_query = select(AuditLog).order_by(AuditLog.id.desc()).limit(1)
-        prev_result = await db.execute(prev_audit_query)
-        prev_audit = prev_result.scalar()
-        prev_hash = prev_audit.state_hash if prev_audit else ("0" * 64)  # Genesis block
-
-        # Step 2: Compute state hash
-        state_hash = MutationService._compute_state_hash(
-            entity_type=entity_type,
-            entity_id=entity_id,
-            state_diff=changes,
-            timestamp=timestamp,
-        )
-
-        # Step 3: Create AuditLog entry (immutable)
-        audit_log = AuditLog(
+        # Steps 1-3: append to the hash-chained, append-only audit log
+        audit_log = await append_audit_log(
+            db,
             user_id=current_user.id,
             user_role=current_user.roles[0].value if current_user.roles else "guest",
-            source_ip=source_ip or "0.0.0.0",
-            session_id=session_id or "unknown",
+            source_ip=source_ip,
+            session_id=session_id,
             timestamp=timestamp,
             entity_type=entity_type,
             entity_id=entity_id,
-            action_performed=action,
-            reason_for_action=justification,
-            pre_state=json.dumps({}),  # TODO: Fetch actual pre_state from entity
-            post_state=json.dumps(changes),
-            state_hash=state_hash,
-            prev_hash=prev_hash,
+            action=action,
+            reason=justification,
+            pre_state={},  # TODO: Fetch actual pre_state from entity
+            post_state=changes,
         )
-        db.add(audit_log)
-        await db.flush()
 
         # Step 4: Create ApprovalRequest workflow
         approval_request = ApprovalRequest(
@@ -173,7 +157,7 @@ class MutationService:
             "entity_id": entity_id,
             "current_state": ApprovalState.SUBMITTED.value,
             "created_at": timestamp,
-            "justification_hash": state_hash,
+            "justification_hash": audit_log.state_hash,
             "document_url": document_url,
         }
 
@@ -309,23 +293,19 @@ class MutationService:
         )
         db.add(approval_step)
 
-        # Create audit log entry
-        audit_log = AuditLog(
+        await append_audit_log(
+            db,
             user_id=current_user.id,
             user_role=current_user.roles[0].value if current_user.roles else "guest",
-            source_ip=source_ip or "0.0.0.0",
-            session_id="unknown",
+            source_ip=source_ip,
             timestamp=timestamp,
             entity_type="APPROVAL_REQUEST",
             entity_id=approval.id,
-            action_performed=AuditAction.APPROVE.value,
-            reason_for_action=remarks or f"Approved transition from {current_state} to {new_state}",
-            pre_state=json.dumps({"state": current_state.value}),
-            post_state=json.dumps({"state": new_state.value}),
-            state_hash="",  # Will be computed by DB trigger if enabled
-            prev_hash="",
+            action=AuditAction.APPROVE.value,
+            reason=remarks or f"Approved transition from {current_state} to {new_state}",
+            pre_state={"state": current_state.value},
+            post_state={"state": new_state.value},
         )
-        db.add(audit_log)
 
         await db.commit()
 
@@ -392,23 +372,19 @@ class MutationService:
         )
         db.add(approval_step)
 
-        # Create audit log
-        audit_log = AuditLog(
+        await append_audit_log(
+            db,
             user_id=current_user.id,
             user_role=current_user.roles[0].value if current_user.roles else "guest",
-            source_ip=source_ip or "0.0.0.0",
-            session_id="unknown",
+            source_ip=source_ip,
             timestamp=timestamp,
             entity_type="APPROVAL_REQUEST",
             entity_id=approval.id,
-            action_performed=AuditAction.REJECT.value,
-            reason_for_action=remarks,
-            pre_state=json.dumps({"state": previous_state}),
-            post_state=json.dumps({"state": ApprovalState.REJECTED.value}),
-            state_hash="",
-            prev_hash="",
+            action=AuditAction.REJECT.value,
+            reason=remarks,
+            pre_state={"state": previous_state},
+            post_state={"state": ApprovalState.REJECTED.value},
         )
-        db.add(audit_log)
 
         await db.commit()
 

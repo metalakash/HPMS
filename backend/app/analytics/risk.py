@@ -1,7 +1,7 @@
 """Risk scoring and assessment (Phase 5 Task 2)."""
 
 import logging
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
