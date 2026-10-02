@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     DEBUG: bool = os.getenv("DEBUG", "true").lower() == "true"
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     
+    # Network access control (RFP A.7). Empty allow-list = disabled.
+    ADMIN_IP_ALLOWLIST: str = os.getenv("ADMIN_IP_ALLOWLIST", "")  # comma-separated IPs / CIDRs
+    ADMIN_PROTECTED_PREFIXES: str = os.getenv(
+        "ADMIN_PROTECTED_PREFIXES",
+        "/api/v1/admin,/api/v1/cbs,/api/v1/reports/schedules,/api/v1/regulatory/requirements,/api/v1/stakeholders")
+    TRUSTED_PROXY_HOPS: int = int(os.getenv("TRUSTED_PROXY_HOPS", "0"))  # proxies in front of the app (X-Forwarded-For)
+
     # Audit
     AUDIT_RETENTION_YEARS: int = int(os.getenv("AUDIT_RETENTION_YEARS", "7"))
 

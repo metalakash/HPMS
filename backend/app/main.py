@@ -12,6 +12,7 @@ from sqlalchemy import text
 
 from .config import settings
 from .database import get_db, engine, close_db
+from .middleware.security import IPAllowlistMiddleware, apply_security_headers, parse_networks
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +28,11 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Middleware - Security headers
+# Middleware - Security headers (CSP, nosniff, no-store on API responses, ...)
 @app.middleware("http")
 async def add_security_headers(request, call_next):
     response = await call_next(request)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["X-XSS-Protection"] = "1; mode=block"
-    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    apply_security_headers(response.headers, request.url.path)
     return response
 
 
@@ -82,6 +80,15 @@ app.add_middleware(
         "*.onrender.com",  # TEMP DEMO: Render-hosted backend
         *[h.strip() for h in os.getenv("EXTRA_ALLOWED_HOSTS", "").split(",") if h.strip()],
     ],  # DEV ONLY
+)
+
+# IP allow-list for admin / service consoles (no-op while ADMIN_IP_ALLOWLIST is empty).
+# Added last so it is the outermost middleware and rejects before anything else runs.
+app.add_middleware(
+    IPAllowlistMiddleware,
+    networks=parse_networks(settings.ADMIN_IP_ALLOWLIST),
+    protected_prefixes=[p.strip() for p in settings.ADMIN_PROTECTED_PREFIXES.split(",") if p.strip()],
+    trusted_proxy_hops=settings.TRUSTED_PROXY_HOPS,
 )
 
 # Rate limiting
