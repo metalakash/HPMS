@@ -1,6 +1,6 @@
 # Phase 11: RFP Reporting & Hardening — Kickoff
 
-**Status:** 🚀 11.1 done, 11.2 done except PowerPoint (decision-gated), 11.4 Phase 10 tests done; 11.3 backend done (no seed data), next 11.4 hardening
+**Status:** 🚀 11.1 done, 11.2 done except PowerPoint (decision-gated), 11.4 Phase 10 tests done; 11.3 backend done (no seed data), 11.4 hardening done except VAPT/DB-level RLS; next 11.5 docs
 **Driver:** `docs/RFP-TRACEABILITY-MATRIX.md` (116 requirements) — the matrix's "Week 4 / P4" scope
 **Audit:** [`docs/RFP-GAP-AUDIT.md`](docs/RFP-GAP-AUDIT.md)
 
@@ -41,13 +41,16 @@ nothing was executed — so the first task is to establish a baseline.
 - [ ] Frontend (calendar view, reminders, contacts) not built
 - Unverified: `test_regulatory_calendar_db.py` skipped (Postgres role lacks CREATEDB)
 
-### 11.4 Hardening (A.2, A.5, A.7, D.5, E.4, A.1)
-- IP whitelist middleware for service and admin consoles
-- CSP header, OWASP Top-10 checklist run, dependency scan
-- Audit-log retention policy (configurable) with test
-- Field-level permission enforcement on sensitive fields
-- **Tests for all Phase 10 work:** 7 endpoints, `cbs_sync_real_service`, circuit breaker opening after 5 failures, rate limiter at 1,000/day
-- Verify RLS holds on the new `operations` tables
+### 11.4 Hardening (A.2, A.5, A.7, D.5, E.4, A.1) — ✅ done except items needing outside input
+- [x] IP allow-list for admin/service consoles (A.7); CSP + hardening headers on API and SPA (A.5, D.5)
+- [x] OWASP Top-10 self-assessment and dependency scan → [`docs/SECURITY-HARDENING.md`](docs/SECURITY-HARDENING.md)
+- [x] Audit log: one hash-chained writer, append-only trigger, verification, retention preview/purge (E.1, E.4)
+- [x] Field-level write rights + maker-checker dual control (A.1); `/mutations` router was unmounted — now mounted
+- [x] Tests for all Phase 10 work; RLS added to compliance + CBS endpoints
+- [ ] **A.2 VAPT** — needs an independent tester; this phase is a self-assessment only
+- [ ] **E.4 retention period** — default 7 years is unconfirmed (research brief §1.1)
+- [ ] **A.6 DB-level RLS / pgcrypto** — not built
+- Unverified: migrations `013`–`015` and the DB-backed tests have never run (Postgres role lacks CREATEDB)
 
 ### 11.5 Documentation (D.7, D.12, D.4)
 - Data dictionary generated from SQLAlchemy metadata (script, committed output)
