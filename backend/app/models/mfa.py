@@ -10,6 +10,7 @@ from datetime import datetime
 import enum
 import uuid
 from .base import Base, TimestampedMixin
+from backend.app.security.secret_box import EncryptedString
 
 
 class MFAMethod(str, enum.Enum):
@@ -35,7 +36,7 @@ class UserMFA(Base, TimestampedMixin):
     primary_method = Column(String(50))  # totp, sms, email
 
     # TOTP
-    totp_secret = Column(String(32))  # Base32 encoded secret
+    totp_secret = Column(EncryptedString)  # Base32 seed, encrypted at rest (enc1:...), see security/secret_box.py
     totp_enabled = Column(Boolean, default=False)
     totp_verified_at = Column(DateTime(timezone=True))  # When user confirmed code
 
@@ -153,7 +154,7 @@ class BackupCode(Base, TimestampedMixin):
     user_mfa_id = Column(UUID(as_uuid=True), ForeignKey("user_mfa.id"), nullable=False, index=True)
 
     # Code and usage
-    code = Column(String(8), nullable=False)  # Format: XXXX-XXXX
+    code = Column(String(64), nullable=False)  # HMAC-SHA256 of the XXXX-XXXX code (never the code itself)
     is_used = Column(Boolean, default=False)
     used_at = Column(DateTime(timezone=True))
     used_ip = Column(String(45))

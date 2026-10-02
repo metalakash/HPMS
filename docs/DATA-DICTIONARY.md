@@ -1206,7 +1206,7 @@ Backup codes for account recovery.
 |---|---|---|---|---|
 | `id` | UUID | no |  | PK |
 | `user_mfa_id` | UUID | no |  | FK → user_mfa.id, indexed |
-| `code` | VARCHAR(8) | no |  |  |
+| `code` | VARCHAR(64) | no |  |  |
 | `is_used` | BOOLEAN | yes | `False` |  |
 | `used_at` | DATETIME | yes |  |  |
 | `used_ip` | VARCHAR(45) | yes |  |  |
@@ -1294,7 +1294,7 @@ User MFA configuration.
 | `user_id` | UUID | no |  | FK → user.id, unique, indexed |
 | `is_mfa_enabled` | BOOLEAN | yes | `False` | indexed |
 | `primary_method` | VARCHAR(50) | yes |  |  |
-| `totp_secret` | VARCHAR(32) | yes |  |  |
+| `totp_secret` | VARCHAR(255) | yes |  |  |
 | `totp_enabled` | BOOLEAN | yes | `False` |  |
 | `totp_verified_at` | DATETIME | yes |  |  |
 | `phone_number` | VARCHAR(20) | yes |  |  |

@@ -164,10 +164,17 @@ class MFAService:
             code: Plaintext backup code
 
         Returns:
-            SHA256 hash of code
+            Keyed (HMAC-SHA256) hash of the code; see security/secret_box.py
         """
 
-        return hashlib.sha256(code.encode()).hexdigest()
+        from backend.app.security.secret_box import keyed_hash
+        return keyed_hash(code)
+
+    @staticmethod
+    def verify_backup_code(stored_hash: str, code: str) -> bool:
+        """Constant-time comparison of a presented code with its stored hash."""
+        from backend.app.security.secret_box import hashes_match
+        return hashes_match(stored_hash, code)
 
     @staticmethod
     def generate_device_fingerprint(

@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     AD_SERVICE_ACCOUNT_USERNAME: str = os.getenv("AD_SERVICE_ACCOUNT_USERNAME", "")
     AD_SERVICE_ACCOUNT_PASSWORD: str = os.getenv("AD_SERVICE_ACCOUNT_PASSWORD", "")
     
+    # Encrypts TOTP seeds at rest (security/secret_box.py). Falls back to SECRET_KEY when unset.
+    MFA_ENCRYPTION_KEY: str = os.getenv("MFA_ENCRYPTION_KEY", "")
+    MFA_ENCRYPTION_KEY_OLD: str = os.getenv("MFA_ENCRYPTION_KEY_OLD", "")  # previous key(s), comma separated
+
     # Application
     DEBUG: bool = os.getenv("DEBUG", "true").lower() == "true"
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
