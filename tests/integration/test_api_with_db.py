@@ -227,7 +227,8 @@ async def test_reports(api, db_session):
     pdf = await api.post("/api/v1/reports/pdf/portfolio", headers=auditor)
     assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF")
 
-    assert (await api.post("/api/v1/reports/pdf/covenant", headers=auditor)).status_code == 501
+    covenant = await api.post("/api/v1/reports/pdf/covenant", headers=auditor)
+    assert covenant.status_code == 200 and covenant.content.startswith(b"%PDF")
     assert (await api.post("/api/v1/reports/pdf/portfolio", headers=maker)).status_code == 403
 
 
@@ -312,16 +313,16 @@ async def test_analytics_portfolio_metrics_with_rls(api, db_session):
     assert r.status_code == 200
     body = r.json()["data"]
     assert body["total_projects"] == 1
-    assert body["total_capacity_mw"] == 42.5
-    assert body["total_sanctioned_amount"] == 5000000
-    assert body["total_outstanding_principal"] == 2500000
+    assert Decimal(body["total_capacity_mw"]) == Decimal("42.5")  # Decimals are serialised as strings
+    assert Decimal(body["total_sanctioned_amount"]) == 5000000
+    assert Decimal(body["total_outstanding_principal"]) == 2500000
 
     # Admin sees both projects
     r = await api.get("/api/v1/analytics/portfolio", headers=admin)
     assert r.status_code == 200
     body = r.json()["data"]
     assert body["total_projects"] == 2
-    assert body["total_capacity_mw"] == 72.5  # 42.5 + 30
+    assert Decimal(body["total_capacity_mw"]) == Decimal("72.5")  # 42.5 + 30
 
 
 async def test_analytics_project_detail_with_rls(api, db_session):

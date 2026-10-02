@@ -172,6 +172,7 @@ async def purge_expired(db: AsyncSession, today: date, years: int, purged_by: st
     await db.execute(text("SET LOCAL hpms.audit_purge = 'on'"))
     result = await db.execute(delete(AuditLog).where(AuditLog.id <= preview.newest_eligible_id))
     deleted = result.rowcount or 0
+    await db.execute(text("SET LOCAL hpms.audit_purge = 'off'"))  # close the window as soon as the delete is done
     db.add(AuditRetentionCheckpoint(
         purged_through_id=preview.newest_eligible_id, last_purged_hash=last_hash, purged_count=deleted,
         retention_years=years, cutoff_date=preview.cutoff, purged_by=purged_by))

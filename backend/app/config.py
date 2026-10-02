@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     AD_SERVICE_ACCOUNT_PASSWORD: str = os.getenv("AD_SERVICE_ACCOUNT_PASSWORD", "")
     
     # Encrypts TOTP seeds at rest (security/secret_box.py). Falls back to SECRET_KEY when unset.
+    # Roles that should have MFA; users in them without it get `mfa_enrollment_required` at login (comma separated)
+    MFA_REQUIRED_ROLES: str = os.getenv("MFA_REQUIRED_ROLES", "")
     MFA_ENCRYPTION_KEY: str = os.getenv("MFA_ENCRYPTION_KEY", "")
     MFA_ENCRYPTION_KEY_OLD: str = os.getenv("MFA_ENCRYPTION_KEY_OLD", "")  # previous key(s), comma separated
 

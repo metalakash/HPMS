@@ -1,7 +1,7 @@
 """Tests for scheduler service and export jobs."""
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.scheduler import ExportJob, ExportJobRun, JobStatus
@@ -214,7 +214,7 @@ async def test_get_pending_jobs(db_session: AsyncSession, scheduler_service):
         recipients=[],
         name="Pending Job 1",
     )
-    job1.next_run_at = datetime.utcnow() - timedelta(hours=1)
+    job1.next_run_at = datetime.now(timezone.utc) - timedelta(hours=1)
 
     # Create disabled job (should not be pending)
     job2 = await scheduler_service.create_export_job(
@@ -236,7 +236,7 @@ async def test_get_pending_jobs(db_session: AsyncSession, scheduler_service):
         recipients=[],
         name="Future Job",
     )
-    job3.next_run_at = datetime.utcnow() + timedelta(hours=1)
+    job3.next_run_at = datetime.now(timezone.utc) + timedelta(hours=1)
 
     await db_session.flush()
 

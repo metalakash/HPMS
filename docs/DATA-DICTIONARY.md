@@ -2,7 +2,7 @@
 
 > Generated from the SQLAlchemy models by `backend/scripts/generate_data_dictionary.py`. Do not edit by hand; run `python -m backend.scripts.generate_data_dictionary` and commit the result.
 
-**70 tables and views, 1041 columns.** Dates are stored as AD `DATE` columns with a paired `*_bs` text column (`YYYY-MM-DD` Bikram Sambat) where the business needs both calendars. Descriptions come from the model docstrings.
+**70 tables and views, 1042 columns.** Dates are stored as AD `DATE` columns with a paired `*_bs` text column (`YYYY-MM-DD` Bikram Sambat) where the business needs both calendars. Descriptions come from the model docstrings.
 
 ## Contents
 
@@ -1308,6 +1308,7 @@ User MFA configuration.
 | `backup_codes_regenerated_count` | VARCHAR(5) | yes | `0` |  |
 | `mfa_required` | BOOLEAN | yes | `False` |  |
 | `last_mfa_used_at` | DATETIME | yes |  |  |
+| `last_totp_counter` | BIGINT | yes |  |  |
 | `failed_attempts` | VARCHAR(5) | yes | `0` |  |
 | `locked_until` | DATETIME | yes |  |  |
 | `created_at` | DATETIME | yes | `now()` |  |

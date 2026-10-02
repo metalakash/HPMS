@@ -40,13 +40,13 @@ def test_enabling_demo_accounts_on_a_non_debug_system_is_logged(caplog):
 
 
 def test_env_parsing(monkeypatch):
-    import importlib
-    from backend.app import config
-    for raw, expected in (("", None), ("true", True), ("TRUE", True), ("false", False), ("0", False)):
+    """pydantic-settings reads ALLOW_DEV_AUTH at instantiation; blank means unset rather than a startup crash."""
+    from backend.app.config import Settings
+    for raw, expected in (("", None), ("  ", None), ("true", True), ("TRUE", True), ("false", False), ("0", False)):
         monkeypatch.setenv("ALLOW_DEV_AUTH", raw)
-        assert importlib.reload(config).Settings().ALLOW_DEV_AUTH is expected, raw
+        assert Settings().ALLOW_DEV_AUTH is expected, raw
     monkeypatch.delenv("ALLOW_DEV_AUTH")
-    importlib.reload(config)
+    assert Settings().ALLOW_DEV_AUTH is None
 
 
 async def test_login_is_503_not_a_demo_login_when_no_provider(monkeypatch):

@@ -25,8 +25,8 @@ async def test_rows_cannot_be_updated_deleted_or_truncated(db_session):
     rows = await _append(db_session, 1)
     for stmt in (update(AuditLog).where(AuditLog.id == rows[0].id).values(reason_for_action="edited"),
                  delete(AuditLog).where(AuditLog.id == rows[0].id), text("TRUNCATE audit_logs")):
-        async with db_session.begin_nested():
-            with pytest.raises(DBAPIError, match="append-only"):
+        with pytest.raises(DBAPIError, match="append-only"):
+            async with db_session.begin_nested():
                 await db_session.execute(stmt)
 
 
@@ -46,8 +46,8 @@ async def test_purge_removes_only_the_old_prefix_and_chain_still_verifies(db_ses
     assert (await ac.verify_stored_chain(db_session)).ok  # anchored on the checkpoint
 
     # the purge bypass was transaction-local: direct deletes are blocked again
-    async with db_session.begin_nested():
-        with pytest.raises(DBAPIError, match="append-only"):
+    with pytest.raises(DBAPIError, match="append-only"):
+        async with db_session.begin_nested():
             await db_session.execute(delete(AuditLog).where(AuditLog.id == recent[0].id))
 
 

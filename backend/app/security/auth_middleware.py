@@ -25,6 +25,8 @@ class TokenManager:
 
     ALGORITHM = "HS256"
     TOKEN_EXPIRY_MINUTES = 480  # 8 hours
+    CHALLENGE_EXPIRY_MINUTES = 5  # password accepted, second factor still owed
+    CHALLENGE_TYPE = "mfa_challenge"
 
     @staticmethod
     def create_token(ad_user: ADUser, user_id: UUID) -> str:
@@ -57,6 +59,29 @@ class TokenManager:
         return token
 
     @staticmethod
+    def create_challenge_token(ad_user: ADUser, user_id: UUID) -> str:
+        """Short-lived token proving the password was accepted. It is *not* an access token:
+        ``verify_token`` rejects it, so it only works at ``/auth/login/mfa``."""
+        payload = {
+            **ad_user.to_dict(),
+            "is_authenticated": False,
+            "typ": TokenManager.CHALLENGE_TYPE,
+            "sub": str(user_id),
+            "exp": datetime.utcnow() + timedelta(minutes=TokenManager.CHALLENGE_EXPIRY_MINUTES),
+            "iat": datetime.utcnow(),
+        }
+        return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=TokenManager.ALGORITHM)
+
+    @staticmethod
+    def verify_challenge_token(token: str) -> Optional[dict]:
+        """Payload of a valid, unexpired MFA challenge token; None for anything else (including access tokens)."""
+        try:
+            payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[TokenManager.ALGORITHM])
+        except JWTError:
+            return None
+        return payload if payload.get("typ") == TokenManager.CHALLENGE_TYPE else None
+
+    @staticmethod
     def verify_token(token: str) -> Optional[dict]:
         """Verify and decode JWT token.
 
@@ -73,6 +98,9 @@ class TokenManager:
                 settings.JWT_SECRET_KEY,
                 algorithms=[TokenManager.ALGORITHM],
             )
+            if payload.get("typ") == TokenManager.CHALLENGE_TYPE:
+                logger.warning("MFA challenge token presented as an access token")
+                return None
             return payload
         except JWTError as e:
             logger.warning(f"Token verification failed: {e}")

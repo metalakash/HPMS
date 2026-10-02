@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from backend.app.database import get_db
-from backend.app.security.auth_middleware import CurrentUser, get_current_user
+from backend.app.security.auth_middleware import CurrentUser, get_current_user, require_admin
 from backend.app.models.mfa import UserMFA, BackupCode, TrustedDevice
 from backend.app.models.auth import User
 from backend.app.services.mfa_service import MFAService
@@ -130,7 +130,8 @@ async def verify_totp(
             )
 
         # Verify code
-        is_valid = MFAService.verify_totp(user_mfa.totp_secret, request.code)
+        counter = MFAService.verify_totp_step(user_mfa.totp_secret, request.code)
+        is_valid = counter is not None
 
         if not is_valid:
             user_mfa.failed_attempts = str(int(user_mfa.failed_attempts or 0) + 1)
@@ -161,6 +162,7 @@ async def verify_totp(
         user_mfa.failed_attempts = "0"
         user_mfa.locked_until = None
         user_mfa.last_mfa_used_at = datetime.utcnow()
+        user_mfa.last_totp_counter = counter
 
         await db.commit()
 
@@ -195,10 +197,10 @@ async def generate_backup_codes(
         result = await db.execute(query)
         user_mfa = result.scalar_one_or_none()
 
-        if not user_mfa:
+        if not user_mfa or not user_mfa.is_mfa_enabled:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="MFA not setup",
+                detail="Enable MFA before generating backup codes",
             )
 
         # Delete existing backup codes
@@ -356,42 +358,74 @@ async def get_mfa_status(
         )
 
 
+class MFADisableRequest(BaseModel):
+    code: str  # current authenticator code or an unused backup code
+
+
 @router.delete("/disable")
 async def disable_mfa(
+    body: MFADisableRequest,
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Disable MFA for current user."""
+    """Disable MFA for the current user. Needs a current code, so a stolen session cannot switch MFA off."""
 
-    try:
-        # Get user MFA
-        query = select(UserMFA).where(UserMFA.user_id == current_user.uuid)
-        result = await db.execute(query)
-        user_mfa = result.scalar_one_or_none()
+    user_mfa = (await db.execute(select(UserMFA).where(UserMFA.user_id == current_user.uuid))).scalar_one_or_none()
+    if not user_mfa:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MFA not configured")
 
-        if not user_mfa:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="MFA not configured",
-            )
+    if user_mfa.is_mfa_enabled:
+        outcome = await MFAService.verify_second_factor(db, user_mfa, body.code)
+        await db.commit()  # persist failure counters / spent backup code
+        if outcome == "locked":
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                                detail="Too many failed codes. Try again later.")
+        if outcome != "ok":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid code")
 
-        user_mfa.is_mfa_enabled = False
-        user_mfa.totp_enabled = False
-        user_mfa.sms_enabled = False
-        user_mfa.email_enabled = False
-        user_mfa.totp_secret = None
+    await _clear_mfa(db, user_mfa)
+    await db.commit()
+    logger.info(f"MFA disabled for user {current_user.id}")
+    return {"message": "MFA disabled"}
 
-        await db.commit()
 
-        logger.info(f"MFA disabled for user {current_user.id}")
+async def _clear_mfa(db: AsyncSession, user_mfa: UserMFA) -> None:
+    user_mfa.is_mfa_enabled = False
+    user_mfa.totp_enabled = False
+    user_mfa.sms_enabled = False
+    user_mfa.email_enabled = False
+    user_mfa.totp_secret = None
+    user_mfa.last_totp_counter = None
+    user_mfa.failed_attempts = "0"
+    user_mfa.locked_until = None
+    for row in (await db.execute(select(BackupCode).where(BackupCode.user_mfa_id == user_mfa.id))).scalars().all():
+        await db.delete(row)
 
-        return {"message": "MFA disabled"}
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to disable MFA: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to disable MFA",
-        )
+@router.delete("/admin/{username}")
+async def admin_reset_mfa(
+    username: str,
+    current_user: CurrentUser = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin recovery for a user who lost their device and backup codes: switch their MFA off so they can re-enrol.
+
+    Written to the audit trail with the acting admin.
+    """
+    from backend.app.services.audit_chain import append_audit_log
+
+    target = (await db.execute(select(User).where(User.username == username))).scalar_one_or_none()
+    user_mfa = None
+    if target is not None:
+        user_mfa = (await db.execute(select(UserMFA).where(UserMFA.user_id == target.id))).scalar_one_or_none()
+    if target is None or user_mfa is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No MFA configured for that user")
+
+    await _clear_mfa(db, user_mfa)
+    await append_audit_log(
+        db, user_id=current_user.id or current_user.username, user_role="admin", entity_type="USER_MFA",
+        entity_id=target.id, action="update", reason=f"MFA reset by administrator for {username}",
+        pre_state={"is_mfa_enabled": True}, post_state={"is_mfa_enabled": False})
+    await db.commit()
+    logger.warning(f"MFA reset for {username} by {current_user.username}")
+    return {"message": f"MFA reset for {username}"}

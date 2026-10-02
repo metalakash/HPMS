@@ -39,18 +39,23 @@ def migrated_database_url() -> str:
     from alembic.config import Config
 
     url = make_url(_test_database_url())
-    if url.database in (None, "", "postgres") or not url.database.endswith("_test"):
+    # TEST_DATABASE_REUSE=1: use the named database as it is (migrated to head, never dropped) instead of
+    # recreating it. For servers where the role cannot CREATE DATABASE. Every test still runs inside a
+    # transaction that is rolled back, but point it only at a database you can afford to scribble on.
+    reuse = os.getenv("TEST_DATABASE_REUSE") == "1"
+    if url.database in (None, "", "postgres") or not (reuse or url.database.endswith("_test")):
         pytest.fail(f"Refusing to use {url.database!r} as a throwaway test database (name must end in _test)")
 
-    admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT", poolclass=NullPool)
-    try:
-        with admin.connect() as conn:
-            conn.execute(text(f'DROP DATABASE IF EXISTS "{url.database}" WITH (FORCE)'))
-            conn.execute(text(f'CREATE DATABASE "{url.database}"'))
-    except Exception as e:
-        pytest.skip(f"Postgres not available for DB tests ({url.render_as_string()}): {e}")
-    finally:
-        admin.dispose()
+    if not reuse:
+        admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT", poolclass=NullPool)
+        try:
+            with admin.connect() as conn:
+                conn.execute(text(f'DROP DATABASE IF EXISTS "{url.database}" WITH (FORCE)'))
+                conn.execute(text(f'CREATE DATABASE "{url.database}"'))
+        except Exception as e:
+            pytest.skip(f"Postgres not available for DB tests ({url.render_as_string()}): {e}")
+        finally:
+            admin.dispose()
 
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "alembic"))

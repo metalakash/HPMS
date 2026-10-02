@@ -1,12 +1,13 @@
 """Authentication endpoints for login and token management."""
 
 import logging
-from typing import Optional
+from typing import Optional, Union
 from pydantic import BaseModel
 
-from datetime import date
+from datetime import date, datetime, timezone
+from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, Request, status, Depends
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.database import get_db
 from backend.app.config import settings
 from backend.app.security.auth_selection import build_auth_provider
-from backend.app.security.ldap_provider import ADUser
+from backend.app.middleware.security import client_ip
+from backend.app.models.mfa import UserMFA
+from backend.app.security.ldap_provider import ADUser, UserRole
+from backend.app.services.mfa_service import MFAService
 from backend.app.models.auth import User, UserRole as DBUserRole
 from backend.app.security.auth_middleware import TokenManager, CurrentUser, get_current_user
 
@@ -74,6 +78,21 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     expires_in_seconds: int
     user: dict
+    # True when the user's role should have MFA but they have not enrolled; the UI should prompt them to
+    mfa_enrollment_required: bool = False
+
+
+class MFAChallengeResponse(BaseModel):
+    """Password accepted, second factor required: finish at POST /auth/login/mfa."""
+    mfa_required: bool = True
+    mfa_token: str
+    expires_in_seconds: int
+    methods: list[str] = ["totp", "backup_code"]
+
+
+class MFALoginRequest(BaseModel):
+    mfa_token: str
+    code: str  # 6-digit authenticator code, or a backup code like ABCD-1234
 
     class Config:
         json_schema_extra = {
@@ -91,7 +110,7 @@ class TokenResponse(BaseModel):
         }
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login", response_model=Union[TokenResponse, MFAChallengeResponse])
 async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
     """Authenticate user via Active Directory or local dev auth.
 
@@ -149,17 +168,70 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
             detail="Account is disabled",
         )
 
-    # Create JWT token
+    user_mfa = (await db.execute(select(UserMFA).where(UserMFA.user_id == user.id))).scalar_one_or_none()
+    if user_mfa is not None and user_mfa.is_mfa_enabled:
+        # Fail closed: MFA is on, so a password alone never yields a session (even if the seed is missing)
+        if user_mfa.locked_until is not None and user_mfa.locked_until > datetime.now(timezone.utc):
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                                detail="Too many failed codes. Try again later.")
+        logger.info(f"Password accepted for {request.username}; second factor required")
+        return MFAChallengeResponse(
+            mfa_token=TokenManager.create_challenge_token(ad_user, user.id),
+            expires_in_seconds=TokenManager.CHALLENGE_EXPIRY_MINUTES * 60,
+        )
+
+    return _issue_token(ad_user, user, mfa_enrollment_required=_needs_enrollment(ad_user))
+
+
+def _needs_enrollment(ad_user: ADUser) -> bool:
+    required = {r.strip().lower() for r in settings.MFA_REQUIRED_ROLES.split(",") if r.strip()}
+    return bool(required & {r.value for r in ad_user.roles})
+
+
+def _issue_token(ad_user: ADUser, user: User, mfa_enrollment_required: bool = False) -> TokenResponse:
     token = TokenManager.create_token(ad_user, user.id)
-
-    logger.info(f"Login successful for user: {request.username} with roles: {[r.value for r in ad_user.roles]}")
-
+    logger.info(f"Login successful for user: {ad_user.username} with roles: {[r.value for r in ad_user.roles]}")
     return TokenResponse(
         access_token=token,
         token_type="bearer",
         expires_in_seconds=TokenManager.TOKEN_EXPIRY_MINUTES * 60,
         user={"id": str(user.id), **ad_user.to_dict()},
+        mfa_enrollment_required=mfa_enrollment_required,
     )
+
+
+@router.post("/login/mfa", response_model=TokenResponse)
+async def login_mfa(body: MFALoginRequest, http_request: Request, db: AsyncSession = Depends(get_db)):
+    """Second login step: the challenge token from ``/login`` plus a TOTP or backup code.
+
+    Five wrong codes lock the account for 15 minutes (429). A TOTP code works once.
+    """
+    bad_session = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sign-in session expired; sign in again")
+    payload = TokenManager.verify_challenge_token(body.mfa_token)
+    if payload is None:
+        raise bad_session
+    try:
+        user_id = UUID(payload["sub"])
+    except (KeyError, ValueError):
+        raise bad_session
+
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    user_mfa = (await db.execute(select(UserMFA).where(UserMFA.user_id == user_id))).scalar_one_or_none()
+    if user is None or not user.is_active or user_mfa is None or not user_mfa.is_mfa_enabled:
+        raise bad_session
+
+    outcome = await MFAService.verify_second_factor(
+        db, user_mfa, body.code, ip=client_ip(http_request.scope, settings.TRUSTED_PROXY_HOPS))
+    await db.commit()  # failed-attempt counters and spent backup codes must persist even when we then refuse
+    if outcome == "locked":
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail="Too many failed codes. Try again later.")
+    if outcome != "ok":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid code")
+
+    ad_user = ADUser(user.username, payload.get("email"), payload.get("full_name"),
+                     [UserRole(r) for r in payload.get("roles", [])])
+    return _issue_token(ad_user, user)
 
 
 @router.get("/me")

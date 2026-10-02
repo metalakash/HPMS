@@ -7,7 +7,8 @@ import logging
 import secrets
 import hashlib
 from typing import Tuple, Optional, List
-from datetime import datetime, timedelta
+import re
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -130,6 +131,85 @@ class MFAService:
         except Exception as e:
             logger.error(f"TOTP verification error: {e}")
             return False
+
+    @staticmethod
+    def verify_totp_step(secret: str, code: str, now: Optional[datetime] = None) -> Optional[int]:
+        """Time step (counter) at which ``code`` is valid, allowing one step of clock skew either way; None if wrong.
+
+        Unlike ``verify_totp`` this tells the caller *which* step matched, so an already used code can be refused.
+        """
+        import hmac
+        import pyotp
+
+        if not code or not code.isdigit():
+            return None
+        totp = pyotp.TOTP(secret)
+        # pyotp reads a naive datetime as *local* time; always hand it an aware UTC one
+        now = now or datetime.now(timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        current = totp.timecode(now)
+        for counter in (current, current - 1, current + 1):
+            if hmac.compare_digest(totp.generate_otp(counter), code):
+                return counter
+        return None
+
+    BACKUP_CODE_RE = re.compile(r"^[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{4}$")
+    MAX_FAILED_ATTEMPTS = 5
+    LOCKOUT_MINUTES = 15
+
+    @staticmethod
+    async def verify_second_factor(
+        db: AsyncSession,
+        user_mfa,
+        code: str,
+        ip: Optional[str] = None,
+        now: Optional[datetime] = None,
+    ) -> str:
+        """Check a TOTP code or a backup code for a user with MFA enabled.
+
+        Returns ``"ok"``, ``"invalid"`` or ``"locked"``. Five consecutive failures lock the account for 15
+        minutes; a TOTP code is accepted once; a backup code is spent when used. The caller commits.
+        """
+        from backend.app.models.mfa import BackupCode
+
+        now = now or datetime.now(timezone.utc)
+        if user_mfa.locked_until is not None and user_mfa.locked_until > now:
+            return "locked"
+
+        code = (code or "").strip()
+        accepted = False
+
+        if code.isdigit() and len(code) == 6 and user_mfa.totp_secret:
+            counter = MFAService.verify_totp_step(user_mfa.totp_secret, code, now)
+            if counter is not None and counter > (user_mfa.last_totp_counter or 0):
+                user_mfa.last_totp_counter = counter
+                accepted = True
+        elif MFAService.BACKUP_CODE_RE.match(code):
+            normalised = code.upper() if "-" in code else f"{code[:4]}-{code[4:]}".upper()
+            unused = (await db.execute(
+                select(BackupCode).where(BackupCode.user_mfa_id == user_mfa.id, BackupCode.is_used.is_(False))
+            )).scalars().all()
+            for row in unused:
+                if MFAService.verify_backup_code(row.code, normalised):
+                    row.is_used, row.used_at, row.used_ip = True, now, ip
+                    accepted = True
+                    break
+
+        if accepted:
+            user_mfa.failed_attempts = "0"
+            user_mfa.locked_until = None
+            user_mfa.last_mfa_used_at = now
+            return "ok"
+
+        attempts = int(user_mfa.failed_attempts or 0) + 1
+        user_mfa.failed_attempts = str(attempts)
+        if attempts >= MFAService.MAX_FAILED_ATTEMPTS:
+            user_mfa.locked_until = now + timedelta(minutes=MFAService.LOCKOUT_MINUTES)
+            user_mfa.failed_attempts = "0"
+            logger.warning("MFA locked for user_mfa %s after %d failed attempts", user_mfa.id, attempts)
+            return "locked"
+        return "invalid"
 
     @staticmethod
     def generate_backup_codes(count: int = 10) -> List[str]:

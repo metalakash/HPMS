@@ -3,7 +3,7 @@
 TOTP, SMS, backup codes, and device trust.
 """
 
-from sqlalchemy import Column, String, Boolean, Date, DateTime, Text, ForeignKey, Index
+from sqlalchemy import BigInteger, Column, String, Boolean, Date, DateTime, Text, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from datetime import datetime
@@ -60,6 +60,8 @@ class UserMFA(Base, TimestampedMixin):
     # Enforcement
     mfa_required = Column(Boolean, default=False)  # Admin-enforced MFA
     last_mfa_used_at = Column(DateTime(timezone=True))
+    # Time step of the last accepted TOTP code: a code (or an earlier one) cannot be used twice
+    last_totp_counter = Column(BigInteger)
     failed_attempts = Column(String(5), default="0")
     locked_until = Column(DateTime(timezone=True))  # Account locked after failed attempts
 
