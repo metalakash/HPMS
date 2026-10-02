@@ -195,3 +195,58 @@ Both real failures fixed. `models/etl.py` now imports `Base` from `.base`, and i
 `back_populates` on `LoanAccount` were made one-way (the import fix exposed them as mapper errors).
 `test_scheduler_service.py` now builds `EmailService(MockEmailProvider())`.
 Result: **402 passed, 43 skipped, 0 failed** (`tests/performance` still not run).
+
+---
+
+## Phase 11 closure (2026-10-02)
+
+Final status of every row that was ❌ or 🟡 in the audit above. "Built" means code and tests exist; nothing
+below was verified against a real database (the `hpms` role cannot create one), and "✅" never means
+independently tested or penetration-tested.
+
+Test baseline: **661 passed, 55 skipped** (the skips are database-backed tests). Start of phase: 400 passed.
+
+| ID | Was | Now | What changed / what remains |
+|---|---|---|---|
+| A.2 | ❌ | ❌ | Internal self-assessment only ([SECURITY-HARDENING.md](SECURITY-HARDENING.md)); independent VAPT still required |
+| A.4 / A.5 / D.5 | 🟡 | 🟡 | CSP and hardening headers, OWASP checklist, dependency scan done; CBS mTLS and VAPT open |
+| A.6 | 🟡 | 🟡 | Unchanged: application-layer RLS only; RLS gaps on compliance and CBS routes fixed |
+| A.7 | ❌ | ✅ | IP allow-list built; **off until `ADMIN_IP_ALLOWLIST` is set** |
+| A.1 | 🟡 | 🟡 | Field-level *write* rights and dual-control enforced; no field-level *read* rights |
+| B.3 | 🟡 | 🟡 | Unchanged (Office 365 and digital signature absent) |
+| B.5 | 🟡 | 🟡 | Unchanged: Finacle adapter mock-backed until the sandbox is reachable |
+| B.8 / D.11 | 🟡 | 🟡 | Word added; XML and HDF import still absent |
+| D.4 | 🟡 | 🟡 | [Mapping drafted](NRB-PRIVACY-COMPLIANCE-MAPPING.md); requirement texts unverified |
+| D.7 | ❌ | ✅ | Generated [data dictionary](DATA-DICTIONARY.md) with freshness test |
+| D.12 | ❌ | 🟡 | [Administrator](ADMIN-MANUAL.md) and [user](USER-MANUAL.md) manuals drafted; system study and parameterisation document not written |
+| E.4 | 🟡 | 🟡 | Retention preview/purge and chain checkpoint built; **period unconfirmed** |
+| C.5 / F.15 | ❌ / 🟡 | ✅ | Milestones table, API and project timeline (commits `70880f2`, `f253607`) |
+| C.9 | ❌ | 🟡 | `stakeholder_contacts` for alert routing; no performance history |
+| E.2 / E.15 / E.16 | 🟡 | ✅ | Permit and insurance alerts, filing alerts, external stakeholder recipients |
+| E.7 / E.23 | ❌ | 🟡 | Filing calendar mechanism on the BS fiscal year; **ships empty**, no UI |
+| E.9 / E.19 / E.20 | 🟡 | ✅ | Risk register with severity and mitigation tracking |
+| E.11 | ❌ | ✅ | Insurance policies with expiry alerts |
+| E.17 | 🟡 | ✅ | ESIA monitoring records |
+| E.18 | ❌ | ✅ | Community engagement / grievance log |
+| E.22 | ❌ | ✅ | User reminders with email delivery (API only) |
+| E.25 | ❌ | ❌ | CSR tracker not built |
+| F.1 / G.7 | 🟡 | ✅ | Word export; BS and AD dates in Excel, Word and PDF |
+| F.5 / F.6 | ❌ | 🟡 | Report builder and saved definitions over four sources; no cross-source consolidation; no UI |
+| F.10 | 🟡 | ✅ | Covenant shortfall report; Province / District / Local-level filters |
+| F.11 | 🟡 | 🟡 | Scheduled email delivery with attachments built; PowerPoint not built (decision pending) |
+| G.6 / G.8 / G.9 | ❌ | ❌ | Not started |
+
+### Corrections to earlier "present" rows
+
+- **D.9 (workflow routes)** was ✅; `backend/app/routes/workflow.py` is not mounted and imports modules that do
+  not exist, so the workflow API is not available. The maker-checker API (`/mutations`) was also unmounted until
+  Phase 11.4.
+- **E.1 (audit log)** was ✅; only maker-checker actions wrote to it, approve/reject wrote blank hashes, and the
+  table was not protected from edits. Now chained, trigger-protected, and project create/update are audited.
+- **B.1 (loan sync schedules)** — the schedule tables had no migration (added as `016`).
+
+### Still open at the close of Phase 11
+
+Migration chain `001`→`016` has been generated as SQL offline but never applied to a database; database-backed
+tests are skipped; items above marked ❌/🟡; the open findings in the security record (demo accounts on the hosted
+deployment, unprotected MFA secrets, the loan-sync scheduler not starting).
