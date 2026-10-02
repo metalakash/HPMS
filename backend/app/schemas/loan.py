@@ -6,7 +6,7 @@ Schemas for loan account queries, rate history, and financial data.
 from typing import Optional, List
 from datetime import date
 from decimal import Decimal
-from pydantic import BaseModel, Field
+from pydantic import model_validator, BaseModel, Field
 
 
 class RateHistoryEntry(BaseModel):
@@ -214,7 +214,8 @@ class LoanExposureImportItem(BaseModel):
     icr: Optional[Decimal] = Field(None, description="Interest Coverage Ratio")
 
     class Config:
-        strict = True
+        # Not strict: request bodies are parsed JSON (numbers and date strings), never Decimal/date instances,
+        # and FastAPI validates them in Python mode. Strict rejected every real request with a 422.
         json_encoders = {Decimal: lambda v: str(v)}
 
 
@@ -268,8 +269,28 @@ class LoanExposureSyncScheduleRequest(BaseModel):
     alert_email_addresses: Optional[str] = Field(None, description="Comma-separated email list")
 
     class Config:
-        strict = True
+        # Not strict: request bodies are parsed JSON (numbers and date strings), never Decimal/date instances,
+        # and FastAPI validates them in Python mode. Strict rejected every real request with a 422.
         json_encoders = {Decimal: lambda v: str(v)}
+
+    @model_validator(mode="after")
+    def _schedule_is_runnable(self):
+        """A schedule the executor could never fire is rejected up front instead of silently doing nothing."""
+        if self.frequency not in ("hourly", "daily", "weekly", "manual"):
+            raise ValueError("frequency must be hourly, daily, weekly or manual")
+        if self.sync_source not in ("BANK_API", "FINACLE_CBS", "CSV_UPLOAD"):
+            raise ValueError("sync_source must be BANK_API, FINACLE_CBS or CSV_UPLOAD")
+        if self.frequency in ("daily", "weekly"):
+            try:
+                hour, minute = (int(p) for p in (self.scheduled_time_utc or "").split(":"))
+                if not (0 <= hour < 24 and 0 <= minute < 60):
+                    raise ValueError
+            except ValueError:
+                raise ValueError("scheduled_time_utc must be HH:MM (UTC) for daily and weekly schedules")
+        if self.frequency == "weekly" and (self.day_of_week is None or not 0 <= self.day_of_week <= 6):
+            raise ValueError("day_of_week (0=Mon .. 6=Sun) is required for weekly schedules")
+        return self
+
 
 
 class LoanExposureSyncScheduleResponse(BaseModel):

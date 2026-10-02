@@ -7,15 +7,15 @@ RFP: D.12 (admin and user manuals). Companion documents: [User Manual](USER-MANU
 
 > **Read this first — current limitations.** Several things an administrator would expect are not in
 > the product yet. They are listed in [§12](#12-known-limitations) so nobody discovers them in production.
-> The most important: with `USE_LDAP=false` the login accepts built-in demo accounts with published
-> passwords (§4.3).
+> The most important: MFA exists but is **not enforced at login** (§4.4), and the loan-exposure Finacle source is
+> not implemented (§7).
 
 ## 1. Architecture
 
 | Part | Technology | Notes |
 |---|---|---|
 | API | FastAPI (Python 3.11 container) | `backend/app/main.py`; REST under `/api/v1`, GraphQL at `/graphql`, WebSocket for live notifications |
-| Database | PostgreSQL | Schema owned by Alembic (`alembic/versions`, currently `001` → `016`). The app never calls `create_all` at startup |
+| Database | PostgreSQL | Schema owned by Alembic (`alembic/versions`, currently `001` → `017`). The app never calls `create_all` at startup |
 | Cache / pub-sub | Redis (optional) | `REDIS_ENABLED=false` by default |
 | Files | S3 / MinIO / local | `STORAGE_BACKEND`; report downloads work without S3 (`/reports/export/download`) |
 | Web UI | React + TypeScript (Vite) | `frontend/`; hosted on Vercel, which proxies `/api` and `/graphql` to the API |
@@ -32,15 +32,17 @@ Current hosted layout: backend on Render (`render.yaml`, Docker, health check `/
 2. **Migrate**: the container command runs `alembic upgrade head` before starting uvicorn. To run it by hand:
    ```bash
    alembic upgrade head
-   alembic current          # should print 016_loan_sync_schedule_tables
+   alembic current          # should print 017_protect_mfa_secrets
    ```
-   Migrations `013`–`016` (report definitions, regulatory calendar, audit immutability trigger, loan sync tables)
-   have been checked as generated SQL only; apply them to a staging database first.
+   Migrations `013`–`017` (report definitions, regulatory calendar, audit immutability trigger, loan sync tables,
+   MFA secret protection) have been checked as generated SQL only; apply them to a staging database first.
+   **Run `017` with the production `MFA_ENCRYPTION_KEY`/`SECRET_KEY` in the environment**: it encrypts existing TOTP seeds
+   with that key, and a different key later makes them unreadable (users would have to re-enrol).
 3. **Frontend**: `cd frontend && npm run build`; Vercel runs this from `vercel.json`. Security headers and the CSP
    are defined in `vercel.json`. If you edit the inline theme script in `frontend/index.html`, regenerate its
    hash in the CSP (a test fails otherwise).
 4. **Verify**: `GET /health` (liveness), `GET /ready` (database reachable, returns 503 otherwise), `GET /docs`.
-5. **Roll back**: redeploy the previous image; `alembic downgrade <revision>` is provided for `013`–`016`.
+5. **Roll back**: redeploy the previous image; `alembic downgrade <revision>` is provided for `013`–`017`.
    Downgrading `015` removes the audit append-only trigger.
 
 ## 3. Configuration reference
@@ -57,6 +59,8 @@ Variables the code actually reads (some older documents list names that the code
 | | `LOG_LEVEL` | `INFO` | |
 | | `EXTRA_ALLOWED_HOSTS` | empty | Extra hostnames for the trusted-host check |
 | Identity | `USE_LDAP` | `false` | `true` enables Active Directory; see §4 |
+| | `ALLOW_DEV_AUTH` | unset | Built-in demo accounts: unset = only while `DEBUG=true`; `true` = allowed (logged as a warning when `DEBUG` is off); `false` = never. With neither AD nor demo accounts, login answers 503 |
+| | `MFA_ENCRYPTION_KEY`, `MFA_ENCRYPTION_KEY_OLD` | empty | Key encrypting TOTP seeds (falls back to `SECRET_KEY`). To rotate: put the new key in `MFA_ENCRYPTION_KEY` and the previous one in `MFA_ENCRYPTION_KEY_OLD`; remove the old key only after all seeds have been rewritten |
 | | `AD_SERVER`, `AD_DOMAIN`, `AD_BASE_DN` | `ldap.sbl.local`, `sbl.local`, `dc=sbl,dc=local` | |
 | | `AD_SERVICE_ACCOUNT_USERNAME/PASSWORD` | empty | Account used to read group membership |
 | Network | `ADMIN_IP_ALLOWLIST` | empty (off) | Comma-separated IPs/CIDRs; see §6 |
@@ -99,19 +103,25 @@ Every project-scoped API call checks that the caller may see the project; projec
 calendar require `admin` or `auditor`. This is enforced in application code; there is no database-level
 row security yet.
 
-### 4.3 Demo accounts — action required
+### 4.3 Demo accounts
 
-When `USE_LDAP=false` the login uses `LocalDevAuthProvider`, which accepts built-in accounts
-(`admin`, `maker`, `approver`, `auditor`, `guest`, with passwords of the form `<role>123`, visible in the source
-repository). **Any deployment reachable from outside the development team must set `USE_LDAP=true`.** The current
-`render.yaml` sets `USE_LDAP=false`, so the hosted demo accepts these accounts. A switch that disables them
-outside development has not been built.
+`LocalDevAuthProvider` accepts built-in accounts (`admin`, `maker`, `approver`, `auditor`, `guest`, with passwords of the
+form `<role>123`, visible in the source repository). They are available only when Active Directory is off **and**
+either `DEBUG=true` (local development) or `ALLOW_DEV_AUTH=true` is set deliberately. Otherwise login answers
+503 "No authentication provider is configured". For production set `USE_LDAP=true`.
+
+The hosted demo on Render (`render.yaml`: `USE_LDAP=false`, `DEBUG=false`) therefore stops accepting these logins
+after the next deploy; add `ALLOW_DEV_AUTH=true` to its environment only if you want a public demo with
+published passwords and no real data.
 
 ### 4.4 Multi-factor authentication
 
 TOTP, backup codes, SMS verification and trusted devices are implemented under `/api/v1/mfa/*`
-(`setup`, `verify`, `backup-codes`, `trusted-device`, `status`, `disable`). The web UI does not yet expose
-enrolment; users enrol through the API.
+(`setup`, `verify`, `backup-codes`, `trusted-device`, `status`, `disable`). TOTP seeds are encrypted at rest and
+backup codes are stored as keyed hashes. **MFA is not enforced at login:** the password alone yields a session,
+nothing checks whether a user has MFA enabled, and backup codes cannot be redeemed anywhere. Enforcement needs a
+second login step (API and web page) and has not been built. The web UI does not yet expose enrolment; users
+enrol through the API.
 
 ### 4.5 The Admin page
 
@@ -156,7 +166,7 @@ Rules enforced by the service:
 |---|---|---|---|
 | Daily alert scan | `ALERT_SCAN_HOUR_UTC` (02:00 UTC) | `services/alert_daemon.py` | expiry (PPA, licence, insurance, permit), milestone slippage, filing due/overdue, automatic risks; marks late filings overdue; emails due user reminders; emails the digest to `ALERT_RECIPIENTS` and each stakeholder contact |
 | Scheduled reports | every 60 s poll | `services/report_daemon.py` | runs export jobs whose `next_run_at` has passed; safe with several workers (row locks) |
-| Loan exposure sync | every minute | `background_sync_executor` via APScheduler | **disabled: `apscheduler` is not in `pyproject.toml`**, so the application logs "APScheduler not installed" and skips it |
+| Loan exposure sync | every 60 s poll | `services/background_sync_executor.py` | runs schedules created at `/api/v1/loan-accounts/sync-schedule` (hourly, daily, weekly at HH:MM UTC; a missed occurrence runs once on recovery; new schedules wait for their next occurrence). Source `BANK_API` fetches `source_config.webhook_url` (http/https JSON), ingests in-process, writes history, raises DSCR/LTV alerts by email. `FINACLE_CBS` is recorded as failed ("not implemented"); `CSV_UPLOAD` has nothing to fetch |
 
 All three run inside the API process; if the API restarts, jobs resume from stored state.
 
@@ -221,13 +231,13 @@ No regulatory content is shipped. The compliance team must enter requirements:
 
 | Area | Limitation |
 |---|---|
-| Authentication | Demo accounts active when `USE_LDAP=false` (§4.3) |
+| Authentication | MFA not enforced at login (§4.4); demo accounts need `ALLOW_DEV_AUTH` (§4.3) |
 | CBS | Finacle adapter is a mock until the sandbox is reachable; the CBS sync endpoint always uses it |
 | Web UI | Compliance, Analytics, Maintenance and Admin pages show sample data; no screens yet for reports, saved reports, schedules, regulatory calendar, reminders, stakeholder contacts, approval queue, or MFA enrolment (all available through the API at `/docs`) |
 | Approvals | Approving does not apply the change |
-| Loan sync scheduler | Not running (missing `apscheduler` dependency) |
+| Loan sync scheduler | Runs, but only the `BANK_API` source exists; `FINACLE_CBS` is not implemented; never run against a real database or bank endpoint |
 | Retention | Period unconfirmed; purge manual |
-| Security | MFA secrets and backup codes stored unprotected; No VAPT yet; no database-level row security; Python dependencies are not pinned |
+| Security | No VAPT yet; no database-level row security; Python dependencies are not pinned |
 | Data | `finacle_account_id` is stored in plain text although described as encrypted; masked in API responses |
 | Reports | No PowerPoint output; no XML / HDF import |
-| Verification | Migrations `013`–`016` and the database-backed tests have not been run against a real database |
+| Verification | Migrations `013`–`017` and the database-backed tests have not been run against a real database |

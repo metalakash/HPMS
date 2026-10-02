@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+import asyncio
 import logging
 import os
 from datetime import datetime
@@ -94,11 +95,10 @@ app.add_middleware(
 # Rate limiting
 app.state.limiter = limiter
 
-# Background scheduler for Phase 8.3.1
-scheduler = None
+# Background tasks (alert scan, scheduled reports, loan sync) started in startup_event
 alert_task = None
 report_task = None
-sync_executor = None
+sync_task = None
 
 # Register API routes
 from backend.app.api.routes_auth import router as auth_router
@@ -170,8 +170,6 @@ async def ready_check(db=Depends(get_db)):
 @app.on_event("startup")
 async def startup_event():
     """Initialize on startup."""
-    global scheduler, sync_executor
-
     logger.info("SBL HPMS Starting up")
     # Schema is owned by Alembic (`alembic upgrade head`); never create_all here,
     # which would bypass migrations and turn views like consortium_exposure_v into tables.
@@ -200,64 +198,27 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Failed to schedule daily alert scan: {e}", exc_info=True)
 
-    # Initialize background scheduler for loan sync (Phase 8.3.1)
+    # Scheduled loan exposure sync (Phase 8.3.1): asyncio task, no external scheduler
     try:
-        from apscheduler.schedulers.background import BackgroundScheduler
-        from backend.app.database import SessionLocal
-        from backend.app.services.background_sync_executor import BackgroundSyncExecutor
-
-        # Create executor
-        sync_executor = BackgroundSyncExecutor(SessionLocal)
-        await sync_executor.initialize_http_client()
-
-        # Create scheduler
-        scheduler = BackgroundScheduler()
-
-        # Add job to check for due syncs every minute
-        scheduler.add_job(
-            sync_executor.execute_due_syncs,
-            "interval",
-            minutes=1,
-            id="loan_sync_executor",
-            name="Loan Exposure Sync Executor",
-            misfire_grace_time=30,
-        )
-
-        scheduler.start()
-        logger.info("✅ Background loan sync scheduler started")
-
-    except ImportError:
-        logger.warning("APScheduler not installed; loan sync scheduler disabled")
-        logger.info("   Install with: pip install apscheduler")
+        from backend.app.database import async_session_maker
+        from backend.app.services.background_sync_executor import sync_loop
+        from backend.app.services.email_service import get_email_service
+        global sync_task
+        sync_task = asyncio.create_task(sync_loop(async_session_maker, get_email_service()))
+        logger.info("Loan exposure sync scheduler started")
     except Exception as e:
-        logger.error(f"Failed to start background scheduler: {e}", exc_info=True)
+        logger.error(f"Failed to start loan sync scheduler: {e}", exc_info=True)
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown."""
-    global scheduler, sync_executor
-
     logger.info("SBL HPMS Shutting down")
     if alert_task:
         alert_task.cancel()
     if report_task:
         report_task.cancel()
-
-    # Shutdown background scheduler
-    if scheduler:
-        try:
-            scheduler.shutdown(wait=True)
-            logger.info("✅ Background scheduler shutdown")
-        except Exception as e:
-            logger.error(f"Error shutting down scheduler: {e}")
-
-    # Cleanup HTTP client
-    if sync_executor:
-        try:
-            await sync_executor.shutdown_http_client()
-            logger.info("✅ HTTP client cleanup")
-        except Exception as e:
-            logger.error(f"Error cleaning up HTTP client: {e}")
+    if sync_task:
+        sync_task.cancel()
 
     await close_db()
 

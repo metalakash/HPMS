@@ -2,12 +2,12 @@
 
 import logging
 import uuid
-from datetime import datetime, time
+from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.financial import (
     LoanExposureSyncSchedule,
@@ -28,8 +28,8 @@ class LoanSyncSchedulerService:
     """Service for managing automatic loan exposure sync schedules."""
 
     @staticmethod
-    def create_schedule(
-        db: Session,
+    async def create_schedule(
+        db: AsyncSession,
         request: LoanExposureSyncScheduleRequest,
         user_id: str,
     ) -> LoanExposureSyncScheduleResponse:
@@ -54,14 +54,15 @@ class LoanSyncSchedulerService:
         )
 
         db.add(schedule)
-        db.commit()
+        await db.commit()
+        await db.refresh(schedule)  # server-side created_at/updated_at must be loaded before _to_response
 
         logger.info(f"✅ Created sync schedule: {schedule.id} ({schedule.name})")
 
         return LoanSyncSchedulerService._to_response(schedule)
 
     @staticmethod
-    def get_schedule(db: Session, schedule_id: str) -> Optional[LoanExposureSyncScheduleResponse]:
+    async def get_schedule(db: AsyncSession, schedule_id: str) -> Optional[LoanExposureSyncScheduleResponse]:
         """Get a sync schedule by ID."""
 
         try:
@@ -69,7 +70,7 @@ class LoanSyncSchedulerService:
         except ValueError:
             return None
 
-        result = db.execute(
+        result = await db.execute(
             select(LoanExposureSyncSchedule).where(LoanExposureSyncSchedule.id == sid)
         )
         schedule = result.scalar_one_or_none()
@@ -80,8 +81,8 @@ class LoanSyncSchedulerService:
         return LoanSyncSchedulerService._to_response(schedule)
 
     @staticmethod
-    def list_schedules(
-        db: Session,
+    async def list_schedules(
+        db: AsyncSession,
         is_active: Optional[str] = None,
         sync_source: Optional[str] = None,
     ) -> List[LoanExposureSyncScheduleResponse]:
@@ -95,14 +96,14 @@ class LoanSyncSchedulerService:
         if sync_source:
             query = query.where(LoanExposureSyncSchedule.sync_source == sync_source)
 
-        result = db.execute(query.order_by(LoanExposureSyncSchedule.created_at.desc()))
+        result = await db.execute(query.order_by(LoanExposureSyncSchedule.created_at.desc()))
         schedules = result.scalars().all()
 
         return [LoanSyncSchedulerService._to_response(s) for s in schedules]
 
     @staticmethod
-    def update_schedule(
-        db: Session,
+    async def update_schedule(
+        db: AsyncSession,
         schedule_id: str,
         request: LoanExposureSyncScheduleRequest,
         user_id: str,
@@ -114,7 +115,7 @@ class LoanSyncSchedulerService:
         except ValueError:
             return None
 
-        result = db.execute(
+        result = await db.execute(
             select(LoanExposureSyncSchedule).where(LoanExposureSyncSchedule.id == sid)
         )
         schedule = result.scalar_one_or_none()
@@ -136,15 +137,16 @@ class LoanSyncSchedulerService:
         schedule.updated_by = user_id
 
         db.add(schedule)
-        db.commit()
+        await db.commit()
+        await db.refresh(schedule)  # server-side created_at/updated_at must be loaded before _to_response
 
         logger.info(f"✅ Updated sync schedule: {schedule.id}")
 
         return LoanSyncSchedulerService._to_response(schedule)
 
     @staticmethod
-    def toggle_schedule(
-        db: Session,
+    async def toggle_schedule(
+        db: AsyncSession,
         schedule_id: str,
         is_active: str,
         user_id: str,
@@ -156,7 +158,7 @@ class LoanSyncSchedulerService:
         except ValueError:
             return None
 
-        result = db.execute(
+        result = await db.execute(
             select(LoanExposureSyncSchedule).where(LoanExposureSyncSchedule.id == sid)
         )
         schedule = result.scalar_one_or_none()
@@ -168,15 +170,16 @@ class LoanSyncSchedulerService:
         schedule.updated_by = user_id
 
         db.add(schedule)
-        db.commit()
+        await db.commit()
+        await db.refresh(schedule)  # server-side created_at/updated_at must be loaded before _to_response
 
         logger.info(f"✅ Toggled sync schedule: {schedule.id} (active={is_active})")
 
         return LoanSyncSchedulerService._to_response(schedule)
 
     @staticmethod
-    def log_sync_result(
-        db: Session,
+    async def log_sync_result(
+        db: AsyncSession,
         schedule_id: str,
         status: str,
         total_records: int,
@@ -186,6 +189,7 @@ class LoanSyncSchedulerService:
         error_message: Optional[str] = None,
         alerts: Optional[List[LoanExposureSyncAlertResponse]] = None,
         duration_seconds: Optional[int] = None,
+        started_at: Optional[str] = None,
     ) -> str:
         """Log the result of a sync operation to history."""
 
@@ -195,7 +199,7 @@ class LoanSyncSchedulerService:
             return ""
 
         # Update schedule's last sync info
-        result = db.execute(
+        result = await db.execute(
             select(LoanExposureSyncSchedule).where(LoanExposureSyncSchedule.id == sid)
         )
         schedule = result.scalar_one_or_none()
@@ -218,22 +222,22 @@ class LoanSyncSchedulerService:
             updated_count=updated_count,
             skipped_count=skipped_count,
             error_message=error_message,
-            alerts_triggered=[a.dict() for a in alerts] if alerts else [],
-            started_at=None,  # Would be set by caller
+            alerts_triggered=[a.model_dump(mode="json") for a in alerts] if alerts else [],
+            started_at=started_at,
             completed_at=datetime.utcnow().isoformat(),
             duration_seconds=duration_seconds,
         )
 
         db.add(history)
-        db.commit()
+        await db.commit()
 
         logger.info(f"📋 Logged sync result: {history.id} (status={status})")
 
         return str(history.id)
 
     @staticmethod
-    def check_policy_violations(
-        db: Session,
+    async def check_policy_violations(
+        db: AsyncSession,
         schedule_id: str,
     ) -> List[LoanExposureSyncAlertResponse]:
         """Check for policy violations after a sync (DSCR, LTV, concentration)."""
@@ -243,7 +247,7 @@ class LoanSyncSchedulerService:
         except ValueError:
             return []
 
-        result = db.execute(
+        result = await db.execute(
             select(LoanExposureSyncSchedule).where(LoanExposureSyncSchedule.id == sid)
         )
         schedule = result.scalar_one_or_none()
@@ -255,11 +259,11 @@ class LoanSyncSchedulerService:
 
         # Check DSCR violations
         if schedule.alert_on_dscr_below:
-            loans_dscr = db.execute(
+            loans_dscr = (await db.execute(
                 select(LoanAccount, Project.project_code).join(Project).where(
                     LoanAccount.dscr < schedule.alert_on_dscr_below
                 )
-            ).all()
+            )).all()
 
             for loan, project_code in loans_dscr:
                 alert = LoanExposureSyncAlertResponse(
@@ -276,11 +280,11 @@ class LoanSyncSchedulerService:
 
         # Check LTV violations
         if schedule.alert_on_ltv_above:
-            loans_ltv = db.execute(
+            loans_ltv = (await db.execute(
                 select(LoanAccount, Project.project_code).join(Project).where(
                     LoanAccount.ltv > schedule.alert_on_ltv_above
                 )
-            ).all()
+            )).all()
 
             for loan, project_code in loans_ltv:
                 alert = LoanExposureSyncAlertResponse(

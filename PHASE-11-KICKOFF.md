@@ -82,3 +82,11 @@ Domain tables absent from the backend: **risk register** (E.9/E.19/E.20), **insu
 ## Suggested order
 
 11.1 baseline → 11.4 Phase 10 tests (cheapest risk reduction) → 11.2 → 11.3 → 11.5.
+
+## Follow-up after Phase 11 (2026-10-02)
+
+- [x] Demo accounts refused unless `DEBUG=true` or `ALLOW_DEV_AUTH=true` (the hosted Render demo stops accepting them on the next deploy)
+- [x] TOTP seeds encrypted at rest, backup codes keyed-hashed, columns widened — migration `017`
+- [x] Loan-sync scheduler rewritten as an asyncio loop (the APScheduler design could never have run); schedule API, in-process ingestion and `POST /exposure-sync` repaired
+- [ ] **MFA is still not enforced at login** — needs a login challenge step (API + web page)
+- [ ] Finacle (`FINACLE_CBS`) source for the loan sync is not implemented

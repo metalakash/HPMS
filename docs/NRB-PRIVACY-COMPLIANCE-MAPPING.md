@@ -25,9 +25,9 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented · ❓ requiremen
 | 2 | Audit-log retention period | `AUDIT_RETENTION_YEARS` (default 7), preview and manual purge that keeps the chain verifiable | ❓ | The 7 years is an unconfirmed placeholder. Do not state it to a regulator until confirmed | Unified Directives / IT Guidelines / BAFIA (brief §1.1) |
 | 3 | Segregation of duties (maker-checker) | Makers propose, approvers recommend and approve; nobody approves their own work; two steps need two people; mandatory justification | ✅ (service) | Approval does not yet apply the change; the approval-queue page is not linked in the UI; approvals are not tied to a configurable workflow | Internal credit policy |
 | 4 | Role-based and least-privilege access | Five roles mapped from AD groups; project-level row security (invisible = 404); field-level write policy; IP allow-list for admin and service endpoints | 🟡 | Row security is in application code only (no database policies); auditors can create saved report definitions (private config); IP allow-list is off until configured | IT Guidelines access control |
-| 5 | Strong authentication | AD/LDAP integration; JWT sessions (8 h); TOTP, SMS, backup codes, trusted devices | 🟡 | Hosted demo uses built-in accounts with published passwords (`USE_LDAP=false`). TOTP secrets and backup codes are stored unhashed/unencrypted in `user_mfa` / `backup_code`. No UI for MFA enrolment. Login lockout not verified | IT Guidelines authentication |
+| 5 | Strong authentication | AD/LDAP integration; JWT sessions (8 h); TOTP and backup codes with seeds encrypted and codes keyed-hashed; demo accounts refused unless explicitly enabled | 🟡 | **MFA is not enforced at login** (password alone gives a session; backup codes cannot be redeemed). No UI for MFA enrolment. Login lockout not verified | IT Guidelines authentication |
 | 6 | Protection of data in transit | HTTPS assumed at the host; HSTS, CSP, nosniff, frame-deny, no-store headers | ✅ | CBS mTLS not evidenced | IT Guidelines |
-| 7 | Protection of data at rest | Storage encryption is an infrastructure responsibility | ❌ (app layer) | `finacle_account_id` and MFA secrets are plain text columns although comments describe encryption; no pgcrypto; backups not covered here | IT Guidelines |
+| 7 | Protection of data at rest | Storage encryption is an infrastructure responsibility | 🟡 (app layer) | TOTP seeds are encrypted in the application. `finacle_account_id` is a plain text column although comments describe encryption; no pgcrypto; backups not covered here | IT Guidelines |
 | 8 | Data residency / localisation | Currently hosted on Render (backend) and Vercel (frontend), i.e. **outside SBL's premises and probably outside Nepal** | ❓ ⚠️ | **Do not load real customer or loan data into the hosted environment until residency is confirmed.** The on-premise DC/DR in the RFP is an infrastructure workstream | Unified Directives / IT Guidelines / Individual Privacy Act (brief §1.2) |
 | 9 | Business continuity, backup, DR | Runbook and health checks; DC/DR is infrastructure | ❌ (app layer) | RFP G.1 DC/DR in different seismic zones: not in this repository | IT Guidelines |
 | 10 | Vulnerability and change management | Dependency scan and OWASP self-assessment ([SECURITY-HARDENING.md](SECURITY-HARDENING.md)); test suite; migrations under version control | 🟡 | No independent VAPT (RFP A.2); dependencies not pinned | IT Guidelines; SBL ISG |
@@ -45,7 +45,7 @@ hold information about identifiable individuals ([data dictionary](DATA-DICTIONA
 | Data subject | Table (columns) | Source | Who can read | Notes |
 |---|---|---|---|---|
 | Bank staff (users) | `user` (username, email, full name, AD distinguished name, last login, role, language) | Active Directory | admin; the user themselves via `/auth/me` | |
-| Bank staff, authentication | `user_mfa` (TOTP secret, phone, lock state), `backup_code`, `sms_verification` (phone, code), `trusted_device` (device fingerprint, browser, OS, last IP) | user enrolment | application only | **Secrets stored unprotected** (control 5) |
+| Bank staff, authentication | `user_mfa` (TOTP secret, phone, lock state), `backup_code`, `sms_verification` (phone, code), `trusted_device` (device fingerprint, browser, OS, last IP) | user enrolment | application only | Seeds encrypted; codes keyed-hashed (control 5) |
 | Bank staff, activity | `audit_logs` (user id, role, source IP, session id), `audit_log_reads`, `approval_steps` | system | admin, auditor | Retention per control 2 |
 | Alert recipients | `stakeholder_contacts` (name, organisation, role, email, phone) | entered by admins | admin, auditor | Includes external parties |
 | Staff reminders | `user_reminders` (owner, text, date) | the user | the owner only | Free text may contain anything |
@@ -83,8 +83,7 @@ Not present: customer KYC, citizenship numbers, tax IDs, biometric data.
 
 ## 5. Actions for the HPMS team
 
-1. Disable the built-in accounts outside development; hash or encrypt MFA secrets and backup codes; encrypt or
-   tokenise `finacle_account_id`.
+1. Enforce MFA at login (API and web); encrypt or tokenise `finacle_account_id`.
 2. Chain the remaining write paths (loan ingest, regulatory filings, schedules, contacts) into the audit log and implement read-audit middleware.
 3. Build the retention / anonymisation job for personal data once the policy exists.
 4. Add single-obligor / sector limits, classification and provisioning after the directive texts are confirmed.

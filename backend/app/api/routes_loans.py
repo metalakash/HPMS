@@ -35,6 +35,7 @@ from backend.app.schemas.loan import (
 )
 from backend.app.services.cbs_sync_service import CBSSyncService
 from backend.app.services.loan_exposure_service import LoanExposureService
+from backend.app.services.loan_exposure_ingest import ingest_loan_exposures
 from backend.app.services.loan_sync_scheduler_service import LoanSyncSchedulerService
 from backend.app.integration.finacle_adapter import get_adapter
 from backend.app.integration.finacle_schema import FinacleSyncType
@@ -152,90 +153,6 @@ async def list_loan_accounts(
         data=items,
         meta=_get_response_meta(page=page, page_size=page_size, total_count=total_count),
         audit=_get_audit_metadata(user_id=current_user.username, action="list_loan_accounts"),
-    )
-
-
-@router.get("/{account_id}", response_model=ApiResponse[LoanAccountDetailResponse])
-async def get_loan_account(
-    account_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user),
-) -> ApiResponse[LoanAccountDetailResponse]:
-    """Get detailed loan account view with rate history.
-
-    Path parameters:
-    - account_id: LoanAccount UUID
-    """
-
-    # Get account
-    account_id = _parse_uuid(account_id, "Loan account")
-    query = select(LoanAccount).where(LoanAccount.id == account_id)
-    result = await db.execute(query)
-    account = result.scalar_one_or_none()
-
-    # Accounts on projects the user can't see are reported as missing
-    if not account or not await RLSService.can_view_project(db, current_user, account.project_id):
-        raise HTTPException(status_code=404, detail=f"Loan account {account_id} not found")
-
-    # Get project code
-    proj_query = select(Project).where(Project.id == account.project_id)
-    proj_result = await db.execute(proj_query)
-    project = proj_result.scalar()
-
-    # Get rate history
-    rate_query = (
-        select(LoanAccountRateHistory)
-        .where(LoanAccountRateHistory.loan_account_id == account_id)
-        .order_by(LoanAccountRateHistory.valid_from_ad.desc())  # newest first
-    )
-    rate_result = await db.execute(rate_query)
-    rates = rate_result.scalars().all()
-
-    rate_history = [
-        RateHistoryEntry(
-            interest_rate_pct=r.interest_rate_pct,
-            valid_from_ad=r.valid_from_ad,
-            valid_from_bs=r.valid_from_bs,
-            valid_to_ad=r.valid_to_ad,
-            valid_to_bs=r.valid_to_bs,
-            is_current=r.is_current,
-            reason_for_change=r.reason_for_change,
-            source=r.data_provenance,
-        )
-        for r in rates
-    ]
-
-    response = LoanAccountDetailResponse(
-        id=str(account.id),
-        project_id=str(account.project_id),
-        project_code=project.project_code if project else "UNKNOWN",
-        finacle_account_id="***MASKED***",
-        facility_type=account.facility_type,
-        sanctioned_amount=account.sanctioned_amount,
-        currency_code=account.currency_code,
-        disbursed_amount=account.disbursed_amount,
-        outstanding_principal=account.outstanding_principal,
-        outstanding_interest=account.outstanding_interest,
-        overdue_principal=account.overdue_principal,
-        overdue_interest=account.overdue_interest,
-        interest_rate_pct=account.interest_rate_pct,
-        rate_as_of_date=rates[0].valid_from_ad if rates else None,
-        moratorium_end_ad=account.moratorium_end_ad,
-        moratorium_end_bs=account.moratorium_end_bs,
-        maturity_ad=account.maturity_ad,
-        maturity_bs=account.maturity_bs,
-        last_synced_at=account.last_synced_at,
-        sync_status=account.sync_status,
-        data_provenance=account.data_provenance,
-        rate_history=rate_history,
-        created_at=account.created_at.isoformat() if account.created_at else None,
-        updated_at=account.updated_at.isoformat() if account.updated_at else None,
-    )
-
-    return ApiResponse(
-        data=response,
-        meta=_get_response_meta(),
-        audit=_get_audit_metadata(user_id=current_user.username, action="get_loan_account"),
     )
 
 
@@ -402,157 +319,21 @@ async def sync_loan_exposure(
     user_id = current_user.username
 
     try:
-        logger.info(f"📥 Loan exposure sync initiated by {user_id}")
-        logger.info(f"   Source: {request.sync_source} ({request.source_reference})")
-        logger.info(f"   Records: {len(request.loan_accounts)}")
-
-        # Validate records & ingest
-        sync_id = str(uuid.uuid4())
-        created_count = 0
-        updated_count = 0
-        skipped_count = 0
-        errors = []
-        warnings = []
-
-        # Step 1: Pre-validate all projects exist
-        project_ids = set(item.project_id for item in request.loan_accounts)
-        existing_projects = {}
-
-        for project_id_str in project_ids:
-            try:
-                pid = uuid.UUID(project_id_str)
-                result = await db.execute(select(Project).where(Project.id == pid))
-                project = result.scalar_one_or_none()
-                if project:
-                    existing_projects[project_id_str] = project
-                else:
-                    errors.append(f"Project {project_id_str} not found")
-            except ValueError:
-                errors.append(f"Invalid project UUID: {project_id_str}")
-
-        # Step 2: Process each record
-        for idx, item in enumerate(request.loan_accounts, 1):
-            try:
-                if item.project_id not in existing_projects:
-                    errors.append(f"Record {idx}: Project {item.project_id} not found")
-                    skipped_count += 1
-                    continue
-
-                project_id = uuid.UUID(item.project_id)
-
-                # Check if loan exists
-                result = await db.execute(
-                    select(LoanAccount).where(
-                        (LoanAccount.project_id == project_id)
-                        & (LoanAccount.facility_type == item.facility_type)
-                    )
-                )
-                existing_loan = result.scalar_one_or_none()
-
-                if existing_loan:
-                    # Update
-                    existing_loan.sanctioned_amount = item.sanctioned_amount
-                    existing_loan.disbursed_amount = item.disbursed_amount or item.sanctioned_amount
-                    existing_loan.outstanding_principal = item.outstanding_principal
-                    existing_loan.outstanding_interest = item.outstanding_interest or Decimal("0")
-                    existing_loan.interest_rate_pct = item.interest_rate_pct
-                    existing_loan.maturity_ad = item.maturity_date
-                    existing_loan.dscr = item.dscr
-                    existing_loan.ltv = item.ltv
-                    existing_loan.icr = item.icr
-                    existing_loan.metric_as_of_date = datetime.now().date()
-                    existing_loan.last_synced_at = datetime.utcnow().isoformat()
-                    existing_loan.sync_status = "success"
-                    existing_loan.data_provenance = request.sync_source
-                    existing_loan.source_reference = request.source_reference
-
-                    db.add(existing_loan)
-                    updated_count += 1
-
-                else:
-                    # Create
-                    loan = LoanAccount(
-                        id=uuid.uuid4(),
-                        project_id=project_id,
-                        finacle_account_id=f"SYNC-{uuid.uuid4().hex[:12]}",
-                        facility_type=item.facility_type,
-                        sanctioned_amount=item.sanctioned_amount,
-                        disbursed_amount=item.disbursed_amount or item.sanctioned_amount,
-                        outstanding_principal=item.outstanding_principal,
-                        outstanding_interest=item.outstanding_interest or Decimal("0"),
-                        currency_code="NPR",
-                        fx_rate_to_npr=Decimal("131"),
-                        fx_rate_asof_ad=datetime.now().date(),
-                        interest_rate_pct=item.interest_rate_pct,
-                        moratorium_end_ad=item.disbursement_date,
-                        maturity_ad=item.maturity_date,
-                        dscr=item.dscr,
-                        ltv=item.ltv,
-                        icr=item.icr,
-                        metric_as_of_date=datetime.now().date(),
-                        last_synced_at=datetime.utcnow().isoformat(),
-                        sync_status="success",
-                        data_provenance=request.sync_source,
-                        source_reference=request.source_reference,
-                    )
-
-                    db.add(loan)
-                    await db.flush()
-
-                    # Add rate history
-                    rate_history = LoanAccountRateHistory(
-                        id=uuid.uuid4(),
-                        loan_account_id=loan.id,
-                        interest_rate_pct=item.interest_rate_pct,
-                        valid_from_ad=item.sanction_date,
-                        is_current="Y",
-                        data_provenance=request.sync_source,
-                        source_reference=request.source_reference,
-                    )
-
-                    db.add(rate_history)
-                    created_count += 1
-
-            except Exception as e:
-                error_msg = f"Record {idx}: {str(e)[:100]}"
-                errors.append(error_msg)
-                skipped_count += 1
-                logger.warning(f"   ⚠ {error_msg}")
-                continue
-
-        # Step 3: Commit
-        try:
-            await db.commit()
-            logger.info(
-                f"✅ Sync complete: Created={created_count}, Updated={updated_count}, Skipped={skipped_count}"
-            )
-        except Exception as e:
-            await db.rollback()
-            errors.append(f"Database commit failed: {str(e)}")
-            logger.error(f"❌ Commit failed: {e}")
-
-        # Build result
-        result = LoanExposureSyncResult(
-            sync_id=sync_id,
-            total_records=len(request.loan_accounts),
-            created_count=created_count,
-            updated_count=updated_count,
-            skipped_count=skipped_count,
-            errors=errors,
-            warnings=warnings,
-            audit_log_id=sync_id,  # In production, use real audit log ID
-            timestamp=datetime.utcnow().isoformat(),
+        logger.info(f"📥 Loan exposure sync initiated by {user_id}: {request.sync_source} "
+                    f"({request.source_reference}), {len(request.loan_accounts)} records")
+        outcome = await ingest_loan_exposures(
+            db, request.loan_accounts, request.sync_source, request.source_reference,
+            actor=user_id, actor_role=current_user.roles[0].value if current_user.roles else None,
         )
-
         return ApiResponse(
-            data=result,
+            data=LoanExposureSyncResult(**outcome),
             meta=_get_response_meta(),
             audit=_get_audit_metadata(user_id=user_id, action="loan_exposure_sync"),
         )
 
     except Exception as e:
         logger.error(f"❌ Loan exposure sync failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Sync failed")
 
 
 # ============================================================================
@@ -595,7 +376,7 @@ async def create_sync_schedule(
     """
 
     try:
-        schedule = LoanSyncSchedulerService.create_schedule(
+        schedule = await LoanSyncSchedulerService.create_schedule(
             db, request, current_user.username
         )
 
@@ -625,7 +406,7 @@ async def list_sync_schedules(
     """List all sync schedules with optional filters."""
 
     try:
-        schedules = LoanSyncSchedulerService.list_schedules(
+        schedules = await LoanSyncSchedulerService.list_schedules(
             db, is_active=is_active, sync_source=sync_source
         )
 
@@ -652,7 +433,7 @@ async def get_sync_schedule(
     """Get a specific sync schedule by ID."""
 
     try:
-        schedule = LoanSyncSchedulerService.get_schedule(db, schedule_id)
+        schedule = await LoanSyncSchedulerService.get_schedule(db, schedule_id)
 
         if not schedule:
             raise HTTPException(status_code=404, detail=f"Schedule {schedule_id} not found")
@@ -683,7 +464,7 @@ async def update_sync_schedule(
     """Update an existing sync schedule."""
 
     try:
-        schedule = LoanSyncSchedulerService.update_schedule(
+        schedule = await LoanSyncSchedulerService.update_schedule(
             db, schedule_id, request, current_user.username
         )
 
@@ -719,7 +500,7 @@ async def toggle_sync_schedule(
         raise HTTPException(status_code=400, detail="is_active must be 'Y' or 'N'")
 
     try:
-        schedule = LoanSyncSchedulerService.toggle_schedule(
+        schedule = await LoanSyncSchedulerService.toggle_schedule(
             db, schedule_id, is_active, current_user.username
         )
 
@@ -737,3 +518,90 @@ async def toggle_sync_schedule(
     except Exception as e:
         logger.error(f"❌ Failed to toggle schedule: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to toggle schedule: {str(e)}")
+
+
+# Declared last on purpose: "/{account_id}" would otherwise swallow GET /sync-schedule (list), which
+# has the same single-segment shape.
+
+@router.get("/{account_id}", response_model=ApiResponse[LoanAccountDetailResponse])
+async def get_loan_account(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ApiResponse[LoanAccountDetailResponse]:
+    """Get detailed loan account view with rate history.
+
+    Path parameters:
+    - account_id: LoanAccount UUID
+    """
+
+    # Get account
+    account_id = _parse_uuid(account_id, "Loan account")
+    query = select(LoanAccount).where(LoanAccount.id == account_id)
+    result = await db.execute(query)
+    account = result.scalar_one_or_none()
+
+    # Accounts on projects the user can't see are reported as missing
+    if not account or not await RLSService.can_view_project(db, current_user, account.project_id):
+        raise HTTPException(status_code=404, detail=f"Loan account {account_id} not found")
+
+    # Get project code
+    proj_query = select(Project).where(Project.id == account.project_id)
+    proj_result = await db.execute(proj_query)
+    project = proj_result.scalar()
+
+    # Get rate history
+    rate_query = (
+        select(LoanAccountRateHistory)
+        .where(LoanAccountRateHistory.loan_account_id == account_id)
+        .order_by(LoanAccountRateHistory.valid_from_ad.desc())  # newest first
+    )
+    rate_result = await db.execute(rate_query)
+    rates = rate_result.scalars().all()
+
+    rate_history = [
+        RateHistoryEntry(
+            interest_rate_pct=r.interest_rate_pct,
+            valid_from_ad=r.valid_from_ad,
+            valid_from_bs=r.valid_from_bs,
+            valid_to_ad=r.valid_to_ad,
+            valid_to_bs=r.valid_to_bs,
+            is_current=r.is_current,
+            reason_for_change=r.reason_for_change,
+            source=r.data_provenance,
+        )
+        for r in rates
+    ]
+
+    response = LoanAccountDetailResponse(
+        id=str(account.id),
+        project_id=str(account.project_id),
+        project_code=project.project_code if project else "UNKNOWN",
+        finacle_account_id="***MASKED***",
+        facility_type=account.facility_type,
+        sanctioned_amount=account.sanctioned_amount,
+        currency_code=account.currency_code,
+        disbursed_amount=account.disbursed_amount,
+        outstanding_principal=account.outstanding_principal,
+        outstanding_interest=account.outstanding_interest,
+        overdue_principal=account.overdue_principal,
+        overdue_interest=account.overdue_interest,
+        interest_rate_pct=account.interest_rate_pct,
+        rate_as_of_date=rates[0].valid_from_ad if rates else None,
+        moratorium_end_ad=account.moratorium_end_ad,
+        moratorium_end_bs=account.moratorium_end_bs,
+        maturity_ad=account.maturity_ad,
+        maturity_bs=account.maturity_bs,
+        last_synced_at=account.last_synced_at,
+        sync_status=account.sync_status,
+        data_provenance=account.data_provenance,
+        rate_history=rate_history,
+        created_at=account.created_at.isoformat() if account.created_at else None,
+        updated_at=account.updated_at.isoformat() if account.updated_at else None,
+    )
+
+    return ApiResponse(
+        data=response,
+        meta=_get_response_meta(),
+        audit=_get_audit_metadata(user_id=current_user.username, action="get_loan_account"),
+    )

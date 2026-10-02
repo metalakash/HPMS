@@ -243,10 +243,13 @@ Test baseline: **661 passed, 55 skipped** (the skips are database-backed tests).
   Phase 11.4.
 - **E.1 (audit log)** was ✅; only maker-checker actions wrote to it, approve/reject wrote blank hashes, and the
   table was not protected from edits. Now chained, trigger-protected, and project create/update are audited.
-- **B.1 (loan sync schedules)** — the schedule tables had no migration (added as `016`).
+- **B.1 (loan sync schedules)** — the schedule tables had no migration (added as `016`); the schedule endpoints, the
+  background executor and `POST /exposure-sync` could not have worked (sync service on an async session, an executor
+  importing a non-existent `SessionLocal`, strict request schemas rejecting every JSON body). Rewritten and tested in
+  the follow-up to Phase 11; never run against a real database.
 
 ### Still open at the close of Phase 11
 
 Migration chain `001`→`016` has been generated as SQL offline but never applied to a database; database-backed
-tests are skipped; items above marked ❌/🟡; the open findings in the security record (demo accounts on the hosted
-deployment, unprotected MFA secrets, the loan-sync scheduler not starting).
+tests are skipped; items above marked ❌/🟡; the open findings in the security record (MFA not enforced at login; the
+Finacle source for the loan sync is not implemented).
