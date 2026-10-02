@@ -106,6 +106,14 @@ async def sync_cbs_account(
     if not any(r.value in ("admin", "maker", "approver") for r in current_user.roles):
         raise HTTPException(status_code=403, detail="Admin, maker or approver role required")
 
+    from backend.app.api import routes_projects
+    from backend.app.security.rls_service import RLSService
+
+    # RLS: the caller must be able to see the project, and non-admins must be allowed to update it.
+    project = await routes_projects._get_visible_project(db, current_user, project_id)
+    if not await RLSService.can_update_project(db, current_user, project.id):
+        raise HTTPException(status_code=403, detail="Not permitted to sync loans of this project")
+
     try:
         from backend.app.integration.finacle_adapter import get_adapter
         from backend.app.services.cbs_sync_real_service import CBSSyncService

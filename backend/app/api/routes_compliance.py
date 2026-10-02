@@ -6,6 +6,7 @@ Implements:
 """
 
 import logging
+import uuid
 from datetime import datetime
 from typing import Optional
 
@@ -13,15 +14,20 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
+from backend.app.api.routes_projects import _get_visible_project
 from backend.app.database import get_db
 from backend.app.models.audit import AuditLogRead
 from backend.app.security.auth_middleware import CurrentUser, get_current_user
+from backend.app.security.ldap_provider import UserRole
 from backend.app.schemas.common import ApiResponse, ResponseMeta, AuditMetadata
 from backend.app.schemas.compliance import (
     AuditLogReadResponse,
     ComplianceExportRequest,
     ComplianceExportResponse,
 )
+
+ALERT_ENTITY_TYPES = {"PPA", "LICENSE", "INSURANCE", "PERMIT", "MILESTONE", "FILING"}
+ALERT_ACTION_TYPES = {"RENEWAL", "ESCALATE", "NOTIFY"}
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/compliance", tags=["compliance"])
@@ -210,6 +216,8 @@ async def get_covenant_history(
     """
     from backend.app.services.covenant_service import CovenantService
 
+    await _get_visible_project(db, current_user, project_id)  # RLS: 404 unless the caller may see the project
+
     try:
         data = await CovenantService.get_covenant_history(db, project_id, quarters=quarters)
         return ApiResponse(
@@ -238,6 +246,8 @@ async def get_alert_remediations(
     Includes action buttons for renewal workflows.
     """
     from backend.app.services.alert_service import AlertService
+
+    await _get_visible_project(db, current_user, project_id)  # RLS: 404 unless the caller may see the project
 
     try:
         data = await AlertService.get_expiry_alerts(db, project_id)
@@ -270,6 +280,18 @@ async def initiate_alert_action(
     - remarks: Optional user comments
     """
     from backend.app.services.alert_service import AlertService
+
+    if not any(r in current_user.roles for r in (UserRole.ADMIN, UserRole.MAKER, UserRole.APPROVER)):
+        raise HTTPException(status_code=403, detail="Admin, maker or approver role required")
+    entity_type, _, entity_id = alert_id.partition(":")
+    try:
+        uuid.UUID(entity_id)
+    except ValueError:
+        entity_id = ""
+    if entity_type not in ALERT_ENTITY_TYPES or not entity_id:
+        raise HTTPException(status_code=422, detail="alert_id must look like 'PPA:<uuid>'")
+    if action_type not in ALERT_ACTION_TYPES:
+        raise HTTPException(status_code=422, detail=f"action_type must be one of {sorted(ALERT_ACTION_TYPES)}")
 
     try:
         data = await AlertService.initiate_renewal_workflow(

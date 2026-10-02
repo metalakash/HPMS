@@ -43,7 +43,12 @@ async def api(monkeypatch):
     async def visible(db, user, project_id):
         return SimpleNamespace(id=project_id)
 
+    async def can_update(db, user, project_id):
+        return True
+
     monkeypatch.setattr("backend.app.api.routes_projects._get_visible_project", visible)
+    monkeypatch.setattr("backend.app.api.routes_compliance._get_visible_project", visible)
+    monkeypatch.setattr("backend.app.security.rls_service.RLSService.can_update_project", can_update)
     app.dependency_overrides[get_db] = fake_db
     app.dependency_overrides[get_current_user] = lambda: _user("admin")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://localhost") as client:
@@ -284,3 +289,73 @@ def test_circuit_counts_only_consecutive_failures():
             cb.call(fail)
         cb.call(lambda: None)  # success in between resets the count
     assert cb.state == CircuitBreakerState.CLOSED
+
+
+# ---------------------------------------------------------------- row-level security on Phase 10 endpoints
+
+async def test_compliance_endpoints_are_404_for_invisible_projects(api, monkeypatch):
+    from fastapi import HTTPException
+
+    async def hidden(db, user, project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    monkeypatch.setattr("backend.app.api.routes_compliance._get_visible_project", hidden)
+    calls = _stub(monkeypatch, "backend.app.services.covenant_service.CovenantService.get_covenant_history", {})
+    calls += _stub(monkeypatch, "backend.app.services.alert_service.AlertService.get_expiry_alerts", {})
+    assert (await api.get(f"/api/v1/compliance/covenants/{PID}/history")).status_code == 404
+    assert (await api.get(f"/api/v1/compliance/alerts/{PID}/remediations")).status_code == 404
+    assert calls == []  # the service was never reached
+
+
+@pytest.mark.parametrize("alert_id,action,status", [
+    (f"PPA:{PID}", "RENEWAL", 200),
+    ("PPA:not-a-uuid", "RENEWAL", 422),
+    (f"BANANA:{PID}", "RENEWAL", 422),
+    ("nocolon", "RENEWAL", 422),
+    (f"PPA:{PID}", "DELETE_EVERYTHING", 422),
+])
+async def test_initiate_alert_action_validates_input(api, alert_id, action, status):
+    r = await api.post("/api/v1/compliance/alert-actions/initiate",
+                       params={"alert_id": alert_id, "action_type": action})
+    assert r.status_code == status, r.text
+
+
+async def test_initiate_alert_action_blocked_for_guest_and_auditor(api):
+    for role in ("guest", "auditor"):
+        app.dependency_overrides[get_current_user] = lambda role=role: _user(role)
+        r = await api.post("/api/v1/compliance/alert-actions/initiate",
+                           params={"alert_id": f"PPA:{PID}", "action_type": "RENEWAL"})
+        assert r.status_code == 403, role
+
+
+async def test_cbs_sync_needs_project_visibility_and_update_rights(api, monkeypatch):
+    from fastapi import HTTPException
+
+    async def hidden(db, user, project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    monkeypatch.setattr("backend.app.api.routes_projects._get_visible_project", hidden)
+    assert (await api.post(f"/api/v1/cbs/sync/{PID}", json={"loan_id": "ACC00001"})).status_code == 404
+
+    async def visible(db, user, project_id):
+        return SimpleNamespace(id=project_id)
+
+    async def cannot_update(db, user, project_id):
+        return False
+
+    monkeypatch.setattr("backend.app.api.routes_projects._get_visible_project", visible)
+    monkeypatch.setattr("backend.app.security.rls_service.RLSService.can_update_project", cannot_update)
+    assert (await api.post(f"/api/v1/cbs/sync/{PID}", json={"loan_id": "ACC00001"})).status_code == 403
+
+
+async def test_sync_service_query_is_scoped_to_the_project():
+    from backend.app.services.cbs_sync_real_service import CBSSyncService
+    seen = []
+
+    class Recording(_FakeDB):
+        async def execute(self, stmt):
+            seen.append(str(stmt.compile(compile_kwargs={"literal_binds": False})))
+            return await super().execute(stmt)
+
+    await CBSSyncService(MockFinacleAdapter()).sync_loan_account(Recording(None), PID, "ACC00001")
+    assert "loan_accounts.project_id" in seen[0] and "finacle_account_id" in seen[0]

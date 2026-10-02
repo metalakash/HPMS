@@ -52,7 +52,11 @@ class CBSSyncService:
         """
         try:
             # Get local account
-            stmt = select(LoanAccount).where(LoanAccount.finacle_account_id == loan_id)
+            # Scoped to the project: a loan id from another project must not be syncable through this one
+            stmt = select(LoanAccount).where(
+                LoanAccount.finacle_account_id == loan_id,
+                LoanAccount.project_id == uuid.UUID(str(project_id)),
+            )
             result = await db.execute(stmt)
             local_account = result.scalars().first()
 
