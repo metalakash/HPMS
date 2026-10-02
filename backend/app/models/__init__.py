@@ -13,6 +13,7 @@ from .auth import User, UserRoleAssignment, ProjectOwner
 from .mfa import UserMFA, TOTPVerification, SMSVerification, BackupCode, TrustedDevice
 from .scheduler import ExportJob, ExportJobRun
 from .reporting import ReportDefinition
+from .etl import AirflowLoanDAGRun, LoanReconciliationLog, LoanDataProvenance
 from .regulatory import RegulatoryRequirement, FilingCalendarEntry, UserReminder, StakeholderContact
 from .operations import (
     PPAAgreement, EnergyGenerationData, NEAPPARate, TariffStructure,
