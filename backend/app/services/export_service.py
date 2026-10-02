@@ -6,7 +6,7 @@ Handles file generation, S3 upload, and presigned URL creation.
 import logging
 import io
 import csv
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 import json
 
@@ -202,6 +202,33 @@ class ExportService:
         }
 
         return json.dumps(output, indent=2, default=str)
+
+    FILE_MIME = {
+        "csv": "text/csv",
+        "excel": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "word": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "json": "application/json",
+    }
+
+    @staticmethod
+    def build_file(
+        fmt: str,
+        report_id: str,
+        rows: List[Dict[str, Any]],
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, bytes]:
+        """(mime type, content) for csv / excel / word / json. Raises ValueError for other formats."""
+        if fmt == "csv":
+            content = ExportService.generate_csv(report_id, rows)
+        elif fmt == "excel":
+            content = ExportService.generate_excel(report_id, rows)
+        elif fmt == "word":
+            content = ExportService.generate_word(report_id, rows, filters=filters)
+        elif fmt == "json":
+            content = ExportService.generate_json(report_id, rows, metadata={"filters": filters or {}}).encode("utf-8")
+        else:
+            raise ValueError(f"Unsupported export format: {fmt}")
+        return ExportService.FILE_MIME[fmt], content
 
     @staticmethod
     def get_export_filename(

@@ -90,6 +90,7 @@ app.state.limiter = limiter
 # Background scheduler for Phase 8.3.1
 scheduler = None
 alert_task = None
+report_task = None
 sync_executor = None
 
 # Register API routes
@@ -107,6 +108,7 @@ from backend.app.api.routes_admin import router as admin_router
 from backend.app.api.routes_risk import router as risk_router
 from backend.app.api.routes_cbs_sync import router as cbs_router
 from backend.app.api.routes_report_builder import router as report_builder_router
+from backend.app.api.routes_report_schedules import router as report_schedules_router
 
 # Auth routes (no auth required)
 app.include_router(auth_router)
@@ -123,6 +125,7 @@ app.include_router(compliance_router)
 app.include_router(analytics_router)
 app.include_router(cbs_router)
 app.include_router(report_builder_router)
+app.include_router(report_schedules_router)
 
 # Admin routes (require ADMIN role)
 app.include_router(admin_router)
@@ -176,6 +179,11 @@ async def startup_event():
         global alert_task
         alert_task = asyncio.create_task(daily_loop(async_session_maker, get_email_service()))
         logger.info("Daily alert scan scheduled")
+
+        from backend.app.services.report_daemon import report_loop
+        global report_task
+        report_task = asyncio.create_task(report_loop(async_session_maker, get_email_service()))
+        logger.info("Scheduled report delivery started")
     except Exception as e:
         logger.error(f"Failed to schedule daily alert scan: {e}", exc_info=True)
 
@@ -219,6 +227,8 @@ async def shutdown_event():
     logger.info("SBL HPMS Shutting down")
     if alert_task:
         alert_task.cancel()
+    if report_task:
+        report_task.cancel()
 
     # Shutdown background scheduler
     if scheduler:

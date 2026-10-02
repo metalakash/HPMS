@@ -2,11 +2,12 @@
 
 import logging
 import os
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 import smtplib
 from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 
@@ -25,6 +26,32 @@ class EmailMessage:
     body_html: Optional[str] = None
     cc: Optional[List[str]] = None
     bcc: Optional[List[str]] = None
+    # (filename, mime type "type/subtype", content)
+    attachments: Optional[List[Tuple[str, str, bytes]]] = None
+
+
+def build_mime_message(message: "EmailMessage", from_address: str) -> MIMEMultipart:
+    """MIME message with text/html alternatives and any attachments."""
+    body = MIMEMultipart("alternative")
+    body.attach(MIMEText(message.body_text, "plain"))
+    if message.body_html:
+        body.attach(MIMEText(message.body_html, "html"))
+
+    if message.attachments:
+        msg = MIMEMultipart("mixed")
+        msg.attach(body)
+        for filename, mime, content in message.attachments:
+            part = MIMEApplication(content, _subtype=mime.split("/", 1)[-1])
+            part.add_header("Content-Disposition", "attachment", filename=filename)
+            msg.attach(part)
+    else:
+        msg = body
+
+    msg["From"] = from_address
+    msg["To"] = ", ".join(message.to)
+    if message.cc:
+        msg["Cc"] = ", ".join(message.cc)
+    return msg
 
 
 class EmailProvider(ABC):
@@ -58,19 +85,9 @@ class SMTPEmailProvider(EmailProvider):
     async def send(self, message: EmailMessage) -> bool:
         """Send email via SMTP."""
         try:
-            msg = MIMEMultipart("alternative")
+            msg = build_mime_message(message, self.from_address)
             msg["Subject"] = message.subject
-            msg["From"] = self.from_address
-            msg["To"] = ", ".join(message.to)
-            
-            if message.cc:
-                msg["Cc"] = ", ".join(message.cc)
-            
-            msg.attach(MIMEText(message.body_text, "plain"))
-            
-            if message.body_html:
-                msg.attach(MIMEText(message.body_html, "html"))
-            
+
             with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
                 if self.use_tls:
                     server.starttls()
@@ -131,6 +148,49 @@ class EmailService:
         else:
             return MockEmailProvider()
     
+    async def send_export_notification(
+        self,
+        recipients: List[str],
+        report_id: str,
+        export_format: str,
+        download_url: Optional[str],
+        record_count: int,
+        file_size_bytes: int,
+        subject_template: Optional[str] = None,
+        body_template: Optional[str] = None,
+        attachment: Optional[Tuple[str, str, bytes]] = None,
+    ) -> bool:
+        """Deliver a scheduled report, attached when ``attachment`` is given.
+
+        Templates may use {report}, {format}, {records}, {size_kb}, {date} and {url}.
+        """
+        if not recipients:
+            logger.warning("No recipients configured for export %s", report_id)
+            return False
+
+        from backend.app.services.report_dates import dual_stamp
+        values = {
+            "report": report_id.replace("_", " ").title(), "format": export_format, "records": record_count,
+            "size_kb": round(file_size_bytes / 1024, 1), "date": dual_stamp(), "url": download_url or "",
+        }
+
+        def render(template: Optional[str], default: str) -> str:
+            try:
+                return (template or default).format(**values)
+            except (KeyError, IndexError, ValueError):
+                return template or default  # a malformed user template must not block delivery
+
+        subject = render(subject_template, "HPMS report: {report} ({date})")
+        body = render(body_template, "Attached is the scheduled {report} report ({format}, {records} records) "
+                                      "generated {date}.")
+        if download_url and not attachment:
+            body += f"\n\nDownload: {download_url}"
+        message = EmailMessage(
+            to=recipients, subject=subject, body_text=body,
+            attachments=[attachment] if attachment else None,
+        )
+        return await self.provider.send(message)
+
     async def send_loan_sync_alerts(
         self,
         schedule_name: str,

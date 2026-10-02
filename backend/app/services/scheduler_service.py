@@ -4,7 +4,7 @@ Manages cron-based export scheduling with retry logic and email delivery.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from uuid import UUID
 
@@ -17,6 +17,20 @@ from backend.app.services.export_service import ExportService
 from backend.app.services.email_service import EmailService
 
 logger = logging.getLogger(__name__)
+
+EXPORT_FORMATS = ("csv", "excel", "word", "json")
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def next_run_after(schedule: str, after: datetime) -> datetime:
+    """Next time ``schedule`` (5-field cron, UTC) fires after ``after``. Raises ValueError if invalid."""
+    from croniter import croniter
+    if not croniter.is_valid(schedule):
+        raise ValueError(f"Invalid cron expression: {schedule!r}")
+    return croniter(schedule, after).get_next(datetime)
 
 
 class SchedulerService:
@@ -42,6 +56,7 @@ class SchedulerService:
         subject_template: Optional[str] = None,
         body_template: Optional[str] = None,
         max_retries: int = 3,
+        definition_id: Optional[UUID] = None,
     ) -> ExportJob:
         """Create a new export job.
 
@@ -61,7 +76,12 @@ class SchedulerService:
             Created ExportJob record
         """
 
+        if export_format not in EXPORT_FORMATS:
+            raise ValueError(f"export_format must be one of {', '.join(EXPORT_FORMATS)}")
+        next_run = next_run_after(schedule, _now())  # validates the cron expression
+
         job = ExportJob(
+            definition_id=definition_id,
             report_id=report_id,
             export_format=export_format,
             schedule=schedule,
@@ -72,7 +92,7 @@ class SchedulerService:
             body_template=body_template,
             max_retries=str(max_retries),
             is_enabled=True,
-            next_run_at=datetime.utcnow(),
+            next_run_at=next_run,
         )
 
         db.add(job)
@@ -136,43 +156,26 @@ class SchedulerService:
         job_run = ExportJobRun(
             job_id=job_id,
             status=JobStatus.RUNNING.value,
-            started_at=datetime.utcnow(),
+            started_at=_now(),
         )
         db.add(job_run)
         await db.flush()
 
         try:
-            # Generate report
             logger.info(f"Executing export job: {job.name}")
 
-            if job.report_id == "portfolio":
-                rows, count = await ReportService.export_portfolio_report(
-                    db, filters=None, user_id="scheduler"
-                )
-            elif job.report_id == "covenant_summary":
-                rows, count = await ReportService.export_covenant_report(
-                    db, filters=None, user_id="scheduler"
-                )
-            elif job.report_id == "capex_progress":
-                rows, count = await ReportService.export_capex_report(
-                    db, filters=None, user_id="scheduler"
-                )
-            else:
-                raise ValueError(f"Unknown report: {job.report_id}")
+            rows = await self._run_job_report(db, job)
+            count = len(rows)
 
-            # Generate file
-            if job.export_format == "csv":
-                file_content = ExportService.generate_csv(job.report_id, rows)
-            elif job.export_format == "excel":
-                file_content = ExportService.generate_excel(job.report_id, rows)
-            else:
-                file_content = ExportService.generate_json(job.report_id, rows).encode("utf-8")
+            attachment = None
+            file_size = 0
+            if rows:
+                mime, file_content = ExportService.build_file(job.export_format, job.report_id, rows, job.filters)
+                file_size = len(file_content)
+                filename = ExportService.get_export_filename(job.report_id, job.export_format)
+                attachment = (filename, mime, file_content)
+            file_url = None  # delivery is by attachment; no hosted copy yet
 
-            # Upload to S3 (simplified - returns None for now)
-            file_url = None  # Phase 3.5: Integrate S3 upload
-            file_size = len(file_content) if file_content else 0
-
-            # Send email if configured
             emails_sent = "N"
             email_error = None
 
@@ -182,25 +185,25 @@ class SchedulerService:
                         recipients=job.recipients,
                         report_id=job.report_id,
                         export_format=job.export_format,
-                        download_url=file_url or "https://example.com/download",
+                        download_url=file_url,
                         record_count=count,
                         file_size_bytes=file_size,
                         subject_template=job.subject_template,
                         body_template=job.body_template,
+                        attachment=attachment,
                     )
-
                     if email_sent:
                         emails_sent = "Y"
+                        job_run.email_send_time = _now()
                     else:
                         email_error = "Email delivery failed"
-
                 except Exception as e:
                     email_error = str(e)
                     logger.error(f"Email delivery failed for job {job.name}: {e}")
 
             # Update job run with success
             job_run.status = JobStatus.SUCCESS.value
-            job_run.completed_at = datetime.utcnow()
+            job_run.completed_at = _now()
             job_run.duration_seconds = str(int((job_run.completed_at - job_run.started_at).total_seconds()))
             job_run.record_count = str(count)
             job_run.file_url = file_url
@@ -208,8 +211,8 @@ class SchedulerService:
             job_run.emails_sent = emails_sent
             job_run.email_error = email_error
 
-            # Update job next_run_at (would be calculated by APScheduler in production)
-            job.last_run_at = datetime.utcnow()
+            job.last_run_at = _now()
+            job.next_run_at = next_run_after(job.schedule, job.last_run_at)
 
             await db.flush()
 
@@ -219,19 +222,40 @@ class SchedulerService:
         except Exception as e:
             # Update job run with failure
             job_run.status = JobStatus.FAILED.value
-            job_run.completed_at = datetime.utcnow()
+            job_run.completed_at = _now()
             job_run.duration_seconds = str(int((job_run.completed_at - job_run.started_at).total_seconds()))
             job_run.error_message = str(e)
             job_run.retry_count = "0"
 
             # Schedule retry
             retry_delay = int(job.retry_backoff_seconds or 300)
-            job_run.next_retry_at = datetime.utcnow() + timedelta(seconds=retry_delay)
+            job_run.next_retry_at = _now() + timedelta(seconds=retry_delay)
+            try:  # a failed run must not leave the job "due" every minute; retries use next_retry_at
+                job.next_run_at = next_run_after(job.schedule, _now())
+            except ValueError:
+                job.is_enabled = False
 
             await db.flush()
 
             logger.error(f"Export job failed: {job.name} - {e}")
             return job_run
+
+    @staticmethod
+    async def _run_job_report(db: AsyncSession, job: ExportJob):
+        """Rows for a job: its saved definition if it has one, else report_id + filters."""
+        from backend.app.models.reporting import ReportDefinition
+        from backend.app.services.report_builder import run_report
+
+        source, columns, filters, sort_by, sort_desc = job.report_id, None, job.filters, None, False
+        if job.definition_id:
+            d = (await db.execute(
+                select(ReportDefinition).where(ReportDefinition.id == job.definition_id)
+            )).scalar_one_or_none()
+            if d is None:
+                raise ValueError("Saved report definition no longer exists")
+            source, columns, filters = d.source, d.columns, d.filters
+            sort_by, sort_desc = d.sort_by, bool(d.sort_desc)
+        return await run_report(db, source, columns, filters, sort_by, sort_desc, user_id="scheduler")
 
     async def retry_failed_job(
         self,
@@ -266,6 +290,7 @@ class SchedulerService:
             logger.warning(f"Max retries exceeded for job run {job_run_id}")
             return prev_run
 
+        prev_run.next_retry_at = None  # claimed: otherwise it would be retried again every poll
         # Execute job again
         new_run = await self.execute_job(db, prev_run.job_id)
         new_run.retry_count = str(retry_count)
@@ -291,7 +316,7 @@ class SchedulerService:
         query = select(ExportJob).where(
             and_(
                 ExportJob.is_enabled == True,
-                ExportJob.next_run_at <= datetime.utcnow(),
+                ExportJob.next_run_at <= _now(),
             )
         )
 
@@ -314,7 +339,7 @@ class SchedulerService:
         query = select(ExportJobRun).where(
             and_(
                 ExportJobRun.status == JobStatus.FAILED.value,
-                ExportJobRun.next_retry_at <= datetime.utcnow(),
+                ExportJobRun.next_retry_at <= _now(),
             )
         )
 

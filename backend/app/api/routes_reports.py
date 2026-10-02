@@ -59,11 +59,8 @@ async def _load_rows(db: AsyncSession, request: ReportExportRequest, user_id: st
 
 
 FILE_FORMATS = {
-    "csv": ("text/csv", lambda rid, rows, filters: ExportService.generate_csv(rid, rows)),
-    "excel": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-              lambda rid, rows, filters: ExportService.generate_excel(rid, rows)),
-    "word": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-             lambda rid, rows, filters: ExportService.generate_word(rid, rows, filters=filters)),
+    fmt: (ExportService.FILE_MIME[fmt], lambda rid, rows, filters, fmt=fmt: ExportService.build_file(fmt, rid, rows, filters)[1])
+    for fmt in ("csv", "excel", "word")
 }
 
 
