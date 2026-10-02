@@ -1,6 +1,6 @@
 # Phase 11: RFP Reporting & Hardening — Kickoff
 
-**Status:** 🚀 11.1 audit done, 11.2 ready to start
+**Status:** 🚀 11.1 done, 11.2 done except PowerPoint (decision-gated), 11.4 Phase 10 tests done; next 11.3
 **Driver:** `docs/RFP-TRACEABILITY-MATRIX.md` (116 requirements) — the matrix's "Week 4 / P4" scope
 **Audit:** [`docs/RFP-GAP-AUDIT.md`](docs/RFP-GAP-AUDIT.md)
 
@@ -22,13 +22,14 @@ nothing was executed — so the first task is to establish a baseline.
 - [x] Map RFP IDs to code → `docs/RFP-GAP-AUDIT.md`
 - [x] Baseline run — 400 pass, 2 real failures (`models/etl.py` Base import, `MockEmailService` missing); migration check blocked by Docker, see audit doc
 
-### 11.2 Report engine (F.1, F.5, F.6, F.10, F.11, G.7)
-- Word (.docx) export — add `python-docx`; extend `export_service`
-- BS + AD dates in every Excel/PDF/Word report via `i18n/calendar.py`
-- Saved report definitions + filter-driven report builder (no query language)
-- Shortfall and custom compliance reports with Province/District/Local-level filters
-- Scheduled report delivery (reuse `scheduler_service` + `email_service`)
-- PowerPoint output (F.11) — confirm necessity before building
+### 11.2 Report engine (F.1, F.5, F.6, F.10, F.11, G.7) — ✅ done except PowerPoint
+- [x] Word (.docx) export — `python-docx`; `ExportService.generate_word`, `build_file`; `POST /reports/export/download`
+- [x] BS + AD dates in every Excel/PDF/Word report (`services/report_dates.py`, "Report info" sheet, PDF/Word stamp)
+- [x] Saved report definitions + filter-driven builder (`report_definitions`, migration `013`, `/reports/definitions`, `/reports/builder/run`, `/reports/sources`)
+- [x] Covenant shortfall source + Province/District/Local-level filters on every source
+- [x] Scheduled delivery with attachment (`/reports/schedules`, cron via croniter, `report_daemon` started in `main.py`)
+- [ ] PowerPoint output (F.11) — still waiting on the "is it required?" decision
+- Unverified: DB-backed tests (`test_report_builder_db.py`) are skipped here — the `hpms` Postgres role lacks CREATEDB
 
 ### 11.3 Regulatory calendar & alerts (E.7, E.22, E.23, E.2, E.15, E.16)
 - `regulatory_requirements` and `filing_calendar` tables (NRB, Ministry, NEA) + migration `012`
