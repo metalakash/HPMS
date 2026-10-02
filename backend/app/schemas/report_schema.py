@@ -11,6 +11,8 @@ class ExportFilter(BaseModel):
     date_range_start: Optional[date] = None
     date_range_end: Optional[date] = None
     province: Optional[str] = None  # Filter by province
+    district: Optional[str] = None
+    local_level: Optional[str] = None  # Municipality / rural municipality
     status: Optional[str] = None    # Filter by pipeline status
     facility_type: Optional[str] = None  # Filter by loan facility type
 

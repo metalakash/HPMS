@@ -12,6 +12,7 @@ from .import_tracking import ImportBatch, ImportRowError
 from .auth import User, UserRoleAssignment, ProjectOwner
 from .mfa import UserMFA, TOTPVerification, SMSVerification, BackupCode, TrustedDevice
 from .scheduler import ExportJob, ExportJobRun
+from .reporting import ReportDefinition
 from .operations import (
     PPAAgreement, EnergyGenerationData, NEAPPARate, TariffStructure,
     HydrologyDetailed, LandAcquisitionTracking, BoardOfDirectors, ShareholdingHierarchy,

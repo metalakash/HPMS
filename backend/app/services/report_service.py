@@ -26,6 +26,64 @@ from backend.app.schemas.report_schema import (
 logger = logging.getLogger(__name__)
 
 
+COVENANT_THRESHOLDS = {"dscr_min": Decimal("1.25"), "ltv_max": Decimal("70"), "icr_min": Decimal("2.0")}
+
+
+def covenant_shortfall_row(account, project) -> Dict[str, Any]:
+    """One loan's covenant values, gaps against COVENANT_THRESHOLDS, and breach list."""
+    t = COVENANT_THRESHOLDS
+    breached = []
+    dscr_gap = ltv_gap = icr_gap = None
+    if account.dscr is not None and account.dscr < t["dscr_min"]:
+        breached.append("DSCR")
+        dscr_gap = float(t["dscr_min"] - account.dscr)
+    if account.ltv is not None and account.ltv > t["ltv_max"]:
+        breached.append("LTV")
+        ltv_gap = float(account.ltv - t["ltv_max"])
+    if account.icr is not None and account.icr < t["icr_min"]:
+        breached.append("ICR")
+        icr_gap = float(t["icr_min"] - account.icr)
+
+    def num(v):
+        return float(v) if v is not None else None
+
+    return {
+        "project_code": project.project_code,
+        "project_name_en": project.name_en,
+        "province": project.province,
+        "district": project.district or "",
+        "local_level": project.local_level or "",
+        "finacle_account_id": account.finacle_account_id,
+        "facility_type": account.facility_type,
+        "sanctioned_amount": float(account.sanctioned_amount or 0),
+        "outstanding_principal": float(account.outstanding_principal or 0),
+        "dscr": num(account.dscr),
+        "dscr_shortfall": dscr_gap,
+        "ltv": num(account.ltv),
+        "ltv_excess": ltv_gap,
+        "icr": num(account.icr),
+        "icr_shortfall": icr_gap,
+        "breached_covenants": ", ".join(breached),
+        "shortfall_count": len(breached),
+        "metric_as_of_date_ad": account.metric_as_of_date.strftime("%Y-%m-%d") if account.metric_as_of_date else None,
+        "metric_as_of_date_bs": None,
+    }
+
+
+def geography_conditions(filters: Optional[ExportFilter]) -> list:
+    """Province / District / Local-level conditions on Project (RFP F.10)."""
+    if not filters:
+        return []
+    conditions = []
+    if filters.province:
+        conditions.append(Project.province == filters.province)
+    if filters.district:
+        conditions.append(Project.district == filters.district)
+    if filters.local_level:
+        conditions.append(Project.local_level == filters.local_level)
+    return conditions
+
+
 class ReportService:
     """Generate PowerBI-compatible export data."""
 
@@ -56,8 +114,7 @@ class ReportService:
         # Apply filters
         if filters:
             conditions = []
-            if filters.province:
-                conditions.append(Project.province == filters.province)
+            conditions.extend(geography_conditions(filters))
             if filters.status:
                 conditions.append(Project.pipeline_status == filters.status)
             if filters.date_range_start:
@@ -93,6 +150,7 @@ class ReportService:
                 "project_name_np": project.name_np,
                 "province": project.province,
                 "district": project.district or "",
+                "local_level": project.local_level or "",
                 "capacity_mw": float(project.installed_capacity_mw),
                 "project_stage": project.project_stage,
                 "pipeline_status": project.pipeline_status,
@@ -152,8 +210,7 @@ class ReportService:
         # Apply filters
         if filters:
             conditions = []
-            if filters.province:
-                conditions.append(Project.province == filters.province)
+            conditions.extend(geography_conditions(filters))
             if filters.facility_type:
                 conditions.append(LoanAccount.facility_type == filters.facility_type)
             if conditions:
@@ -175,6 +232,8 @@ class ReportService:
                 "project_code": project.project_code,
                 "project_name_en": project.name_en,
                 "province": project.province,
+                "district": project.district or "",
+                "local_level": project.local_level or "",
                 "loan_account_id": str(account.id),
                 "finacle_account_id": account.finacle_account_id,
                 "facility_type": account.facility_type,
@@ -223,8 +282,7 @@ class ReportService:
         # Apply filters
         if filters:
             conditions = []
-            if filters.province:
-                conditions.append(Project.province == filters.province)
+            conditions.extend(geography_conditions(filters))
             if filters.status:
                 conditions.append(Project.project_stage == filters.status)
             if conditions:
@@ -243,6 +301,8 @@ class ReportService:
                 "project_code": project.project_code,
                 "project_name_en": project.name_en,
                 "province": project.province,
+                "district": project.district or "",
+                "local_level": project.local_level or "",
                 "capacity_mw": float(project.installed_capacity_mw),
                 "project_stage": project.project_stage,
                 "budget_category": budget.category,
@@ -259,6 +319,40 @@ class ReportService:
         )
 
         logger.info(f"Capex report exported: {len(rows)} rows by {user_id}")
+        return rows, len(rows)
+
+    @staticmethod
+    async def export_covenant_shortfall_report(
+        db: AsyncSession,
+        filters: Optional[ExportFilter] = None,
+        user_id: str = "SYSTEM",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Loans that miss at least one covenant threshold, with the size of each gap (RFP F.10).
+
+        Gap is positive when the covenant is breached: threshold - value for DSCR/ICR (floors),
+        value - threshold for LTV (ceiling). Loans without computed metrics are not listed.
+        """
+        query = (
+            select(LoanAccount, Project)
+            .join(Project, LoanAccount.project_id == Project.id)
+            .where(LoanAccount.dscr.isnot(None) | LoanAccount.ltv.isnot(None) | LoanAccount.icr.isnot(None))
+        )
+        conditions = geography_conditions(filters)
+        if filters and filters.facility_type:
+            conditions.append(LoanAccount.facility_type == filters.facility_type)
+        if conditions:
+            query = query.where(and_(*conditions))
+
+        rows = []
+        for account, project in (await db.execute(query)).all():
+            row = covenant_shortfall_row(account, project)
+            if row["shortfall_count"]:
+                rows.append(row)
+        rows.sort(key=lambda r: (-r["shortfall_count"], r["project_code"]))
+
+        add_bs_columns(rows)
+        await ReportService._audit_export(db, "covenant_shortfall", len(rows), user_id)
+        logger.info(f"Covenant shortfall report exported: {len(rows)} rows by {user_id}")
         return rows, len(rows)
 
     @staticmethod

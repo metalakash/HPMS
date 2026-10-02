@@ -39,6 +39,9 @@ class ExportJob(Base, TimestampedMixin):
     subject_template = Column(String(255))  # Email subject template
     body_template = Column(Text)  # Email body template
 
+    # Optional saved report definition (columns, filters, sort); overrides report_id/filters when set
+    definition_id = Column(UUID(as_uuid=True), ForeignKey('report_definitions.id', ondelete='SET NULL'), index=True)
+
     # Filters (optional)
     filters = Column(JSONB)  # {"province": "Gandaki", "status": "under_operation"}
 
