@@ -103,6 +103,8 @@ async def sync_cbs_account(
     - status: 'success' or 'error'
     - changes_count: Number of fields that changed
     """
+    if not any(r.value in ("admin", "maker", "approver") for r in current_user.roles):
+        raise HTTPException(status_code=403, detail="Admin, maker or approver role required")
 
     try:
         from backend.app.integration.finacle_adapter import get_adapter

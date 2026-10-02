@@ -105,6 +105,7 @@ from backend.app.api.routes_compliance import router as compliance_router
 from backend.app.api.routes_analytics import router as analytics_router
 from backend.app.api.routes_admin import router as admin_router
 from backend.app.api.routes_risk import router as risk_router
+from backend.app.api.routes_cbs_sync import router as cbs_router
 
 # Auth routes (no auth required)
 app.include_router(auth_router)
@@ -119,6 +120,7 @@ app.include_router(ws_router)
 app.include_router(i18n_router)
 app.include_router(compliance_router)
 app.include_router(analytics_router)
+app.include_router(cbs_router)
 
 # Admin routes (require ADMIN role)
 app.include_router(admin_router)

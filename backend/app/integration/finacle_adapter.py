@@ -108,8 +108,8 @@ class CircuitBreaker:
         self.last_failure_time: Optional[datetime] = None
         self.state = CircuitBreakerState.CLOSED
 
-    def call(self, func, *args, **kwargs):
-        """Execute function with circuit breaker protection."""
+    def _before_call(self):
+        """Fail fast while OPEN; move to HALF_OPEN once the recovery timeout has passed."""
         if self.state == CircuitBreakerState.OPEN:
             if self._should_attempt_reset():
                 self.state = CircuitBreakerState.HALF_OPEN
@@ -117,11 +117,25 @@ class CircuitBreaker:
             else:
                 raise Exception(f"Circuit breaker OPEN (failed {self.failure_count} times)")
 
+    def call(self, func, *args, **kwargs):
+        """Execute function with circuit breaker protection."""
+        self._before_call()
         try:
             result = func(*args, **kwargs)
             self._on_success()
             return result
-        except self.expected_exception as e:
+        except self.expected_exception:
+            self._on_failure()
+            raise
+
+    async def call_async(self, func, *args, **kwargs):
+        """Like ``call`` but awaits ``func`` so its failures count against the breaker."""
+        self._before_call()
+        try:
+            result = await func(*args, **kwargs)
+            self._on_success()
+            return result
+        except self.expected_exception:
             self._on_failure()
             raise
 
@@ -129,8 +143,8 @@ class CircuitBreaker:
         """Record successful call."""
         if self.state == CircuitBreakerState.HALF_OPEN:
             self.state = CircuitBreakerState.CLOSED
-            self.failure_count = 0
             logger.info("Circuit breaker CLOSED; service recovered")
+        self.failure_count = 0  # only consecutive failures open the breaker
 
     def _on_failure(self):
         """Record failed call."""
@@ -191,7 +205,7 @@ class FinacleAdapterBase(ABC):
             )
 
         # Execute with circuit breaker
-        return self.circuit_breaker.call(self.sync_accounts, request)
+        return await self.circuit_breaker.call_async(self.sync_accounts, request)
 
     @staticmethod
     def compute_diff_log(

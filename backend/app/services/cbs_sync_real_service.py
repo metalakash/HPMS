@@ -3,6 +3,7 @@
 Orchestrates account synchronization with comprehensive diff logging and audit trails.
 """
 
+import uuid
 from datetime import datetime
 from typing import Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,6 +69,7 @@ class CBSSyncService:
             # Fetch from Finacle
             sync_request = FinacleSyncRequest(
                 sync_type=FinacleSyncType.REALTIME_INQUIRY,
+                request_id=str(uuid.uuid4()),
                 account_ids=[loan_id],
             )
 
