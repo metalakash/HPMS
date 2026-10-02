@@ -88,5 +88,7 @@ Domain tables absent from the backend: **risk register** (E.9/E.19/E.20), **insu
 - [x] Demo accounts refused unless `DEBUG=true` or `ALLOW_DEV_AUTH=true` (the hosted Render demo stops accepting them on the next deploy)
 - [x] TOTP seeds encrypted at rest, backup codes keyed-hashed, columns widened — migration `017`
 - [x] Loan-sync scheduler rewritten as an asyncio loop (the APScheduler design could never have run); schedule API, in-process ingestion and `POST /exposure-sync` repaired
-- [ ] **MFA is still not enforced at login** — needs a login challenge step (API + web page)
+- [x] MFA enforced at login (challenge token, `/auth/login/mfa`, replay guard, lockout, admin reset) with a web Security page — migration `018`
+- [x] Migrations `012`–`018` applied to the development PostgreSQL; DB-backed tests run with `TEST_DATABASE_REUSE=1` (one test expects an empty database)
+- [ ] Roles in `MFA_REQUIRED_ROLES` are flagged, not blocked, until they enrol; trusted devices not honoured
 - [ ] Finacle (`FINACLE_CBS`) source for the loan sync is not implemented

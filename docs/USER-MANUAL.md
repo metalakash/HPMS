@@ -12,8 +12,9 @@ RFP: D.12. Companion: [Administrator Manual](ADMIN-MANUAL.md).
 ## 1. Signing in
 
 1. Open the HPMS address given by your administrator and enter your bank (Active Directory) username and password.
-2. If multi-factor authentication is enabled for you, enter the code from your authenticator app. Backup codes
-   work once each.
+2. If two-step sign-in is on for your account, a second screen asks for the 6-digit code from your authenticator
+   app. If you lost your phone, type one of your backup codes instead (like `ABCD-1234`; each works once). Five
+   wrong codes lock the account for 15 minutes. If you are locked out for good, ask an administrator to reset it.
 3. **Sign out** with the icon at the top right. Sessions end automatically after 8 hours.
 
 Your **role** decides what you see:
@@ -30,13 +31,22 @@ A project you are not allowed to see behaves as if it does not exist ("not found
 
 ## 2. Finding your way around
 
-- **Left menu**: Dashboard, Projects, Loan accounts, Compliance, Analytics, Maintenance, and Admin (admins only).
+- **Left menu**: Dashboard, Projects, Loan accounts, Compliance, Analytics, Maintenance, **Security**, and Admin
+  (admins only).
 - **Top right**: notification bell (live events while connected), the **language** switch (English / नेपाली),
   the **theme** switch (light / dark / system), and sign out.
 - **Dates**: dates are stored in both calendars. Hover a commercial-operation date in the project list
   to see its Bikram Sambat (BS) value; reports and exports print both AD and BS.
 - **Filters** in the project and loan lists are kept in the page address, so you can bookmark or share a
   filtered view.
+
+## 2a. Turning on two-step sign-in
+
+Open **Security** in the menu and choose *Set up authenticator app*. Scan the QR code with an authenticator app
+(Google Authenticator, Microsoft Authenticator, Authy), type the 6-digit code it shows, and **save the ten backup
+codes** that appear: they are shown only once. The same page lets you generate new backup codes (the old ones stop
+working) and turn two-step sign-in off, which asks for a current code or an unused backup code. If your role must use
+two-step sign-in, a banner reminds you until you have set it up.
 
 ## 3. Dashboard
 

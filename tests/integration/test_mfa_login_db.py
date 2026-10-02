@@ -108,10 +108,10 @@ async def test_disabling_mfa_needs_a_valid_code(api):
         "mfa_token": (await password_login(api)).json()["mfa_token"], "code": next_code(secret)})).json()["access_token"]
     h = bearer(token)
 
-    assert (await api.request("DELETE", "/api/v1/mfa/disable", json={"code": "000000"}, headers=h)).status_code == 401
+    assert (await api.request("DELETE", "/api/v1/mfa/disable", json={"code": "000000"}, headers=h)).status_code == 403
     # login consumed step +1, so the current step is older than the last accepted one: refused as a replay
     assert (await api.request("DELETE", "/api/v1/mfa/disable", json={"code": next_code(secret, 0)}, headers=h)
-            ).status_code == 401
+            ).status_code == 403
     codes = (await api.post("/api/v1/mfa/backup-codes", headers=h)).json()["codes"]
     assert (await api.request("DELETE", "/api/v1/mfa/disable", json={"code": codes[0]}, headers=h)).status_code == 200
     assert (await password_login(api)).json().get("access_token")  # plain password login works again

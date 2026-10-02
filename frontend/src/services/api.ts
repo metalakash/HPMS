@@ -23,7 +23,8 @@ api.interceptors.response.use(
   (error: unknown) => {
     // An expired or revoked token: drop the session so ProtectedRoute sends the user to login.
     if (error instanceof AxiosError && error.response?.status === 401) {
-      const isLogin = error.config?.url?.endsWith('/auth/login');
+      // A wrong password or MFA code is a 401 too, but there is no session to drop yet
+      const isLogin = error.config?.url?.includes('/auth/login');
       if (!isLogin) useAuthStore.getState().logout();
     }
     return Promise.reject(error);

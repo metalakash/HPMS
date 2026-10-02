@@ -250,6 +250,6 @@ Test baseline: **661 passed, 55 skipped** (the skips are database-backed tests).
 
 ### Still open at the close of Phase 11
 
-Migration chain `001`→`016` has been generated as SQL offline but never applied to a database; database-backed
-tests are skipped; items above marked ❌/🟡; the open findings in the security record (MFA not enforced at login; the
-Finacle source for the loan sync is not implemented).
+Migration chain: the hosted/production database is unmigrated and untested; items above marked ❌/🟡; the open findings in the security record (roles that should use MFA are flagged
+but not blocked; the Finacle source for the loan sync is not implemented). Migrations `012`-`018` and the database-backed
+tests have since been run against the development PostgreSQL (see the security record).

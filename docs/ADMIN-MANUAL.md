@@ -7,15 +7,15 @@ RFP: D.12 (admin and user manuals). Companion documents: [User Manual](USER-MANU
 
 > **Read this first — current limitations.** Several things an administrator would expect are not in
 > the product yet. They are listed in [§12](#12-known-limitations) so nobody discovers them in production.
-> The most important: MFA exists but is **not enforced at login** (§4.4), and the loan-exposure Finacle source is
-> not implemented (§7).
+> The most important: the loan-exposure Finacle source is not implemented (§7), and the web Admin, Compliance,
+> Analytics and Maintenance pages show sample data.
 
 ## 1. Architecture
 
 | Part | Technology | Notes |
 |---|---|---|
 | API | FastAPI (Python 3.11 container) | `backend/app/main.py`; REST under `/api/v1`, GraphQL at `/graphql`, WebSocket for live notifications |
-| Database | PostgreSQL | Schema owned by Alembic (`alembic/versions`, currently `001` → `017`). The app never calls `create_all` at startup |
+| Database | PostgreSQL | Schema owned by Alembic (`alembic/versions`, currently `001` → `018`). The app never calls `create_all` at startup |
 | Cache / pub-sub | Redis (optional) | `REDIS_ENABLED=false` by default |
 | Files | S3 / MinIO / local | `STORAGE_BACKEND`; report downloads work without S3 (`/reports/export/download`) |
 | Web UI | React + TypeScript (Vite) | `frontend/`; hosted on Vercel, which proxies `/api` and `/graphql` to the API |
@@ -32,17 +32,18 @@ Current hosted layout: backend on Render (`render.yaml`, Docker, health check `/
 2. **Migrate**: the container command runs `alembic upgrade head` before starting uvicorn. To run it by hand:
    ```bash
    alembic upgrade head
-   alembic current          # should print 017_protect_mfa_secrets
+   alembic current          # should print 018_mfa_totp_replay_guard
    ```
-   Migrations `013`–`017` (report definitions, regulatory calendar, audit immutability trigger, loan sync tables,
-   MFA secret protection) have been checked as generated SQL only; apply them to a staging database first.
+   Migrations `012`–`018` (risk domain, report definitions, regulatory calendar, audit immutability trigger, loan sync
+   tables, MFA secret protection, TOTP replay guard) have been applied to a real PostgreSQL (011 → 018) and their tests
+   run against it; still apply them to a staging copy of production data first.
    **Run `017` with the production `MFA_ENCRYPTION_KEY`/`SECRET_KEY` in the environment**: it encrypts existing TOTP seeds
    with that key, and a different key later makes them unreadable (users would have to re-enrol).
 3. **Frontend**: `cd frontend && npm run build`; Vercel runs this from `vercel.json`. Security headers and the CSP
    are defined in `vercel.json`. If you edit the inline theme script in `frontend/index.html`, regenerate its
    hash in the CSP (a test fails otherwise).
 4. **Verify**: `GET /health` (liveness), `GET /ready` (database reachable, returns 503 otherwise), `GET /docs`.
-5. **Roll back**: redeploy the previous image; `alembic downgrade <revision>` is provided for `013`–`017`.
+5. **Roll back**: redeploy the previous image; `alembic downgrade <revision>` is provided for `013`–`018`.
    Downgrading `015` removes the audit append-only trigger.
 
 ## 3. Configuration reference
@@ -60,6 +61,7 @@ Variables the code actually reads (some older documents list names that the code
 | | `EXTRA_ALLOWED_HOSTS` | empty | Extra hostnames for the trusted-host check |
 | Identity | `USE_LDAP` | `false` | `true` enables Active Directory; see §4 |
 | | `ALLOW_DEV_AUTH` | unset | Built-in demo accounts: unset = only while `DEBUG=true`; `true` = allowed (logged as a warning when `DEBUG` is off); `false` = never. With neither AD nor demo accounts, login answers 503 |
+| | `MFA_REQUIRED_ROLES` | empty | Comma-separated roles (for example `admin,approver`) that should use MFA. Users in them without it still sign in, but the login response carries `mfa_enrollment_required` and the web app shows a banner until they enrol. **It does not block sign-in** |
 | | `MFA_ENCRYPTION_KEY`, `MFA_ENCRYPTION_KEY_OLD` | empty | Key encrypting TOTP seeds (falls back to `SECRET_KEY`). To rotate: put the new key in `MFA_ENCRYPTION_KEY` and the previous one in `MFA_ENCRYPTION_KEY_OLD`; remove the old key only after all seeds have been rewritten |
 | | `AD_SERVER`, `AD_DOMAIN`, `AD_BASE_DN` | `ldap.sbl.local`, `sbl.local`, `dc=sbl,dc=local` | |
 | | `AD_SERVICE_ACCOUNT_USERNAME/PASSWORD` | empty | Account used to read group membership |
@@ -116,12 +118,24 @@ published passwords and no real data.
 
 ### 4.4 Multi-factor authentication
 
-TOTP, backup codes, SMS verification and trusted devices are implemented under `/api/v1/mfa/*`
-(`setup`, `verify`, `backup-codes`, `trusted-device`, `status`, `disable`). TOTP seeds are encrypted at rest and
-backup codes are stored as keyed hashes. **MFA is not enforced at login:** the password alone yields a session,
-nothing checks whether a user has MFA enabled, and backup codes cannot be redeemed anywhere. Enforcement needs a
-second login step (API and web page) and has not been built. The web UI does not yet expose enrolment; users
-enrol through the API.
+Users enrol themselves on the web **Security** page (`/security`): scan a QR code with an authenticator app, confirm
+with a code, and save ten one-time backup codes. From then on:
+
+1. `POST /api/v1/auth/login` with a correct password returns `{"mfa_required": true, "mfa_token": …}` instead of a
+   session. The `mfa_token` is valid for 5 minutes and is not an access token (every other endpoint refuses it).
+2. `POST /api/v1/auth/login/mfa` with that token and a 6-digit code (or a backup code such as `ABCD-1234`) returns the
+   session.
+
+Rules enforced by the server: a TOTP code works **once** (a replayed or older code is refused), five wrong codes in a
+row lock the account for 15 minutes (HTTP 429, also at the password step), a backup code is spent when used, and
+switching MFA off (`DELETE /api/v1/mfa/disable`) needs a current code or backup code, so a stolen session cannot
+remove it. The server fails closed: if MFA is on, a password alone never yields a session.
+
+**Lost device and backup codes:** an admin resets the user with `DELETE /api/v1/mfa/admin/{username}`; the user can
+then sign in with the password and enrol again. The reset is written to the audit trail with the acting admin.
+
+Not built: trusted-device skipping (the table exists but is unused), SMS and e-mail codes, and *blocking* sign-in
+for roles in `MFA_REQUIRED_ROLES` until they enrol (it only flags them).
 
 ### 4.5 The Admin page
 
@@ -221,8 +235,11 @@ No regulatory content is shipped. The compliance team must enter requirements:
 - Health: `/health`, `/ready`. Logs go to stdout (Render logs tab or your log shipper).
 - Incident handling, backups, restores and checklists: [RUNBOOK.md](RUNBOOK.md); symptoms and fixes:
   [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
-- Test suite: `python -m pytest tests`. Database-backed tests are skipped unless the database role can create
-  databases (`ALTER ROLE <user> CREATEDB;` on a development server). Run them before each release.
+- Test suite: `python -m pytest tests`. Database-backed tests are skipped unless a database is available: either the
+  role can create databases (`ALTER ROLE <user> CREATEDB;`), or set `TEST_DATABASE_REUSE=1` and
+  `TEST_DATABASE_URL=postgresql://…/<db>` to run against an already migrated database (every test rolls back, but
+  use a development database: count-based assertions in `test_api_with_db.py` expect it to start empty). Run them
+  before each release.
 - Data dictionary: regenerate with `python -m backend.scripts.generate_data_dictionary`; a test fails if the
   committed copy is stale. A second test fails if a model has no migration.
 - Dependency checks: run `pip-audit` and `npm audit --omit=dev` before every release.
@@ -231,7 +248,7 @@ No regulatory content is shipped. The compliance team must enter requirements:
 
 | Area | Limitation |
 |---|---|
-| Authentication | MFA not enforced at login (§4.4); demo accounts need `ALLOW_DEV_AUTH` (§4.3) |
+| Authentication | Demo accounts need `ALLOW_DEV_AUTH` (§4.3); MFA is opt-in per user and required roles are only flagged (§4.4); trusted devices, SMS and e-mail codes are not implemented |
 | CBS | Finacle adapter is a mock until the sandbox is reachable; the CBS sync endpoint always uses it |
 | Web UI | Compliance, Analytics, Maintenance and Admin pages show sample data; no screens yet for reports, saved reports, schedules, regulatory calendar, reminders, stakeholder contacts, approval queue, or MFA enrolment (all available through the API at `/docs`) |
 | Approvals | Approving does not apply the change |
@@ -240,4 +257,4 @@ No regulatory content is shipped. The compliance team must enter requirements:
 | Security | No VAPT yet; no database-level row security; Python dependencies are not pinned |
 | Data | `finacle_account_id` is stored in plain text although described as encrypted; masked in API responses |
 | Reports | No PowerPoint output; no XML / HDF import |
-| Verification | Migrations `013`–`017` and the database-backed tests have not been run against a real database |
+| Verification | Migrations `012`–`018` and the database-backed tests have run against the development database only; production and a staging copy of real data have not been migrated |

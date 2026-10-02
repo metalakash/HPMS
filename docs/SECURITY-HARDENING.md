@@ -43,7 +43,7 @@ penetration test, DAST scan or dynamic fuzzing was performed.
 | A04 | Insecure design | 🟡 | Dual control, field policy and append-only audit added. Rate limiting is per-IP (slowapi) and not per-user |
 | A05 | Security misconfiguration | 🟡 | CSP, nosniff, frame-deny, no-store added. `DEBUG` defaults to `true`; `TrustedHostMiddleware` and CORS lists are hard-coded and include a "TEMP DEMO" wildcard for `*.onrender.com` |
 | A06 | Vulnerable components | 🟡 | `npm audit --omit=dev`: 0 vulnerabilities. `pip-audit`: 9 runtime packages with advisories at the versions installed here; floors raised and tests re-run (see below). Python deps remain unpinned (`>=`), so builds are not reproducible. `PyPDF2` is unmaintained |
-| A07 | Identification and authentication failures | 🟡 | LDAP exists; demo accounts now refused unless explicitly enabled (finding 4). **MFA is never enforced at login**: nothing outside `/mfa/*` checks `is_mfa_enabled`, the login returns a token on password alone, and backup codes cannot be redeemed anywhere (finding 10). Login throttling and lockout not verified |
+| A07 | Identification and authentication failures | 🟡 | LDAP exists; demo accounts now refused unless explicitly enabled (finding 4). MFA is now enforced at login for users who enable it (finding 10); roles in `MFA_REQUIRED_ROLES` are flagged, not blocked. Password-step throttling is per-IP only |
 | A08 | Software and data integrity failures | ✅ | Hash-chained, append-only audit log with verification; no unsigned deserialisation found |
 | A09 | Logging and monitoring failures | 🟡 | Write audit is chained; read audit middleware is still a TODO stub that does not write `audit_log_reads` (only the export service does) |
 | A10 | SSRF | ✅ (static) | The app makes outbound calls only to configured SMTP, S3 and CBS endpoints; no user-supplied URLs are fetched |
@@ -100,7 +100,19 @@ After installing the new floors the full test suite passed (655 passed). Re-run 
    addresses); create/change/delete/run are now admin-only.
 9. (OPEN) `routes/workflow.py` imports `app.*` modules that do not exist and is not mounted, so the audit row D.9
    ("workflow routes present") overstates the state of the workflow API. Not fixed here.
-10. (OPEN) **MFA is not enforced at login** (see A07 above).
+10. **MFA was never enforced at login** (fixed): nothing outside `/mfa/*` checked `is_mfa_enabled`, so the password alone gave a
+    session and backup codes could not be redeemed. Now: `/auth/login` returns a 5-minute challenge token (refused by every other
+    endpoint) when MFA is on, `/auth/login/mfa` exchanges it for a session with a TOTP or backup code, a TOTP time step is
+    accepted once (`last_totp_counter`, migration `018`), five failures lock for 15 minutes, disabling MFA needs a current code,
+    and an admin reset exists for lost devices. Issues found while verifying it on a real database and in the browser:
+    - pyotp reads a *naive* datetime as local time, so computing a code from `datetime.utcnow()` is wrong on any server outside
+      UTC (Nepal is UTC+5:45): every valid code would have been rejected. Aware UTC datetimes are used throughout.
+    - Refusing a wrong confirmation code with HTTP 401 made the web client sign the user out; the confirmation endpoint now
+      answers 403.
+    - The project's `.venv` lacked dependencies added by earlier phases (`nepali-datetime`), so the backend could not start
+      from it; reinstalled with `pip install -e .`.
+    - `alembic/env.py` silenced all existing loggers when migrations ran inside the test process; fixed.
+    - The audit-purge flag stayed on until the end of the purge transaction; it is now switched off right after the delete.
 
 ## Open items
 
@@ -112,7 +124,8 @@ After installing the new floors the full test suite passed (655 passed). Re-run 
   will report the first one. They are history and have not been rewritten.
 - Rotate `SECRET_KEY`, `JWT_SECRET_KEY`; set `MFA_ENCRYPTION_KEY` (separate from `SECRET_KEY`) before enrolling real users; run
   migration `017` with the production key in the environment.
-- **Enforce MFA at login** (needs a challenge step in `/auth/login` and in the web login page); until then MFA is optional
-  and decorative.
-- DB-backed tests for the trigger, purge and chain (`tests/security/test_audit_chain_db.py`) are written but
-  skipped here: the `hpms` role lacks `CREATEDB`, so migrations `013`–`015` have not been applied to a real database.
+- Decide whether roles in `MFA_REQUIRED_ROLES` should be *blocked* from signing in until they enrol (today they are only
+  flagged), and whether to honour trusted devices.
+- Migrations `012`–`018` were applied to a real PostgreSQL (the development database, 011 → 018) and the DB-backed tests
+  (trigger, purge, chain, report builder, regulatory calendar, MFA login) passed against it with `TEST_DATABASE_REUSE=1`;
+  the hosted/production database and a staging copy of real data have not been migrated.

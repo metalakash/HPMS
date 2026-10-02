@@ -381,7 +381,8 @@ async def disable_mfa(
             raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                                 detail="Too many failed codes. Try again later.")
         if outcome != "ok":
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid code")
+            # 403, not 401: the session is fine, only this confirmation failed (401 makes clients sign the user out)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid code")
 
     await _clear_mfa(db, user_mfa)
     await db.commit()

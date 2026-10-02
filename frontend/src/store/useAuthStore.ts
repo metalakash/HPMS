@@ -6,8 +6,11 @@ interface AuthState {
   token: string | null;
   expiresAt: number | null;
   user: AuthUser | null;
+  /** Set at login when the user's role should have MFA but it is not enabled. */
+  mfaEnrollmentRequired: boolean;
   setSession: (response: TokenResponse) => void;
   setUser: (user: AuthUser) => void;
+  clearMfaEnrollmentRequired: () => void;
   logout: () => void;
 }
 
@@ -21,14 +24,17 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       expiresAt: null,
       user: null,
-      setSession: ({ access_token, expires_in_seconds, user }) =>
+      mfaEnrollmentRequired: false,
+      setSession: ({ access_token, expires_in_seconds, user, mfa_enrollment_required }) =>
         set({
           token: access_token,
           expiresAt: Date.now() + expires_in_seconds * 1000,
           user,
+          mfaEnrollmentRequired: Boolean(mfa_enrollment_required),
         }),
       setUser: (user) => set({ user }),
-      logout: () => set({ token: null, expiresAt: null, user: null }),
+      clearMfaEnrollmentRequired: () => set({ mfaEnrollmentRequired: false }),
+      logout: () => set({ token: null, expiresAt: null, user: null, mfaEnrollmentRequired: false }),
     }),
     { name: 'hpms-auth', storage: createJSONStorage(() => sessionStorage) },
   ),

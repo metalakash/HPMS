@@ -1,6 +1,7 @@
 import {
   Banknote,
   FolderKanban,
+  KeyRound,
   LayoutDashboard,
   LineChart,
   Settings,
@@ -25,6 +26,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/compliance', label: 'Compliance', icon: ShieldCheck, available: true },
   { to: '/analytics', label: 'Analytics', icon: LineChart, available: true },
   { to: '/maintenance', label: 'Maintenance', icon: Wrench, available: true },
+  { to: '/security', label: 'Security', icon: KeyRound, available: true },
   { to: '/admin', label: 'Admin', icon: Settings, available: true, roles: ['admin'] },
 ];
 

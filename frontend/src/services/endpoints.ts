@@ -5,6 +5,9 @@ import type {
   LoanAccountListItem,
   LoanFilters,
   LoginRequest,
+  LoginResponse,
+  MfaSetup,
+  MfaStatus,
   MilestoneItem,
   ProjectDetail,
   ProjectDisbursements,
@@ -22,11 +25,28 @@ function clean<T extends object>(params: T): Partial<T> {
 }
 
 export const authApi = {
+  /** Either a session, or a challenge when the account has MFA on. */
   login: (body: LoginRequest) =>
-    api.post<TokenResponse>('/api/v1/auth/login', body).then((r) => r.data),
+    api.post<LoginResponse>('/api/v1/auth/login', body).then((r) => r.data),
+  /** Second step: the challenge token plus an authenticator or backup code. */
+  loginMfa: (body: { mfa_token: string; code: string }) =>
+    api.post<TokenResponse>('/api/v1/auth/login/mfa', body).then((r) => r.data),
   logout: () => api.post('/api/v1/auth/logout'),
   /** Profile for the bearer token; a 401 here means the stored session is stale. */
   me: () => api.get<AuthUser>('/api/v1/auth/me').then((r) => r.data),
+};
+
+export const mfaApi = {
+  status: () => api.get<MfaStatus>('/api/v1/mfa/status').then((r) => r.data),
+  setup: () => api.post<MfaSetup>('/api/v1/mfa/setup').then((r) => r.data),
+  verify: (code: string) =>
+    api
+      .post<{ success: boolean; message: string; mfa_verified: boolean }>('/api/v1/mfa/verify', { code })
+      .then((r) => r.data),
+  backupCodes: () =>
+    api.post<{ codes: string[]; message: string }>('/api/v1/mfa/backup-codes').then((r) => r.data),
+  /** Needs a current authenticator code or an unused backup code. */
+  disable: (code: string) => api.delete('/api/v1/mfa/disable', { data: { code } }),
 };
 
 export const projectsApi = {

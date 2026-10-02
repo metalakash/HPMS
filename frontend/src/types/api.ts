@@ -56,6 +56,36 @@ export interface TokenResponse {
   token_type: 'bearer';
   expires_in_seconds: number;
   user: AuthUser;
+  /** The user's role should have MFA but they have not enrolled yet. */
+  mfa_enrollment_required?: boolean;
+}
+
+/** Password accepted, but a second factor is owed: finish with `authApi.loginMfa`. */
+export interface MfaChallenge {
+  mfa_required: true;
+  mfa_token: string;
+  expires_in_seconds: number;
+  methods: string[];
+}
+
+export type LoginResponse = TokenResponse | MfaChallenge;
+
+export function isMfaChallenge(response: LoginResponse): response is MfaChallenge {
+  return 'mfa_required' in response && response.mfa_required === true;
+}
+
+export interface MfaStatus {
+  is_enabled: boolean;
+  primary_method: string | null;
+  totp_enabled: boolean;
+  backup_codes_available: number;
+  mfa_required: boolean;
+}
+
+export interface MfaSetup {
+  totp_uri: string;
+  /** PNG, base64 */
+  qr_code_base64: string;
 }
 
 // --- Projects (backend/app/schemas/project.py) ---

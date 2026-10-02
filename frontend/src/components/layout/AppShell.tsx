@@ -1,5 +1,5 @@
 import { Suspense } from 'react';
-import { Navigate, Outlet, useLocation } from 'react-router';
+import { Link, Navigate, Outlet, useLocation } from 'react-router';
 import { Spinner } from '@/components/common/Spinner';
 import { useSessionCheck } from '@/hooks/queries';
 import { useNotificationSocket } from '@/hooks/useNotificationSocket';
@@ -26,6 +26,8 @@ export function PageFallback() {
 function AppShell() {
   useSessionCheck();
   useNotificationSocket();
+  const enrollmentRequired = useAuthStore((s) => s.mfaEnrollmentRequired);
+  const location = useLocation();
 
   return (
     <div className="flex h-full">
@@ -38,6 +40,14 @@ function AppShell() {
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <Header />
+        {enrollmentRequired && location.pathname !== '/security' && (
+          <div role="status" className="border-b border-line bg-warning-soft px-4 py-2 text-sm text-warning sm:px-6 lg:px-8">
+            Your role requires two-step sign-in, which is not set up yet.{' '}
+            <Link to="/security" className="font-medium underline">
+              Set it up now
+            </Link>
+          </div>
+        )}
         <main id="main" className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-7xl">
             <Suspense fallback={<PageFallback />}>
