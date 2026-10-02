@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.database import get_db
 from backend.app.config import settings
-from backend.app.security.ldap_provider import ADUser, LDAPAuthProvider, LocalDevAuthProvider
+from backend.app.security.auth_selection import build_auth_provider
+from backend.app.security.ldap_provider import ADUser
 from backend.app.models.auth import User, UserRole as DBUserRole
 from backend.app.security.auth_middleware import TokenManager, CurrentUser, get_current_user
 
@@ -21,17 +22,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 
-# Initialize auth providers
-if settings.USE_LDAP:
-    auth_provider = LDAPAuthProvider(
-        ad_server=settings.AD_SERVER,
-        ad_domain=settings.AD_DOMAIN,
-        ad_base_dn=settings.AD_BASE_DN,
-        service_account_username=settings.AD_SERVICE_ACCOUNT_USERNAME,
-        service_account_password=settings.AD_SERVICE_ACCOUNT_PASSWORD,
-    )
-else:
-    auth_provider = LocalDevAuthProvider()
+# None when neither Active Directory nor an explicitly allowed demo provider is configured
+auth_provider = build_auth_provider(settings)
 
 
 async def sync_user(db: AsyncSession, ad_user: ADUser) -> User:
@@ -124,6 +116,12 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
     - 401: Invalid username or password
     - 503: AD server unavailable (dev fallback used)
     """
+
+    if auth_provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No authentication provider is configured",
+        )
 
     # Attempt authentication
     ad_user = await auth_provider.authenticate(request.username, request.password)

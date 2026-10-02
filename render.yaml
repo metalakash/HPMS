@@ -22,6 +22,10 @@ services:
         generateValue: true
       - key: USE_LDAP
         value: "false"
+      # Demo accounts (admin/admin123 ...) are refused while DEBUG is false unless this is set to "true".
+      # Setting it makes the public site accept those published passwords; use it only for a demo with no real data.
+      # - key: ALLOW_DEV_AUTH
+      #   value: "true"
       - key: DEBUG
         value: "false"
 

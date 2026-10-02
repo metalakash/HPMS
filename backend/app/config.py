@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from pydantic import ConfigDict
+from pydantic import ConfigDict, field_validator
 from typing import Optional
 import os
 
@@ -7,6 +7,16 @@ class Settings(BaseSettings):
     """Application configuration from environment variables."""
 
     model_config = ConfigDict(extra="ignore")  # Ignore extra env vars
+
+    @field_validator("ALLOW_DEV_AUTH", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, v):
+        """An empty ALLOW_DEV_AUTH means "not set" (rather than failing startup); anything but true/1/yes is false."""
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        if isinstance(v, str):
+            return v.strip().lower() in ("true", "1", "yes", "on")
+        return bool(v)
 
     # Database
     DATABASE_URL: str = os.getenv(
@@ -25,6 +35,8 @@ class Settings(BaseSettings):
 
     # LDAP / Active Directory (Phase 3)
     USE_LDAP: bool = os.getenv("USE_LDAP", "false").lower() == "true"
+    # Built-in demo accounts (public passwords). Unset = allowed only while DEBUG=true; see security/auth_selection.py
+    ALLOW_DEV_AUTH: Optional[bool] = None
     AD_SERVER: str = os.getenv("AD_SERVER", "ldap.sbl.local")
     AD_DOMAIN: str = os.getenv("AD_DOMAIN", "sbl.local")
     AD_BASE_DN: str = os.getenv("AD_BASE_DN", "dc=sbl,dc=local")
