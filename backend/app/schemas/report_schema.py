@@ -30,9 +30,9 @@ class ReportExportRequest(BaseModel):
     report_id: Literal["portfolio", "covenant_summary", "capex_progress"] = Field(
         description="Type of report to export"
     )
-    format: Literal["json", "csv", "excel"] = Field(
+    format: Literal["json", "csv", "excel", "word"] = Field(
         default="json",
-        description="Output format (PDF in Phase 3)"
+        description="Output format (PDF via /pdf/* endpoints)"
     )
     filters: Optional[ExportFilter] = None
 

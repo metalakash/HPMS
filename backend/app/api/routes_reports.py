@@ -22,6 +22,7 @@ from backend.app.services.export_service import ExportService
 from backend.app.services.pdf_service import PDFService, ReportType
 from backend.app.security.auth_middleware import CurrentUser, get_current_user, require_role
 from backend.app.security.ldap_provider import UserRole
+from backend.app.security.rls_service import RLSService
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,51 @@ def _capex_bucket(category: Optional[str]) -> str:
     if "equip" in name or "electro" in name or "mechanical" in name:
         return "equip"
     return "cont"
+
+
+async def _load_rows(db: AsyncSession, request: ReportExportRequest, user_id: str):
+    """Run the report query for ``request.report_id``; 400 for an unknown report."""
+    loaders = {
+        "portfolio": ReportService.export_portfolio_report,
+        "covenant_summary": ReportService.export_covenant_report,
+        "capex_progress": ReportService.export_capex_report,
+    }
+    loader = loaders.get(request.report_id)
+    if loader is None:
+        raise HTTPException(status_code=400, detail=f"Unknown report_id: {request.report_id}")
+    return await loader(db, request.filters, user_id)
+
+
+FILE_FORMATS = {
+    "csv": ("text/csv", lambda rid, rows, filters: ExportService.generate_csv(rid, rows)),
+    "excel": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              lambda rid, rows, filters: ExportService.generate_excel(rid, rows)),
+    "word": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+             lambda rid, rows, filters: ExportService.generate_word(rid, rows, filters=filters)),
+}
+
+
+@router.post("/export/download")
+async def download_report(
+    request: ReportExportRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_portfolio_access),
+):
+    """Return the report as a file (csv, excel or word) directly, without needing S3."""
+    if request.format not in FILE_FORMATS:
+        raise HTTPException(status_code=400, detail="format must be csv, excel or word for downloads")
+    rows, _ = await _load_rows(db, request, current_user.username)
+    if not rows:
+        raise HTTPException(status_code=404, detail="No data for the selected filters")
+    media_type, build = FILE_FORMATS[request.format]
+    filters = request.filters.model_dump(exclude_none=True, mode="json") if request.filters else None
+    content = build(request.report_id, rows, filters)
+    filename = ExportService.get_export_filename(request.report_id, request.format)
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router.post("/export", response_model=ApiResponse[ReportExportResponse])
@@ -69,24 +115,7 @@ async def export_report(
     user_id = current_user.username
 
     try:
-        # Generate report based on type
-        if request.report_id == "portfolio":
-            rows, count = await ReportService.export_portfolio_report(
-                db, request.filters, user_id
-            )
-        elif request.report_id == "covenant_summary":
-            rows, count = await ReportService.export_covenant_report(
-                db, request.filters, user_id
-            )
-        elif request.report_id == "capex_progress":
-            rows, count = await ReportService.export_capex_report(
-                db, request.filters, user_id
-            )
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unknown report_id: {request.report_id}"
-            )
+        rows, count = await _load_rows(db, request, user_id)
 
         # Build response
         filters_dict = {}
@@ -104,14 +133,10 @@ async def export_report(
 
         # Generate file if format is CSV or Excel
         download_url = None
-        if request.format in ["csv", "excel"]:
+        if request.format in FILE_FORMATS:
             try:
-                if request.format == "csv":
-                    file_content = ExportService.generate_csv(request.report_id, rows)
-                    content_type = "text/csv"
-                else:  # excel
-                    file_content = ExportService.generate_excel(request.report_id, rows)
-                    content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                content_type, build = FILE_FORMATS[request.format]
+                file_content = build(request.report_id, rows, filters_dict or None)
 
                 # Upload to S3 and get presigned URL
                 if settings.STORAGE_BACKEND == "s3":

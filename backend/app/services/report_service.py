@@ -15,6 +15,7 @@ from sqlalchemy.orm import joinedload
 from backend.app.models.project import Project, ProjectCapacityHistory
 from backend.app.models.financial import LoanAccount, LoanAccountRateHistory, BudgetLine
 from backend.app.models.audit import AuditLog, AuditLogRead
+from backend.app.services.report_dates import add_bs_columns
 from backend.app.schemas.report_schema import (
     PortfolioReportRow,
     CovenantReportRow,
@@ -101,11 +102,13 @@ class ReportService:
                 "currency": "NPR",
                 "loan_accounts_count": loan_count,
                 "created_date_ad": project.created_at.strftime("%Y-%m-%d") if project.created_at else None,
-                "created_date_bs": None,  # BS conversion deferred to Phase 3
+                "created_date_bs": None,  # filled by add_bs_columns
                 "updated_date_ad": project.updated_at.strftime("%Y-%m-%d") if project.updated_at else None,
                 "updated_date_bs": None,
             }
             rows.append(row_dict)
+
+        add_bs_columns(rows)
 
         # Audit export
         await ReportService._audit_export(
@@ -186,6 +189,7 @@ class ReportService:
             }
             rows.append(row_dict)
 
+        add_bs_columns(rows)
         await ReportService._audit_export(
             db, "covenant_summary", len(rows), user_id
         )
@@ -249,6 +253,7 @@ class ReportService:
             }
             rows.append(row_dict)
 
+        add_bs_columns(rows)
         await ReportService._audit_export(
             db, "capex_progress", len(rows), user_id
         )

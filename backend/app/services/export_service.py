@@ -12,6 +12,8 @@ import json
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.services.report_dates import dual_stamp
+
 logger = logging.getLogger(__name__)
 
 
@@ -110,11 +112,68 @@ class ExportService:
             max_length = min(max_length + 2, 50)  # Cap at 50
             ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = max_length
 
+        info = wb.create_sheet("Report info")
+        info.append(["Report", report_id])
+        info.append(["Generated (AD / BS)", dual_stamp()])
+        info.append(["Records", len(rows)])
+        info.column_dimensions["A"].width = 24
+        info.column_dimensions["B"].width = 36
+
         # Save to bytes
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
 
+        return output.getvalue()
+
+    @staticmethod
+    def generate_word(
+        report_id: str,
+        rows: List[Dict[str, Any]],
+        title: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> bytes:
+        """Generate a Word (.docx) report: title, AD/BS stamp, applied filters, data table.
+
+        Returns b"" when there are no rows (same contract as CSV/Excel).
+        """
+        if not rows:
+            logger.warning(f"No data to export for report: {report_id}")
+            return b""
+
+        from docx import Document
+        from docx.enum.section import WD_ORIENT
+        from docx.shared import Pt
+
+        doc = Document()
+        section = doc.sections[0]
+        section.orientation = WD_ORIENT.LANDSCAPE
+        section.page_width, section.page_height = section.page_height, section.page_width
+
+        doc.add_heading(title or report_id.replace("_", " ").title(), level=1)
+        doc.add_paragraph(f"Generated: {dual_stamp()}")
+        if filters:
+            doc.add_paragraph("Filters: " + ", ".join(f"{k}={v}" for k, v in filters.items()))
+        doc.add_paragraph(f"Records: {len(rows)}")
+
+        fieldnames = list(rows[0].keys())
+        table = doc.add_table(rows=1, cols=len(fieldnames))
+        table.style = "Light Grid Accent 1"
+        for cell, name in zip(table.rows[0].cells, fieldnames):
+            cell.text = name
+        for row in rows:
+            cells = table.add_row().cells
+            for cell, name in zip(cells, fieldnames):
+                value = row.get(name)
+                cell.text = "" if value is None else str(value)
+        for r in table.rows:
+            for cell in r.cells:
+                for p in cell.paragraphs:
+                    for run in p.runs:
+                        run.font.size = Pt(8)
+
+        output = io.BytesIO()
+        doc.save(output)
         return output.getvalue()
 
     @staticmethod
@@ -163,6 +222,7 @@ class ExportService:
         extensions = {
             "csv": "csv",
             "excel": "xlsx",
+            "word": "docx",
             "json": "json",
         }
         ext = extensions.get(format, "txt")

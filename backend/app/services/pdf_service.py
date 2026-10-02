@@ -6,6 +6,8 @@ Generates professional reports with charts, tables, and watermarks.
 import logging
 import io
 from datetime import datetime
+
+from backend.app.services.report_dates import dual_stamp
 from typing import Dict, List, Optional, Tuple
 from enum import Enum
 
@@ -132,8 +134,7 @@ class PDFService:
         elements.append(Spacer(1, 0.2 * inch))
 
         # Date and watermark
-        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-        elements.append(Paragraph(f"Generated: {now}", body_style))
+        elements.append(Paragraph(f"Generated: {dual_stamp()}", body_style))
         elements.append(Spacer(1, 0.2 * inch))
 
         # Summary section
@@ -288,8 +289,7 @@ class PDFService:
         elements.append(Paragraph("Covenant Compliance Report", heading_style))
         elements.append(Spacer(1, 0.2 * inch))
 
-        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-        elements.append(Paragraph(f"Generated: {now}", body_style))
+        elements.append(Paragraph(f"Generated: {dual_stamp()}", body_style))
         elements.append(Spacer(1, 0.2 * inch))
 
         # Compliance summary
@@ -408,8 +408,7 @@ class PDFService:
         elements.append(Paragraph("Capital Expenditure Report", heading_style))
         elements.append(Spacer(1, 0.2 * inch))
 
-        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-        elements.append(Paragraph(f"Generated: {now}", body_style))
+        elements.append(Paragraph(f"Generated: {dual_stamp()}", body_style))
         elements.append(Spacer(1, 0.2 * inch))
 
         # CapEx Summary
