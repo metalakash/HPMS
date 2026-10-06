@@ -5,7 +5,7 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist', 'coverage'] },
+  { ignores: ['dist', 'coverage', 'playwright-report', 'test-results'] },
   {
     files: ['**/*.{ts,tsx}'],
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
@@ -21,5 +21,10 @@ export default tseslint.config(
     // Route table and test helpers are not component modules.
     files: ['src/router.tsx', 'src/test/**'],
     rules: { 'react-refresh/only-export-components': 'off' },
+  },
+  {
+    // Playwright fixtures call a callback named `use`, which is not a React hook.
+    files: ['e2e/**'],
+    rules: { 'react-hooks/rules-of-hooks': 'off' },
   },
 );
