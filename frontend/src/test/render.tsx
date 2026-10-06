@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react';
 import { render } from '@testing-library/react';
 import { QueryClient } from '@tanstack/react-query';
 import { createMemoryRouter, RouterProvider } from 'react-router';
@@ -23,4 +24,13 @@ export function renderRoute(path: string) {
     </AppProviders>,
   );
   return { ...utils, router, queryClient };
+}
+
+/** Renders one component with a fresh, non-retrying query client (no router). */
+export function renderWithClient(ui: ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const utils = render(<AppProviders queryClient={queryClient}>{ui}</AppProviders>);
+  return { ...utils, queryClient };
 }

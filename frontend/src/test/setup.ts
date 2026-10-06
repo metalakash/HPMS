@@ -1,10 +1,13 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, vi } from 'vitest';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
 import { useUIStore } from '@/store/useUIStore';
 import { server } from './server';
+
+// Route tests lazy-load a page chunk first; the 1s default is too tight on a busy machine.
+configure({ asyncUtilTimeout: 5000 });
 
 // The app shell opens a real notifications socket; page tests don't want one.
 // useNotificationSocket.test.ts opts back in with vi.importActual.
