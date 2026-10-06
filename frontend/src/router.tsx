@@ -8,6 +8,7 @@ const DashboardPage = lazy(() => import('@/pages/DashboardPage'));
 const ProjectsPage = lazy(() => import('@/pages/ProjectsPage'));
 const ProjectDetailPage = lazy(() => import('@/pages/ProjectDetailPage'));
 const LoansPage = lazy(() => import('@/pages/LoansPage'));
+const ApprovalQueuePage = lazy(() => import('@/pages/ApprovalQueuePage'));
 const CompliancePage = lazy(() => import('@/pages/CompliancePage'));
 const AnalyticsPage = lazy(() => import('@/pages/AnalyticsPage'));
 const MaintenancePage = lazy(() => import('@/pages/MaintenancePage'));
@@ -24,6 +25,7 @@ export const routes: RouteObject[] = [
       { path: 'projects', element: <ProjectsPage /> },
       { path: 'projects/:id', element: <ProjectDetailPage /> },
       { path: 'loans', element: <LoansPage /> },
+      { path: 'approvals', element: <ApprovalQueuePage /> },
       { path: 'compliance', element: <CompliancePage /> },
       { path: 'analytics', element: <AnalyticsPage /> },
       { path: 'maintenance', element: <MaintenancePage /> },

@@ -4,13 +4,14 @@
 
 import { useState, useCallback } from 'react';
 import { useModalStore } from '@/store/useModalStore';
-import { apiClient } from '@/services/api';
-import type { JustificationData } from '@/types/modal';
+import { apiClient, getErrorMessage } from '@/services/api';
 
 interface UseJustificationFormOptions {
   entityType: string;
   entityId: string;
   action: string;
+  /** Field changes being proposed for the entity. */
+  changes: Record<string, unknown>;
   onSuccess?: (approvalRequestId: string) => void;
   onError?: (error: string) => void;
 }
@@ -35,6 +36,7 @@ export function useJustificationForm({
   entityType,
   entityId,
   action,
+  changes,
   onSuccess,
   onError,
 }: UseJustificationFormOptions): UseJustificationFormReturn {
@@ -74,19 +76,16 @@ export function useJustificationForm({
       }
 
       // Submit mutation to backend
-      const response = await apiClient.post('/mutations/submit-with-justification', {
+      const response = await apiClient.post('/api/v1/mutations/submit-with-justification', {
         entity_type: entityType,
         entity_id: entityId,
         action: action,
-        changes: {
-          // TODO: Include actual changes based on entity type
-          updated_at: new Date().toISOString(),
-        },
+        changes,
         justification: reason.trim(),
         document_url: documentUrl,
       });
 
-      const approvalRequestId = response.data.approval_request_id;
+      const approvalRequestId = response.data.data.approval_request_id;
 
       // Clear form
       reset();
@@ -95,16 +94,14 @@ export function useJustificationForm({
       // Notify caller
       onSuccess?.(approvalRequestId);
     } catch (err) {
-      const errorMessage = err instanceof Error
-        ? err.message
-        : 'Failed to submit mutation';
+      const errorMessage = getErrorMessage(err);
 
       setError(errorMessage);
       onError?.(errorMessage);
     } finally {
       setIsLoading(false);
     }
-  }, [reason, documentFile, entityType, entityId, action, reset, closeModal, onSuccess, onError]);
+  }, [reason, documentFile, entityType, entityId, action, changes, reset, closeModal, onSuccess, onError]);
 
   return {
     reason,

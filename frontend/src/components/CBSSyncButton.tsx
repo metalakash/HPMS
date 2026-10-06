@@ -1,143 +1,142 @@
-/**
- * CBSSyncButton: On-demand CBS Finacle sync with diff log display
- */
-
 import { useState } from 'react';
-import { Zap, AlertCircle, CheckCircle, ChevronDown } from 'lucide-react';
-import { Spinner } from '@/components/common/Spinner';
-import { apiClient } from '@/services/api';
-
-interface CBSSyncDiff {
-  field: string;
-  previous_value: string | number;
-  new_value: string | number;
-  status: 'changed' | 'same';
-}
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, ChevronDown, RefreshCw } from 'lucide-react';
+import { Button } from '@/components/common/Button';
+import { queryKeys } from '@/hooks/queries';
+import { getErrorMessage } from '@/services/api';
+import { cbsApi } from '@/services/endpoints';
+import type { CbsDiffEntry } from '@/types/api';
+import { cn } from '@/utils/cn';
+import { humanize } from '@/utils/format';
 
 interface CBSSyncButtonProps {
   projectId: string;
+  /** The loan account's own id. */
   loanId: string;
   onSyncComplete?: () => void;
 }
 
-/**
- * CBS Sync Button with diff log
- */
+const show = (value: CbsDiffEntry['new_value']) =>
+  value === null || value === '' ? '—' : String(value);
+
+/** On-demand comparison of one loan with the core banking system, with the field-by-field result. */
 export function CBSSyncButton({ projectId, loanId, onSyncComplete }: CBSSyncButtonProps) {
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string>('');
-  const [diffLog, setDiffLog] = useState<CBSSyncDiff[] | null>(null);
-  const [showDiff, setShowDiff] = useState(false);
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(true);
 
-  const handleSync = async () => {
-    setIsLoading(true);
-    setError('');
-    setDiffLog(null);
-
-    try {
-      await apiClient.post(`/cbs/sync/${projectId}`, {
-        loan_id: loanId,
-      });
-
-      // Mock diff log for now
-      const mockDiff: CBSSyncDiff[] = [
-        {
-          field: 'outstanding_principal',
-          previous_value: 850000000,
-          new_value: 842000000,
-          status: 'changed',
-        },
-        {
-          field: 'overdue_amount',
-          previous_value: 0,
-          new_value: 0,
-          status: 'same',
-        },
-        {
-          field: 'last_repayment_date',
-          previous_value: '2026-09-15',
-          new_value: '2026-09-15',
-          status: 'same',
-        },
-      ];
-
-      setDiffLog(mockDiff);
-      setShowDiff(true);
+  const sync = useMutation({
+    mutationFn: () => cbsApi.sync(projectId, loanId),
+    onSuccess: (result) => {
+      if (result.status !== 'success') return;
+      setOpen(true);
+      if (result.applied) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.project(projectId) });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.loans });
+      }
       onSyncComplete?.();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'CBS sync failed');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    },
+  });
+
+  const result = sync.data;
+  const failure = sync.isError
+    ? getErrorMessage(sync.error)
+    : result && result.status !== 'success'
+      ? (result.error ?? 'The core banking system returned no data for this account')
+      : '';
+  const changed = result?.diff_log.filter((d) => d.status === 'changed') ?? [];
 
   return (
-    <div className="space-y-3">
-      <button
-        onClick={handleSync}
-        disabled={isLoading}
-        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-      >
-        {isLoading ? (
-          <Spinner />
-        ) : (
-          <Zap className="size-4" />
-        )}
-        {isLoading ? 'Syncing...' : 'Sync Account Now'}
-      </button>
+    <div className="flex flex-col gap-3">
+      <div>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => sync.mutate()}
+          loading={sync.isPending}
+        >
+          {!sync.isPending && <RefreshCw className="size-4" aria-hidden="true" />}
+          {sync.isPending ? 'Syncing…' : 'Sync with CBS'}
+        </Button>
+      </div>
 
-      {error && (
-        <div className="flex gap-2 rounded-lg bg-danger/10 p-3 text-sm text-danger">
-          <AlertCircle className="size-4 flex-shrink-0 mt-0.5" />
-          {error}
+      {failure && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-md bg-danger-soft p-3 text-sm text-danger"
+        >
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          {failure}
         </div>
       )}
 
-      {diffLog && (
-        <div className="rounded-lg border border-line bg-surface-2">
+      {result?.status === 'success' && (
+        <div className="rounded-md border border-line text-sm">
           <button
-            onClick={() => setShowDiff(!showDiff)}
-            className="w-full px-4 py-3 flex items-center justify-between hover:bg-surface transition-colors"
+            type="button"
+            onClick={() => setOpen(!open)}
+            aria-expanded={open}
+            className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-surface-2"
           >
-            <div className="flex items-center gap-2">
-              <CheckCircle className="size-4 text-success" />
-              <span className="font-medium text-fg">Sync successful</span>
-              <span className="text-xs text-muted">
-                {diffLog.filter(d => d.status === 'changed').length} changes
-              </span>
-            </div>
+            <span className="font-medium">
+              {changed.length === 0
+                ? 'No differences from CBS'
+                : `${changed.length} ${changed.length === 1 ? 'field differs' : 'fields differ'} from CBS`}
+            </span>
             <ChevronDown
-              className={`size-4 text-muted transition-transform ${
-                showDiff ? 'rotate-180' : ''
-              }`}
+              className={cn('size-4 text-muted transition-transform', open && 'rotate-180')}
+              aria-hidden="true"
             />
           </button>
 
-          {showDiff && (
-            <div className="border-t border-line px-4 py-3 space-y-2">
-              {diffLog.map((item) => (
-                <div
-                  key={item.field}
-                  className={`text-sm p-2 rounded ${
-                    item.status === 'changed'
-                      ? 'bg-warning/10 text-warning'
-                      : 'bg-success/10 text-success'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium capitalize">{item.field.replace(/_/g, ' ')}</span>
-                    {item.status === 'changed' && (
-                      <span className="text-xs">Updated</span>
-                    )}
-                  </div>
-                  {item.status === 'changed' && (
-                    <div className="mt-1 flex gap-2 text-xs">
-                      <span className="line-through opacity-70">{item.previous_value}</span>
-                      <span className="font-semibold">→ {item.new_value}</span>
-                    </div>
-                  )}
-                </div>
-              ))}
+          {open && (
+            <div className="border-t border-line px-3 py-2">
+              {result.simulated ? (
+                <p className="mb-2 text-warning">
+                  Simulated: no Finacle connection is configured, so this compares against the
+                  built-in sample record. No balances were changed.
+                </p>
+              ) : (
+                <p className="mb-2 text-muted">
+                  {result.applied
+                    ? 'The loan was updated with the CBS values.'
+                    : 'The loan already matches CBS.'}
+                </p>
+              )}
+              <table className="w-full border-collapse">
+                <caption className="sr-only">CBS comparison</caption>
+                <thead>
+                  <tr className="text-left text-muted">
+                    <th scope="col" className="py-1 pr-3 font-medium">
+                      Field
+                    </th>
+                    <th scope="col" className="py-1 pr-3 font-medium">
+                      HPMS
+                    </th>
+                    <th scope="col" className="py-1 font-medium">
+                      CBS
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.diff_log.map((entry) => (
+                    <tr key={entry.field} className="border-t border-line">
+                      <th scope="row" className="py-1 pr-3 text-left font-normal">
+                        {humanize(entry.field)}
+                      </th>
+                      <td className="py-1 pr-3 tabular-nums">{show(entry.previous_value)}</td>
+                      <td
+                        className={cn(
+                          'py-1 tabular-nums',
+                          entry.status === 'changed' && 'font-semibold text-warning',
+                        )}
+                      >
+                        {show(entry.new_value)}
+                        {entry.status === 'changed' && <span className="sr-only"> (differs)</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>

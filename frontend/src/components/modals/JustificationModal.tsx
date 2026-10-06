@@ -19,6 +19,9 @@ export function JustificationModal({
   actionName,
   isLoading = false,
   onSubmit,
+  children,
+  canSubmit = true,
+  allowDocument = true,
 }: JustificationModalProps) {
   const [reason, setReason] = useState('');
   const [documentFile, setDocumentFile] = useState<File | null>(null);
@@ -26,7 +29,7 @@ export function JustificationModal({
 
   const reasonLength = reason.trim().length;
   const isReasonValid = reasonLength >= MIN_REASON_LENGTH;
-  const isFormValid = isReasonValid;
+  const isFormValid = isReasonValid && canSubmit;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -109,6 +112,8 @@ export function JustificationModal({
           </div>
         </div>
 
+        {children}
+
         {/* Reason field */}
         <div className="space-y-2">
           <label htmlFor="reason" className="block text-sm font-medium text-fg">
@@ -140,7 +145,7 @@ export function JustificationModal({
         </div>
 
         {/* Document upload field (optional) */}
-        <div className="space-y-2">
+        {allowDocument && <div className="space-y-2">
           <label htmlFor="document" className="block text-sm font-medium text-fg">
             Supporting Document (Optional)
           </label>
@@ -166,7 +171,7 @@ export function JustificationModal({
           <p className="text-xs text-muted">
             PDF, DOC, DOCX, XLS, XLSX, JPG, PNG up to 10MB
           </p>
-        </div>
+        </div>}
 
         {/* Error message */}
         {error && (

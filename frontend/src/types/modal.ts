@@ -63,6 +63,12 @@ export interface JustificationModalProps {
   actionName: string;
   isLoading?: boolean;
   onSubmit: (data: JustificationData) => void | Promise<void>;
+  /** Fields describing the change itself, shown above the justification. */
+  children?: React.ReactNode;
+  /** False while those fields are incomplete. Defaults to true. */
+  canSubmit?: boolean;
+  /** Show the supporting-document picker. Only the file name is recorded; there is no upload. */
+  allowDocument?: boolean;
 }
 
 export interface JustificationData {
@@ -70,27 +76,10 @@ export interface JustificationData {
   documentUrl?: string;
 }
 
-/** Bulk import modal props */
+/** Loan exposure import modal props */
 export interface BulkImportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  entityType: 'projects' | 'loans' | 'generation' | 'disbursements';
-  isLoading?: boolean;
-  onSubmit: (file: File) => void | Promise<void>;
-  onValidationComplete?: (results: ImportValidationResult) => void;
-}
-
-export interface ImportValidationResult {
-  totalRows: number;
-  validRows: number;
-  invalidRows: number;
-  errors: ImportRowError[];
-}
-
-export interface ImportRowError {
-  rowNumber: number;
-  errorMessage: string;
-  rowData?: Record<string, any>;
 }
 
 /** Predefined modal IDs */

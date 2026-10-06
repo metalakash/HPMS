@@ -1,109 +1,96 @@
-import { useState, useEffect } from 'react';
-import { AlertCircle, CheckCircle } from 'lucide-react';
-import { Card, CardHeader, CardBody } from '@/components/common/Card';
-import { Badge } from '@/components/common/Badge';
-import { Spinner } from '@/components/common/Spinner';
+import { Badge, type BadgeTone } from '@/components/common/Badge';
+import { Card, CardBody, CardHeader } from '@/components/common/Card';
+import { DataTable, type Column } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/States';
+import { useHydrology } from '@/hooks/queries';
+import type { WaterLicense } from '@/types/api';
+import { formatDate, formatNumber, humanize } from '@/utils/format';
+import { Figure, TabState } from './TabState';
 
-interface HydrologyData {
-  river_basin: string;
-  design_discharge_m3s: number; // Q90
-  median_flow_m3s: number; // Q50
-  catchment_area_sqkm: number;
-  water_license_valid_from_ad: string;
-  water_license_valid_to_ad: string;
-  water_license_status: 'valid' | 'expiring' | 'expired';
-}
+const LICENSE_TONES: Record<string, BadgeTone> = {
+  valid: 'success',
+  expiring_soon: 'warning',
+  expired: 'danger',
+};
 
+const licenseColumns: Column<WaterLicense>[] = [
+  { key: 'number', header: 'Licence', render: (l) => l.license_number ?? '—' },
+  {
+    key: 'authority',
+    header: 'Issued by',
+    hideOnMobile: true,
+    render: (l) => l.issuing_authority ?? '—',
+  },
+  {
+    key: 'from',
+    header: 'Valid from',
+    hideOnMobile: true,
+    render: (l) => formatDate(l.validity_from),
+  },
+  { key: 'to', header: 'Valid to', render: (l) => formatDate(l.validity_to) },
+  {
+    key: 'status',
+    header: 'Status',
+    render: (l) => <Badge tone={LICENSE_TONES[l.status] ?? 'neutral'}>{humanize(l.status)}</Badge>,
+  },
+];
+
+const flow = (value: number | null | undefined) =>
+  value === null || value === undefined ? '—' : `${formatNumber(value)} m³/s`;
+
+/** River basin characteristics and water licences, from the hydrology endpoint. */
 export function HydrologyTab({ projectId }: { projectId: string }) {
-  const [data, setData] = useState<HydrologyData | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    // Mock data for now
-    setData({
-      river_basin: 'Koshi',
-      design_discharge_m3s: 45.5,
-      median_flow_m3s: 52.3,
-      catchment_area_sqkm: 2850,
-      water_license_valid_from_ad: '2020-06-15',
-      water_license_valid_to_ad: '2030-06-14',
-      water_license_status: 'valid',
-    });
-    setLoading(false);
-  }, [projectId]);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Spinner />
-      </div>
-    );
-  }
-
-  if (!data) {
-    return <EmptyState title="No hydrology data" />;
-  }
-
+  const query = useHydrology(projectId);
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader title="River Basin Characteristics" />
-        <CardBody>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 text-sm">
-            <div className="rounded-lg bg-surface-2 p-3">
-              <p className="text-muted text-xs">River Basin</p>
-              <p className="mt-2 font-semibold text-fg">{data.river_basin}</p>
-            </div>
-            <div className="rounded-lg bg-surface-2 p-3">
-              <p className="text-muted text-xs">Design Discharge (Q90)</p>
-              <p className="mt-2 font-semibold text-fg">{data.design_discharge_m3s} m³/s</p>
-            </div>
-            <div className="rounded-lg bg-surface-2 p-3">
-              <p className="text-muted text-xs">Median Flow (Q50)</p>
-              <p className="mt-2 font-semibold text-fg">{data.median_flow_m3s} m³/s</p>
-            </div>
-            <div className="rounded-lg bg-surface-2 p-3 sm:col-span-3">
-              <p className="text-muted text-xs">Catchment Area</p>
-              <p className="mt-2 font-semibold text-fg">{data.catchment_area_sqkm} km²</p>
-            </div>
-          </div>
-        </CardBody>
-      </Card>
+    <TabState query={query}>
+      {(data) => {
+        const h = data.hydrology;
+        return (
+          <>
+            <Card>
+              <CardHeader title="River basin" />
+              {h.river_basin ? (
+                <CardBody>
+                  <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                    <Figure label="River basin" value={h.river_basin} />
+                    <Figure
+                      label="Design discharge (Q90)"
+                      value={flow(h.design_discharge_q90_m3s)}
+                    />
+                    <Figure label="Median flow (Q50)" value={flow(h.median_flow_q50_m3s)} />
+                    <Figure
+                      label="Catchment area"
+                      value={
+                        h.catchment_area_sqkm ? `${formatNumber(h.catchment_area_sqkm)} km²` : '—'
+                      }
+                    />
+                  </dl>
+                </CardBody>
+              ) : (
+                <EmptyState title="No hydrology data recorded" />
+              )}
+            </Card>
 
-      <Card>
-        <CardHeader title="Water License" />
-        <CardBody>
-          <div className="space-y-3 text-sm">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-muted">DoED Water Use Permit</p>
-                <p className="mt-1 text-fg">Valid from {data.water_license_valid_from_ad} to {data.water_license_valid_to_ad}</p>
-              </div>
-              <Badge
-                tone={data.water_license_status === 'valid' ? 'success' : 'warning'}
-              >
-                {data.water_license_status}
-              </Badge>
-            </div>
-            {data.water_license_status !== 'valid' && (
-              <div className="flex gap-2 rounded-lg bg-warning/10 p-3 text-warning">
-                <AlertCircle className="size-4 flex-shrink-0 mt-0.5" />
-                <p className="text-xs">Water license renewal may be required soon</p>
-              </div>
-            )}
-          </div>
-        </CardBody>
-      </Card>
-
-      <Card>
-        <CardHeader title="Flow Duration Curve" />
-        <CardBody>
-          <div className="h-48 rounded-lg border border-line flex items-center justify-center bg-surface-2">
-            <p className="text-muted text-sm">[Flow duration curve chart - to be implemented]</p>
-          </div>
-        </CardBody>
-      </Card>
-    </div>
+            <Card>
+              <CardHeader
+                title="Water licences"
+                description={
+                  data.licenses_expiring_soon > 0
+                    ? `${data.licenses_expiring_soon} expiring soon`
+                    : undefined
+                }
+              />
+              <DataTable
+                caption="Water licences"
+                columns={licenseColumns}
+                rows={data.water_licenses}
+                rowKey={(l) => `${l.license_number}-${l.validity_from}`}
+                empty={<EmptyState title="No water licences recorded" />}
+              />
+            </Card>
+          </>
+        );
+      }}
+    </TabState>
   );
 }

@@ -1,5 +1,6 @@
 import {
   Banknote,
+  ClipboardCheck,
   FolderKanban,
   KeyRound,
   LayoutDashboard,
@@ -23,6 +24,14 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, available: true },
   { to: '/projects', label: 'Projects', icon: FolderKanban, available: true },
   { to: '/loans', label: 'Loan accounts', icon: Banknote, available: true },
+  {
+    to: '/approvals',
+    label: 'Approvals',
+    icon: ClipboardCheck,
+    available: true,
+    // Everyone the approval queue shows anything to
+    roles: ['maker', 'approver', 'auditor', 'admin'],
+  },
   { to: '/compliance', label: 'Compliance', icon: ShieldCheck, available: true },
   { to: '/analytics', label: 'Analytics', icon: LineChart, available: true },
   { to: '/maintenance', label: 'Maintenance', icon: Wrench, available: true },

@@ -1,87 +1,92 @@
-import { Card, CardHeader, CardBody } from '@/components/common/Card';
-import { Spinner } from '@/components/common/Spinner';
-import { useState, useEffect } from 'react';
+import { Card, CardBody, CardHeader } from '@/components/common/Card';
+import { DataTable, type Column } from '@/components/common/DataTable';
+import { EmptyState } from '@/components/common/States';
+import { useLandGovernance } from '@/hooks/queries';
+import type { LandGovernanceData } from '@/types/api';
+import { formatDate, formatNPR, formatNumber, formatPercent, humanize } from '@/utils/format';
+import { Figure, TabState } from './TabState';
 
-interface LandGovernanceData {
-  land_required_ropani: number;
-  land_acquired_ropani: number;
-  acquisition_pct: number;
-  compensation_paid_npr: number;
-  compensation_outstanding_npr: number;
-}
+type Director = LandGovernanceData['board_of_directors']['members'][number];
+type Shareholder = LandGovernanceData['shareholding']['shareholders'][number];
 
+const directorColumns: Column<Director>[] = [
+  { key: 'name', header: 'Director', render: (d) => d.director_name },
+  { key: 'title', header: 'Title', render: (d) => d.title ?? '—' },
+  {
+    key: 'appointed',
+    header: 'Appointed',
+    hideOnMobile: true,
+    render: (d) => formatDate(d.appointment_date),
+  },
+];
+
+const shareholderColumns: Column<Shareholder>[] = [
+  { key: 'entity', header: 'Shareholder', render: (s) => s.entity_name },
+  { key: 'type', header: 'Type', hideOnMobile: true, render: (s) => humanize(s.entity_type) },
+  { key: 'share', header: 'Share', align: 'right', render: (s) => formatPercent(s.share_pct) },
+];
+
+/** Land acquisition progress, board and shareholding, from the land-governance endpoint. */
 export function LandGovernanceTab({ projectId }: { projectId: string }) {
-  const [data, setData] = useState<LandGovernanceData | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    // Mock data
-    setData({
-      land_required_ropani: 2500,
-      land_acquired_ropani: 2350,
-      acquisition_pct: 94,
-      compensation_paid_npr: 45000000,
-      compensation_outstanding_npr: 3500000,
-    });
-    setLoading(false);
-  }, [projectId]);
-
-  if (loading) return <Spinner />;
-  if (!data) return <div>No data</div>;
-
+  const query = useLandGovernance(projectId);
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader title="Land Acquisition Status" />
-        <CardBody>
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div className="rounded-lg bg-surface-2 p-3">
-              <p className="text-muted text-xs">Required</p>
-              <p className="mt-2 font-semibold">{data.land_required_ropani} ropani</p>
-            </div>
-            <div className="rounded-lg bg-surface-2 p-3">
-              <p className="text-muted text-xs">Acquired ({data.acquisition_pct}%)</p>
-              <p className="mt-2 font-semibold">{data.land_acquired_ropani} ropani</p>
-            </div>
-            <div className="rounded-lg bg-success/10 p-3">
-              <p className="text-muted text-xs">Compensation Paid</p>
-              <p className="mt-2 font-semibold text-success">
-                {(data.compensation_paid_npr / 1000000).toFixed(1)}M NPR
-              </p>
-            </div>
-            <div className="rounded-lg bg-warning/10 p-3">
-              <p className="text-muted text-xs">Outstanding</p>
-              <p className="mt-2 font-semibold text-warning">
-                {(data.compensation_outstanding_npr / 1000000).toFixed(1)}M NPR
-              </p>
-            </div>
-          </div>
-          <div className="mt-4 h-2 rounded-full bg-surface-2 overflow-hidden">
-            <div
-              className="h-full bg-success"
-              style={{ width: `${data.acquisition_pct}%` }}
-            />
-          </div>
-        </CardBody>
-      </Card>
+    <TabState query={query}>
+      {(data) => {
+        const land = data.land_acquisition;
+        return (
+          <>
+            <Card>
+              <CardHeader title="Land acquisition" />
+              {land.total_area_required_ropani > 0 ? (
+                <CardBody>
+                  <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                    <Figure
+                      label="Required"
+                      value={`${formatNumber(land.total_area_required_ropani)} ropani`}
+                    />
+                    <Figure
+                      label={`Acquired (${formatPercent(land.acquisition_pct)})`}
+                      value={`${formatNumber(land.total_area_acquired_ropani)} ropani`}
+                    />
+                    <Figure
+                      label="Compensation paid"
+                      value={formatNPR(land.compensation_paid_npr)}
+                    />
+                    <Figure
+                      label="Compensation outstanding"
+                      value={formatNPR(land.compensation_outstanding_npr)}
+                    />
+                  </dl>
+                </CardBody>
+              ) : (
+                <EmptyState title="No land acquisition data recorded" />
+              )}
+            </Card>
 
-      <Card>
-        <CardHeader title="Board of Directors" />
-        <CardBody>
-          <div className="text-sm text-muted">
-            [BOD list placeholder - to be implemented]
-          </div>
-        </CardBody>
-      </Card>
+            <Card>
+              <CardHeader title="Board of directors" />
+              <DataTable
+                caption="Board of directors"
+                columns={directorColumns}
+                rows={data.board_of_directors.members}
+                rowKey={(d) => d.director_name}
+                empty={<EmptyState title="No directors recorded" />}
+              />
+            </Card>
 
-      <Card>
-        <CardHeader title="Shareholding Hierarchy" />
-        <CardBody>
-          <div className="text-sm text-muted">
-            [Shareholding breakdown - to be implemented]
-          </div>
-        </CardBody>
-      </Card>
-    </div>
+            <Card>
+              <CardHeader title="Shareholding" />
+              <DataTable
+                caption="Shareholding"
+                columns={shareholderColumns}
+                rows={data.shareholding.shareholders}
+                rowKey={(s) => s.entity_name}
+                empty={<EmptyState title="No shareholders recorded" />}
+              />
+            </Card>
+          </>
+        );
+      }}
+    </TabState>
   );
 }

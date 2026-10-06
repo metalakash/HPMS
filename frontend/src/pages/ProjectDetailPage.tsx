@@ -1,8 +1,12 @@
-import type { ReactNode } from 'react';
-import { Link, useParams } from 'react-router';
+import { useState, type ReactNode } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router';
 import { AxiosError } from 'axios';
 import { ArrowLeft } from 'lucide-react';
 import { Badge } from '@/components/common/Badge';
+import { Button } from '@/components/common/Button';
+import { CBSSyncButton } from '@/components/CBSSyncButton';
+import { ProposeChangeModal } from '@/components/ProposeChangeModal';
+import { ESGTab, GenerationPPATab, HydrologyTab, LandGovernanceTab } from '@/components/tabs';
 import { MilestoneGantt } from '@/components/MilestoneGantt';
 import { Card, CardBody, CardHeader } from '@/components/common/Card';
 import { DataTable, type Column } from '@/components/common/DataTable';
@@ -16,6 +20,7 @@ import {
   useProjectMilestones,
   useProjectRisks,
 } from '@/hooks/queries';
+import { useAuthStore } from '@/store/useAuthStore';
 import { useUIStore } from '@/store/useUIStore';
 import type {
   CodHistoryEntry,
@@ -25,11 +30,28 @@ import type {
   RiskItem,
 } from '@/types/api';
 import { formatDate, formatMW, formatNPR, formatPercent, humanize } from '@/utils/format';
+import { cn } from '@/utils/cn';
 import { projectName, statusTone } from '@/utils/status';
+
+const TABS = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'generation', label: 'Generation & PPA' },
+  { id: 'hydrology', label: 'Hydrology' },
+  { id: 'land', label: 'Land & governance' },
+  { id: 'esg', label: 'ESG' },
+] as const;
+type TabId = (typeof TABS)[number]['id'];
 
 export default function ProjectDetailPage() {
   const { id = '' } = useParams();
   const language = useUIStore((s) => s.language);
+  const roles = useAuthStore((s) => s.user?.roles) ?? [];
+  // Only makers and admins may propose changes or sync; the server enforces the same rule
+  const canPropose = roles.some((r) => r === 'maker' || r === 'admin');
+  const [params, setParams] = useSearchParams();
+  const tab: TabId = TABS.find((t) => t.id === params.get('tab'))?.id ?? 'overview';
+  const [proposing, setProposing] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
   const project = useProject(id);
   const loans = useProjectLoans(id);
   const disbursements = useProjectDisbursements(id);
@@ -101,7 +123,12 @@ export default function ProjectDetailPage() {
 
   const trancheColumns: Column<DisbursementTrancheItem>[] = [
     { key: 'tranche', header: 'Tranche', render: (t) => `#${t.tranche_no ?? '—'}` },
-    { key: 'facility', header: 'Facility', hideOnMobile: true, render: (t) => humanize(t.facility_type) },
+    {
+      key: 'facility',
+      header: 'Facility',
+      hideOnMobile: true,
+      render: (t) => humanize(t.facility_type),
+    },
     {
       key: 'planned',
       header: 'Planned',
@@ -121,7 +148,12 @@ export default function ProjectDetailPage() {
     },
   ];
 
-  const severityTone = { low: 'neutral', medium: 'warning', high: 'danger', critical: 'danger' } as const;
+  const severityTone = {
+    low: 'neutral',
+    medium: 'warning',
+    high: 'danger',
+    critical: 'danger',
+  } as const;
   const riskColumns: Column<RiskItem>[] = [
     { key: 'title', header: 'Risk', render: (r) => r.title },
     { key: 'type', header: 'Type', hideOnMobile: true, render: (r) => humanize(r.risk_type) },
@@ -133,7 +165,9 @@ export default function ProjectDetailPage() {
     {
       key: 'mitigation',
       header: 'Mitigation',
-      render: (r) => <Badge tone={statusTone(r.mitigation_status)}>{humanize(r.mitigation_status)}</Badge>,
+      render: (r) => (
+        <Badge tone={statusTone(r.mitigation_status)}>{humanize(r.mitigation_status)}</Badge>
+      ),
     },
     {
       key: 'source',
@@ -192,134 +226,208 @@ export default function ProjectDetailPage() {
             .filter(Boolean)
             .join(' · ')}
           actions={
-            <Badge tone={statusTone(p.pipeline_status)}>{humanize(p.pipeline_status)}</Badge>
+            <>
+              <Badge tone={statusTone(p.pipeline_status)}>{humanize(p.pipeline_status)}</Badge>
+              {canPropose && (
+                <Button variant="secondary" size="sm" onClick={() => setProposing(true)}>
+                  Propose change
+                </Button>
+              )}
+            </>
           }
         />
       ) : (
         <Skeleton className="mb-6 h-12 w-72" />
       )}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <Card>
-          <CardHeader title="Details" />
-          <CardBody>
-            {p ? (
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                <Detail
-                  label="Installed capacity"
-                  value={formatMW(p.installed_capacity_mw, language)}
-                />
-                <Detail label="Stage" value={humanize(p.project_stage)} />
-                <Detail label="Local level" value={p.location.local_level ?? '—'} />
-                <Detail label="Documents" value={p.documents_count} />
-                <Detail label="Loan accounts" value={p.loan_accounts_count} />
-                <Detail label="Updated" value={formatDate(p.updated_at, language)} />
-                {p.drop_reason && <Detail label="Drop reason" value={p.drop_reason} wide />}
-              </dl>
-            ) : (
-              <Skeleton className="h-40 w-full" />
+      {submitted && (
+        <p role="status" className="mb-4 rounded-md bg-success-soft p-3 text-sm text-success">
+          Change request submitted. It takes effect once two checkers approve it.{' '}
+          <Link to="/approvals" className="font-medium underline">
+            View approvals
+          </Link>
+        </p>
+      )}
+
+      {proposing && p && (
+        <ProposeChangeModal
+          project={p}
+          onClose={() => setProposing(false)}
+          onSubmitted={() => setSubmitted(true)}
+        />
+      )}
+
+      <div
+        role="tablist"
+        aria-label="Project sections"
+        className="mb-6 flex flex-wrap gap-1 border-b border-line"
+      >
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            id={`tab-${t.id}`}
+            aria-selected={tab === t.id}
+            aria-controls="project-tabpanel"
+            onClick={() => setParams(t.id === 'overview' ? {} : { tab: t.id }, { replace: true })}
+            className={cn(
+              '-mb-px border-b-2 px-3 py-2 text-sm font-medium',
+              tab === t.id
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted hover:text-fg',
             )}
-          </CardBody>
-        </Card>
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
 
-        <Card className="lg:col-span-2">
-          <CardHeader title="Commercial operation date history" />
-          <DataTable
-            caption="COD history"
-            columns={codColumns}
-            rows={p?.cod_history ?? []}
-            rowKey={(c) => `${c.cod_type}-${c.version}`}
-            loading={project.isLoading}
-            empty={<EmptyState title="No COD dates recorded" />}
-          />
-        </Card>
+      <div id="project-tabpanel" role="tabpanel" aria-labelledby={`tab-${tab}`}>
+        {tab === 'generation' && <GenerationPPATab projectId={id} />}
+        {tab === 'hydrology' && <HydrologyTab projectId={id} />}
+        {tab === 'land' && <LandGovernanceTab projectId={id} />}
+        {tab === 'esg' && <ESGTab projectId={id} />}
 
-        <div className="lg:col-span-3">
-          {milestones.isError ? (
+        {tab === 'overview' && (
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             <Card>
-              <CardHeader title="Project timeline & milestones" />
-              <ErrorState error={milestones.error} onRetry={() => void milestones.refetch()} />
+              <CardHeader title="Details" />
+              <CardBody>
+                {p ? (
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                    <Detail
+                      label="Installed capacity"
+                      value={formatMW(p.installed_capacity_mw, language)}
+                    />
+                    <Detail label="Stage" value={humanize(p.project_stage)} />
+                    <Detail label="Local level" value={p.location.local_level ?? '—'} />
+                    <Detail label="Documents" value={p.documents_count} />
+                    <Detail label="Loan accounts" value={p.loan_accounts_count} />
+                    <Detail label="Updated" value={formatDate(p.updated_at, language)} />
+                    {p.drop_reason && <Detail label="Drop reason" value={p.drop_reason} wide />}
+                  </dl>
+                ) : (
+                  <Skeleton className="h-40 w-full" />
+                )}
+              </CardBody>
             </Card>
-          ) : ganttMilestones.length > 0 ? (
-            <MilestoneGantt
-              projectName={p ? projectName(p, language) : ''}
-              milestones={ganttMilestones}
-            />
-          ) : (
-            <Card>
-              <CardHeader title="Project timeline & milestones" />
-              {milestones.isLoading ? (
-                <Skeleton className="m-4 h-24" />
+
+            <Card className="lg:col-span-2">
+              <CardHeader title="Commercial operation date history" />
+              <DataTable
+                caption="COD history"
+                columns={codColumns}
+                rows={p?.cod_history ?? []}
+                rowKey={(c) => `${c.cod_type}-${c.version}`}
+                loading={project.isLoading}
+                empty={<EmptyState title="No COD dates recorded" />}
+              />
+            </Card>
+
+            <div className="lg:col-span-3">
+              {milestones.isError ? (
+                <Card>
+                  <CardHeader title="Project timeline & milestones" />
+                  <ErrorState error={milestones.error} onRetry={() => void milestones.refetch()} />
+                </Card>
+              ) : ganttMilestones.length > 0 ? (
+                <MilestoneGantt
+                  projectName={p ? projectName(p, language) : ''}
+                  milestones={ganttMilestones}
+                />
               ) : (
-                <EmptyState title="No milestones recorded" />
+                <Card>
+                  <CardHeader title="Project timeline & milestones" />
+                  {milestones.isLoading ? (
+                    <Skeleton className="m-4 h-24" />
+                  ) : (
+                    <EmptyState title="No milestones recorded" />
+                  )}
+                </Card>
+              )}
+            </div>
+
+            <Card className="lg:col-span-3">
+              <CardHeader title="Risk register" />
+              {risks.isError ? (
+                <ErrorState error={risks.error} onRetry={() => void risks.refetch()} />
+              ) : (
+                <DataTable
+                  caption="Risk register"
+                  columns={riskColumns}
+                  rows={risks.data?.data ?? []}
+                  rowKey={(r) => r.id}
+                  loading={risks.isLoading}
+                  empty={<EmptyState title="No risks recorded" />}
+                />
               )}
             </Card>
-          )}
-        </div>
 
-        <Card className="lg:col-span-3">
-          <CardHeader title="Risk register" />
-          {risks.isError ? (
-            <ErrorState error={risks.error} onRetry={() => void risks.refetch()} />
-          ) : (
-            <DataTable
-              caption="Risk register"
-              columns={riskColumns}
-              rows={risks.data?.data ?? []}
-              rowKey={(r) => r.id}
-              loading={risks.isLoading}
-              empty={<EmptyState title="No risks recorded" />}
-            />
-          )}
-        </Card>
+            <Card className="lg:col-span-3">
+              <CardHeader title="Loan accounts" />
+              {loans.isError ? (
+                <ErrorState error={loans.error} onRetry={() => void loans.refetch()} />
+              ) : (
+                <DataTable
+                  caption="Loan accounts for this project"
+                  columns={loanColumns}
+                  rows={loans.data?.data ?? []}
+                  rowKey={(l) => l.id}
+                  loading={loans.isLoading}
+                  empty={<EmptyState title="No loan accounts linked" />}
+                />
+              )}
+              {canPropose &&
+                (loans.data?.data ?? []).map((loan) => (
+                  <div key={loan.id} className="border-t border-line px-4 py-3">
+                    <p className="mb-2 text-sm text-muted">
+                      {humanize(loan.facility_type)}: compare with the core banking system
+                    </p>
+                    <CBSSyncButton projectId={id} loanId={loan.id} />
+                  </div>
+                ))}
+            </Card>
 
-        <Card className="lg:col-span-3">
-          <CardHeader title="Loan accounts" />
-          {loans.isError ? (
-            <ErrorState error={loans.error} onRetry={() => void loans.refetch()} />
-          ) : (
-            <DataTable
-              caption="Loan accounts for this project"
-              columns={loanColumns}
-              rows={loans.data?.data ?? []}
-              rowKey={(l) => l.id}
-              loading={loans.isLoading}
-              empty={<EmptyState title="No loan accounts linked" />}
-            />
-          )}
-        </Card>
+            <Card className="lg:col-span-3">
+              <CardHeader title="Disbursement tranches" />
+              {disbursements.isError ? (
+                <ErrorState
+                  error={disbursements.error}
+                  onRetry={() => void disbursements.refetch()}
+                />
+              ) : (
+                <DataTable
+                  caption="Disbursement tranches"
+                  columns={trancheColumns}
+                  rows={disbursements.data?.data.tranches ?? []}
+                  rowKey={(t) => t.id}
+                  loading={disbursements.isLoading}
+                  empty={<EmptyState title="No disbursements recorded" />}
+                />
+              )}
+            </Card>
 
-        <Card className="lg:col-span-3">
-          <CardHeader title="Disbursement tranches" />
-          {disbursements.isError ? (
-            <ErrorState error={disbursements.error} onRetry={() => void disbursements.refetch()} />
-          ) : (
-            <DataTable
-              caption="Disbursement tranches"
-              columns={trancheColumns}
-              rows={disbursements.data?.data.tranches ?? []}
-              rowKey={(t) => t.id}
-              loading={disbursements.isLoading}
-              empty={<EmptyState title="No disbursements recorded" />}
-            />
-          )}
-        </Card>
-
-        <Card className="lg:col-span-3">
-          <CardHeader title="Repayment schedule" />
-          {disbursements.isError ? (
-            <ErrorState error={disbursements.error} onRetry={() => void disbursements.refetch()} />
-          ) : (
-            <DataTable
-              caption="Repayment schedule"
-              columns={repaymentColumns}
-              rows={disbursements.data?.data.repayments ?? []}
-              rowKey={(r) => r.id}
-              loading={disbursements.isLoading}
-              empty={<EmptyState title="No repayments scheduled" />}
-            />
-          )}
-        </Card>
+            <Card className="lg:col-span-3">
+              <CardHeader title="Repayment schedule" />
+              {disbursements.isError ? (
+                <ErrorState
+                  error={disbursements.error}
+                  onRetry={() => void disbursements.refetch()}
+                />
+              ) : (
+                <DataTable
+                  caption="Repayment schedule"
+                  columns={repaymentColumns}
+                  rows={disbursements.data?.data.repayments ?? []}
+                  rowKey={(r) => r.id}
+                  loading={disbursements.isLoading}
+                  empty={<EmptyState title="No repayments scheduled" />}
+                />
+              )}
+            </Card>
+          </div>
+        )}
       </div>
     </>
   );

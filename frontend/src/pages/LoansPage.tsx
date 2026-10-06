@@ -1,5 +1,8 @@
+import { useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { Badge } from '@/components/common/Badge';
+import { Button } from '@/components/common/Button';
+import { BulkImportModal } from '@/components/modals/BulkImportModal';
 import { Card } from '@/components/common/Card';
 import { DataTable, type Column } from '@/components/common/DataTable';
 import { Select } from '@/components/common/Field';
@@ -7,6 +10,7 @@ import { Pagination } from '@/components/common/Pagination';
 import { EmptyState, ErrorState } from '@/components/common/States';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useLoanAccounts } from '@/hooks/queries';
+import { useAuthStore } from '@/store/useAuthStore';
 import { useUIStore } from '@/store/useUIStore';
 import type { LoanAccountListItem } from '@/types/api';
 import { formatDate, formatNPR, formatPercent, humanize } from '@/utils/format';
@@ -17,6 +21,9 @@ const SYNC_STATUSES = ['pending', 'success', 'failed'];
 
 export default function LoansPage() {
   const language = useUIStore((s) => s.language);
+  // The exposure import endpoint is admin only
+  const isAdmin = useAuthStore((s) => s.user?.roles.includes('admin') ?? false);
+  const [importing, setImporting] = useState(false);
   const [params, setParams] = useSearchParams();
   const page = Math.max(1, Number(params.get('page')) || 1);
   const status = params.get('status') ?? '';
@@ -86,7 +93,15 @@ export default function LoansPage() {
       <PageHeader
         title="Loan accounts"
         description="Facilities synced from the core banking system"
+        actions={
+          isAdmin && (
+            <Button variant="secondary" onClick={() => setImporting(true)}>
+              Import exposures
+            </Button>
+          )
+        }
       />
+      <BulkImportModal isOpen={importing} onClose={() => setImporting(false)} />
 
       <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Select

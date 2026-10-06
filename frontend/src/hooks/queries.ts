@@ -1,8 +1,20 @@
-import { keepPreviousData, useQueries, useQuery } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useEffect } from 'react';
-import { authApi, loansApi, projectsApi } from '@/services/endpoints';
+import { authApi, loansApi, mutationsApi, projectsApi } from '@/services/endpoints';
 import { useAuthStore } from '@/store/useAuthStore';
-import type { LoanFilters, ProjectFilters, ProjectStage } from '@/types/api';
+import type {
+  ApprovalQueueFilters,
+  ChangeRequest,
+  LoanFilters,
+  ProjectFilters,
+  ProjectStage,
+} from '@/types/api';
 
 /** Central query keys so WebSocket events can invalidate by prefix. */
 export const queryKeys = {
@@ -16,6 +28,9 @@ export const queryKeys = {
   me: ['auth', 'me'] as const,
   loans: ['loans'] as const,
   loanList: (filters: LoanFilters) => ['loans', 'list', filters] as const,
+  projectTab: (id: string, tab: string) => ['projects', 'detail', id, tab] as const,
+  approvals: ['approvals'] as const,
+  approvalQueue: (filters: ApprovalQueueFilters) => ['approvals', 'queue', filters] as const,
 };
 
 /**
@@ -96,5 +111,66 @@ export function useStageCounts() {
       isLoading: results.some((r) => r.isLoading),
       error: results.find((r) => r.error)?.error ?? null,
     }),
+  });
+}
+
+export function useGenerationPpa(id: string) {
+  return useQuery({
+    queryKey: queryKeys.projectTab(id, 'generation'),
+    queryFn: () => projectsApi.generationPpa(id),
+  });
+}
+
+export function useHydrology(id: string) {
+  return useQuery({
+    queryKey: queryKeys.projectTab(id, 'hydrology'),
+    queryFn: () => projectsApi.hydrology(id),
+  });
+}
+
+export function useLandGovernance(id: string) {
+  return useQuery({
+    queryKey: queryKeys.projectTab(id, 'land'),
+    queryFn: () => projectsApi.landGovernance(id),
+  });
+}
+
+export function useEsg(id: string) {
+  return useQuery({
+    queryKey: queryKeys.projectTab(id, 'esg'),
+    queryFn: () => projectsApi.esg(id),
+  });
+}
+
+export function useApprovalQueue(filters: ApprovalQueueFilters) {
+  return useQuery({
+    queryKey: queryKeys.approvalQueue(filters),
+    queryFn: () => mutationsApi.queue(filters),
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useSubmitChange() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ChangeRequest) => mutationsApi.submit(body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.approvals }),
+  });
+}
+
+/** Approve (or recommend) / reject. A final approval changes the project or loan, so those refetch too. */
+export function useDecideApproval() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (decision: { id: string; verb: 'approve' | 'reject'; remarks: string }) =>
+      decision.verb === 'approve'
+        ? mutationsApi.approve(decision.id, decision.remarks)
+        : mutationsApi.reject(decision.id, decision.remarks),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.approvals }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.projects }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.loans }),
+      ]),
   });
 }

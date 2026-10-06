@@ -1,6 +1,18 @@
 import { api } from './api';
 import type {
   ApiResponse,
+  ApprovalDecisionResult,
+  ApprovalQueue,
+  ApprovalQueueFilters,
+  CbsSyncResult,
+  ChangeRequest,
+  ChangeRequestResult,
+  EsgData,
+  ExposureImportItem,
+  ExposureImportResult,
+  GenerationPpaData,
+  HydrologyData,
+  LandGovernanceData,
   AuthUser,
   LoanAccountListItem,
   LoanFilters,
@@ -41,7 +53,9 @@ export const mfaApi = {
   setup: () => api.post<MfaSetup>('/api/v1/mfa/setup').then((r) => r.data),
   verify: (code: string) =>
     api
-      .post<{ success: boolean; message: string; mfa_verified: boolean }>('/api/v1/mfa/verify', { code })
+      .post<{ success: boolean; message: string; mfa_verified: boolean }>('/api/v1/mfa/verify', {
+        code,
+      })
       .then((r) => r.data),
   backupCodes: () =>
     api.post<{ codes: string[]; message: string }>('/api/v1/mfa/backup-codes').then((r) => r.data),
@@ -61,15 +75,63 @@ export const projectsApi = {
       .get<ApiResponse<LoanAccountListItem[]>>(`/api/v1/projects/${id}/loan-accounts`)
       .then((r) => r.data),
   milestones: (id: string) =>
-    api
-      .get<ApiResponse<MilestoneItem[]>>(`/api/v1/projects/${id}/milestones`)
-      .then((r) => r.data),
+    api.get<ApiResponse<MilestoneItem[]>>(`/api/v1/projects/${id}/milestones`).then((r) => r.data),
   risks: (id: string) =>
     api.get<ApiResponse<RiskItem[]>>(`/api/v1/projects/${id}/risks`).then((r) => r.data),
   disbursements: (id: string) =>
     api
       .get<ApiResponse<ProjectDisbursements>>(`/api/v1/projects/${id}/disbursements`)
       .then((r) => r.data),
+  generationPpa: (id: string) =>
+    api
+      .get<ApiResponse<GenerationPpaData>>(`/api/v1/projects/${id}/generation-ppa`)
+      .then((r) => r.data.data),
+  hydrology: (id: string) =>
+    api
+      .get<ApiResponse<HydrologyData>>(`/api/v1/projects/${id}/hydrology`)
+      .then((r) => r.data.data),
+  landGovernance: (id: string) =>
+    api
+      .get<ApiResponse<LandGovernanceData>>(`/api/v1/projects/${id}/land-governance`)
+      .then((r) => r.data.data),
+  esg: (id: string) =>
+    api.get<ApiResponse<EsgData>>(`/api/v1/projects/${id}/esg`).then((r) => r.data.data),
+};
+
+/** Maker-checker change requests. */
+export const mutationsApi = {
+  queue: (filters: ApprovalQueueFilters = {}) =>
+    api
+      .get<ApiResponse<ApprovalQueue>>('/api/v1/mutations/approval-queue', {
+        params: clean(filters),
+      })
+      .then((r) => r.data.data),
+  submit: (body: ChangeRequest) =>
+    api
+      .post<ApiResponse<ChangeRequestResult>>('/api/v1/mutations/submit-with-justification', body)
+      .then((r) => r.data.data),
+  approve: (approvalRequestId: string, remarks?: string) =>
+    api
+      .post<ApiResponse<ApprovalDecisionResult>>('/api/v1/mutations/approve', {
+        approval_request_id: approvalRequestId,
+        remarks: remarks || undefined,
+      })
+      .then((r) => r.data.data),
+  reject: (approvalRequestId: string, remarks: string) =>
+    api
+      .post<ApiResponse<ApprovalDecisionResult>>('/api/v1/mutations/reject', {
+        approval_request_id: approvalRequestId,
+        remarks,
+      })
+      .then((r) => r.data.data),
+};
+
+export const cbsApi = {
+  /** `loanId` is the loan account's own id (the Finacle account number is masked in API responses). */
+  sync: (projectId: string, loanId: string) =>
+    api
+      .post<ApiResponse<CbsSyncResult>>(`/api/v1/cbs/sync/${projectId}`, { loan_id: loanId })
+      .then((r) => r.data.data),
 };
 
 export const loansApi = {
@@ -77,4 +139,13 @@ export const loansApi = {
     api
       .get<ApiResponse<LoanAccountListItem[]>>('/api/v1/loan-accounts', { params: clean(filters) })
       .then((r) => r.data),
+  /** Admin only. Creates or updates one loan account per row. */
+  importExposures: (rows: ExposureImportItem[], sourceReference: string) =>
+    api
+      .post<ApiResponse<ExposureImportResult>>('/api/v1/loan-accounts/exposure-sync', {
+        loan_accounts: rows,
+        sync_source: 'CSV',
+        source_reference: sourceReference,
+      })
+      .then((r) => r.data.data),
 };
