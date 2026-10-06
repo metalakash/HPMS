@@ -143,13 +143,18 @@ async def test_submit_writes_chained_audit_row_and_workflow():
 
 # ------------------------------------------------------------------ approve / reject dual control
 
+REQUEST_ID = "7c0f3c52-0f0b-4a57-9d6e-0b6f2f1d9a11"
+
+
 def approval(state="submitted", maker=None, recommender=None):
-    return SimpleNamespace(id="req1", current_state=state, maker_id=maker or str(uuid.uuid4()),
-                           recommender_id=recommender, approver_id=None, completed_at=None, approval_steps=[])
+    # RCOD_UPDATE is a free-form request type: approving it applies nothing to a project or loan
+    return SimpleNamespace(id=REQUEST_ID, entity_type="RCOD_UPDATE", entity_id="abc", current_state=state,
+                           maker_id=maker or str(uuid.uuid4()), recommender_id=recommender, approver_id=None,
+                           completed_at=None, submit_audit_log_id=None, approval_steps=[])
 
 
 async def approve(db, who):
-    return await MutationService.approve_mutation(db=db, current_user=who, approval_request_id="req1", remarks="ok")
+    return await MutationService.approve_mutation(db=db, current_user=who, approval_request_id=REQUEST_ID, remarks="ok")
 
 
 @pytest.mark.parametrize("role", ["guest", "auditor", "maker"])
@@ -158,7 +163,7 @@ async def test_only_approvers_and_admins_can_approve_or_reject(role):
         await approve(ScriptedDB(Result(approval())), user(role))
     with pytest.raises(PermissionError):
         await MutationService.reject_mutation(db=ScriptedDB(Result(approval())), current_user=user(role),
-                                              approval_request_id="req1", remarks="not acceptable at all")
+                                              approval_request_id=REQUEST_ID, remarks="not acceptable at all")
 
 
 async def test_maker_cannot_approve_their_own_request_even_as_admin():
@@ -194,7 +199,7 @@ async def test_approval_writes_a_real_chained_audit_row():
 async def test_closed_requests_cannot_be_rejected_or_approved(state):
     with pytest.raises(ValueError, match="Cannot reject"):
         await MutationService.reject_mutation(db=ScriptedDB(Result(approval(state))), current_user=user("approver"),
-                                              approval_request_id="req1", remarks="changed my mind later")
+                                              approval_request_id=REQUEST_ID, remarks="changed my mind later")
     with pytest.raises(ValueError, match="Cannot approve"):
         await approve(ScriptedDB(Result(approval(state))), user("approver"))
 
@@ -202,7 +207,7 @@ async def test_closed_requests_cannot_be_rejected_or_approved(state):
 async def test_reject_open_request_marks_it_rejected_and_audits():
     req = approval("recommended")
     db = ScriptedDB(Result(req), Result(), Result("d" * 64), Result())
-    out = await MutationService.reject_mutation(db=db, current_user=user("approver"), approval_request_id="req1",
+    out = await MutationService.reject_mutation(db=db, current_user=user("approver"), approval_request_id=REQUEST_ID,
                                                 remarks="supporting document is missing")
     assert req.current_state == "rejected" and out["state"] == "rejected"
     assert any(getattr(o, "action_performed", "") == "reject" for o in db.added)
@@ -248,17 +253,19 @@ async def test_routes_map_policy_errors_to_http_codes(monkeypatch):
 
 class CapturingDB:
     def __init__(self):
-        self.sql = None
+        self.statements = []
 
     async def execute(self, stmt, params=None):
-        self.sql = str(stmt.compile(compile_kwargs={"literal_binds": True}))
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+        self.statements.append(str(stmt.compile(compile_kwargs={"literal_binds": True})))
+        return SimpleNamespace(scalar=lambda: 0, scalars=lambda: SimpleNamespace(all=lambda: []))
 
 
 async def queue_sql(who):
+    """The page query (the count query wraps the same filter in a subquery)."""
     db = CapturingDB()
     await MutationService.get_approval_queue(db, who)
-    return db.sql
+    assert len(db.statements) == 2
+    return db.statements[-1]
 
 
 @pytest.mark.parametrize("role", ["admin", "approver", "auditor"])

@@ -13,16 +13,19 @@ import hashlib
 import json
 from datetime import datetime
 from typing import Optional, Dict, Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import false, select
+from sqlalchemy import false, func, select
+from sqlalchemy.orm import selectinload
 
-from backend.app.models.governance import ApprovalRequest, ApprovalState, ApprovalStep
-from backend.app.models.audit import AuditAction
+from backend.app.models.auth import User
+from backend.app.models.governance import ApprovalRequest, ApprovalState, ApprovalStep, WorkflowDefinition
+from backend.app.models.audit import AuditAction, AuditLog
 from backend.app.security.auth_middleware import CurrentUser
 from backend.app.security import field_policy
 from backend.app.security.ldap_provider import UserRole
+from backend.app.services import change_applier
 from backend.app.services.audit_chain import append_audit_log
 from backend.app.schemas.common import AuditMetadata
 
@@ -59,6 +62,129 @@ async def _authorize_target(db: AsyncSession, user: CurrentUser, entity_type: st
         raise LookupError(f"{entity_type} {entity_id} not found")
     if not await RLSService.can_update_project(db, user, project_id):
         raise PermissionError("Not permitted to change this project")
+
+
+DEFAULT_WORKFLOW_STEPS = json.dumps({"steps": ["submitted", "recommended", "approved"]})
+
+
+async def _workflow_definition_id(db: AsyncSession, entity_type: str) -> UUID:
+    """The active workflow for an entity type, created on first use as the standard two-check flow.
+
+    Call it after append_audit_log, whose advisory lock keeps two first submissions from racing.
+    """
+    kind = entity_type.upper()
+    found = (await db.execute(
+        select(WorkflowDefinition.id)
+        .where(WorkflowDefinition.entity_type == kind, WorkflowDefinition.is_active.is_(True))
+        .order_by(WorkflowDefinition.version.desc()).limit(1))).scalar()
+    if found:
+        return found
+    definition = WorkflowDefinition(
+        id=uuid4(), name=f"default-{kind.lower()}", entity_type=kind, is_active=True, version=1,
+        description="Maker submits, one checker recommends, a second checker approves",
+        workflow_steps=DEFAULT_WORKFLOW_STEPS, created_by="system")
+    db.add(definition)
+    await db.flush()
+    return definition.id
+
+
+async def _open_request(db: AsyncSession, approval_request_id: str) -> ApprovalRequest:
+    """Load a request with its steps (an async session cannot lazy-load them later)."""
+    try:
+        key = UUID(str(approval_request_id))
+    except ValueError:
+        raise LookupError(f"Approval request {approval_request_id} not found")
+    approval = (await db.execute(
+        select(ApprovalRequest).options(selectinload(ApprovalRequest.approval_steps))
+        .where(ApprovalRequest.id == key))).scalar()
+    if not approval:
+        raise LookupError(f"Approval request {approval_request_id} not found")
+    return approval
+
+
+async def _apply_approved_changes(db: AsyncSession, approval: ApprovalRequest, approver: CurrentUser,
+                                  source_ip: Optional[str], timestamp: str) -> bool:
+    """On final approval, make the recorded change to the project or loan. False if nothing applies."""
+    if not change_applier.is_applicable(approval.entity_type):
+        return False
+    submission = None
+    if approval.submit_audit_log_id is not None:
+        submission = (await db.execute(
+            select(AuditLog).where(AuditLog.id == approval.submit_audit_log_id))).scalar_one_or_none()
+    if submission is None:
+        raise ValueError("The submission record for this request is no longer available; it cannot be applied")
+    record = await change_applier.load(db, approval.entity_type, approval.entity_id)
+    if record is None:
+        raise LookupError(f"{approval.entity_type} {approval.entity_id} no longer exists")
+
+    typed = change_applier.normalise(approval.entity_type, "UPDATE", json.loads(submission.post_state or "{}"))
+    before, after = change_applier.apply(approval.entity_type, record, typed, updated_by=approver.username)
+    await append_audit_log(
+        db, user_id=approver.id, user_role=approver.roles[0].value if approver.roles else "guest",
+        source_ip=source_ip, timestamp=timestamp, entity_type=approval.entity_type, entity_id=approval.entity_id,
+        action=AuditAction.UPDATE.value, reason=f"Applied approved change request {approval.id}",
+        pre_state=before, post_state=after)
+    return True
+
+
+def _can_decide(user: CurrentUser, approval: ApprovalRequest) -> bool:
+    """Whether this user may approve or reject the request now (the same rules the actions enforce)."""
+    if not _has_any_role(user, (UserRole.APPROVER, UserRole.ADMIN)):
+        return False
+    if approval.current_state not in (ApprovalState.SUBMITTED.value, ApprovalState.RECOMMENDED.value):
+        return False
+    actor = str(user.id)
+    if actor == str(approval.maker_id):
+        return False
+    return not (approval.current_state == ApprovalState.RECOMMENDED.value and actor == str(approval.recommender_id))
+
+
+async def _submissions(db: AsyncSession, approvals) -> Dict[int, AuditLog]:
+    ids = [a.submit_audit_log_id for a in approvals if a.submit_audit_log_id is not None]
+    if not ids:
+        return {}
+    rows = (await db.execute(select(AuditLog).where(AuditLog.id.in_(ids)))).scalars().all()
+    return {row.id: row for row in rows}
+
+
+async def _usernames(db: AsyncSession, user_ids) -> Dict[str, str]:
+    keys = []
+    for value in user_ids:
+        try:
+            keys.append(UUID(str(value)))
+        except ValueError:
+            continue
+    if not keys:
+        return {}
+    rows = (await db.execute(select(User.id, User.username, User.full_name).where(User.id.in_(keys)))).all()
+    return {str(uid): full_name or username for uid, username, full_name in rows}
+
+
+async def _entity_labels(db: AsyncSession, approvals) -> Dict[tuple, str]:
+    """Human-readable names for the projects and loans the requests point at."""
+    from backend.app.models.financial import LoanAccount
+    from backend.app.models.project import Project
+
+    wanted: Dict[str, list] = {"PROJECT": [], "LOAN": []}
+    for a in approvals:
+        kind = a.entity_type.upper()
+        if kind in wanted:
+            try:
+                wanted[kind].append(UUID(str(a.entity_id)))
+            except ValueError:
+                continue
+    labels: Dict[tuple, str] = {}
+    if wanted["PROJECT"]:
+        rows = (await db.execute(
+            select(Project.id, Project.project_code, Project.name_en).where(Project.id.in_(wanted["PROJECT"])))).all()
+        labels.update({("PROJECT", str(pid)): f"{name} ({code})" for pid, code, name in rows})
+    if wanted["LOAN"]:
+        rows = (await db.execute(
+            select(LoanAccount.id, LoanAccount.facility_type, Project.project_code, Project.name_en)
+            .join(Project, Project.id == LoanAccount.project_id).where(LoanAccount.id.in_(wanted["LOAN"])))).all()
+        labels.update({("LOAN", str(lid)): f"{(facility or 'loan').replace('_', ' ').capitalize()} for {name} ({code})"
+                       for lid, facility, code, name in rows})
+    return labels
 
 
 class MutationService:
@@ -140,6 +266,16 @@ class MutationService:
         field_policy.check_write(entity_type, changes, current_user.roles)
         await _authorize_target(db, current_user, entity_type, entity_id)
 
+        pre_state: Dict[str, Any] = {}
+        if change_applier.is_applicable(entity_type):
+            # Refuse now what could not be applied later, and record the values being replaced
+            typed = change_applier.normalise(entity_type, action, changes)
+            record = await change_applier.load(db, entity_type, entity_id)
+            if record is None:
+                raise LookupError(f"{entity_type} {entity_id} not found")
+            change_applier.check_against(entity_type, record, typed)
+            pre_state = {field: getattr(record, field) for field in typed}
+
         timestamp = datetime.utcnow().isoformat()
 
         # Steps 1-3: append to the hash-chained, append-only audit log
@@ -154,14 +290,14 @@ class MutationService:
             entity_id=entity_id,
             action=action,
             reason=justification,
-            pre_state={},  # TODO: Fetch actual pre_state from entity
+            pre_state=pre_state,
             post_state=changes,
         )
 
         # Step 4: Create ApprovalRequest workflow
         approval_request = ApprovalRequest(
-            id=str(uuid4()),
-            workflow_definition_id=str(uuid4()),  # TODO: Get from workflow config
+            id=uuid4(),
+            workflow_definition_id=await _workflow_definition_id(db, entity_type),
             entity_type=entity_type,
             entity_id=entity_id,
             current_state=ApprovalState.SUBMITTED.value,
@@ -170,13 +306,14 @@ class MutationService:
             approver_id=None,
             submitted_at=timestamp,
             completed_at=None,
+            submit_audit_log_id=audit_log.id,
         )
         db.add(approval_request)
         await db.flush()
 
         # Step 5: Create initial ApprovalStep
         approval_step = ApprovalStep(
-            id=str(uuid4()),
+            id=uuid4(),
             approval_request_id=approval_request.id,
             step_no=1,
             actor_id=current_user.id,
@@ -212,25 +349,12 @@ class MutationService:
         limit: int = 50,
     ) -> Dict[str, Any]:
         """
-        Get list of pending approvals for current user.
+        Change requests the current user may see, newest first, with what each one proposes.
 
-        Returns ApprovalRequests where:
-        - recommender_id = current_user (for UNDER_RECOMMENDATION state)
-        - approver_id = current_user (for APPROVED state)
-
-        Args:
-            db: Database session
-            current_user: Current user
-            entity_type: Filter by entity type
-            status: Filter by approval state
-            skip: Pagination offset
-            limit: Pagination limit
-
-        Returns:
-            List of pending approvals with context
+        Checkers (approver, admin) and auditors see every request; makers see their own; others none.
+        ``total`` counts every visible request matching the filters, not just this page.
         """
 
-        # Build query
         query = select(ApprovalRequest)
 
         # Visibility by role: checkers and auditors see every request, makers only their own, others none
@@ -242,33 +366,39 @@ class MutationService:
         else:
             query = query.where(false())
 
-        # Apply filters
         if entity_type:
             query = query.where(ApprovalRequest.entity_type == entity_type)
         if status:
             query = query.where(ApprovalRequest.current_state == status)
 
-        # Pagination
-        query = query.offset(skip).limit(limit).order_by(ApprovalRequest.submitted_at.desc())
+        total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar() or 0
+        approvals = (await db.execute(
+            query.order_by(ApprovalRequest.submitted_at.desc()).offset(skip).limit(limit))).scalars().all()
 
-        # Execute
-        result = await db.execute(query)
-        approvals = result.scalars().all()
+        submissions = await _submissions(db, approvals)
+        makers = await _usernames(db, {a.maker_id for a in approvals})
+        labels = await _entity_labels(db, approvals)
 
-        return {
-            "total": len(approvals),
-            "approvals": [
-                {
-                    "id": str(a.id),
-                    "entity_type": a.entity_type,
-                    "entity_id": a.entity_id,
-                    "current_state": a.current_state,
-                    "maker_id": a.maker_id,
-                    "submitted_at": a.submitted_at,
-                }
-                for a in approvals
-            ],
-        }
+        items = []
+        for a in approvals:
+            submission = submissions.get(a.submit_audit_log_id)
+            items.append({
+                "id": str(a.id),
+                "entity_type": a.entity_type,
+                "entity_id": a.entity_id,
+                "entity_label": labels.get((a.entity_type.upper(), a.entity_id)),
+                "current_state": a.current_state,
+                "maker_id": a.maker_id,
+                "maker_name": makers.get(a.maker_id),
+                "submitted_at": a.submitted_at,
+                "completed_at": a.completed_at,
+                "action": submission.action_performed if submission else None,
+                "justification": submission.reason_for_action if submission else None,
+                "changes": json.loads(submission.post_state or "{}") if submission else None,
+                "previous_values": json.loads(submission.pre_state or "{}") if submission else None,
+                "can_decide": _can_decide(current_user, a),
+            })
+        return {"total": total, "approvals": items}
 
     @staticmethod
     async def approve_mutation(
@@ -297,13 +427,7 @@ class MutationService:
         if not _has_any_role(current_user, (UserRole.APPROVER, UserRole.ADMIN)):
             raise PermissionError("Only approvers and admins can approve changes")
 
-        # Fetch approval request
-        query = select(ApprovalRequest).where(ApprovalRequest.id == approval_request_id)
-        result = await db.execute(query)
-        approval = result.scalar()
-
-        if not approval:
-            raise ValueError(f"Approval request {approval_request_id} not found")
+        approval = await _open_request(db, approval_request_id)
 
         # Validate state transitions
         current_state = ApprovalState(approval.current_state)
@@ -333,7 +457,7 @@ class MutationService:
 
         # Create approval step
         approval_step = ApprovalStep(
-            id=str(uuid4()),
+            id=uuid4(),
             approval_request_id=approval.id,
             step_no=len(approval.approval_steps) + 1,
             actor_id=current_user.id,
@@ -359,12 +483,17 @@ class MutationService:
             post_state={"state": new_state.value},
         )
 
+        applied = False
+        if new_state == ApprovalState.APPROVED:
+            applied = await _apply_approved_changes(db, approval, current_user, source_ip, timestamp)
+
         await db.commit()
 
         return {
             "approval_request_id": str(approval.id),
             "previous_state": current_state.value,
             "new_state": new_state.value,
+            "changes_applied": applied,
             "approved_by": current_user.id,
             "approved_at": timestamp,
         }
@@ -398,13 +527,7 @@ class MutationService:
         if not remarks or len(remarks.strip()) < 10:
             raise ValueError("Rejection remarks are mandatory (min 10 characters)")
 
-        # Fetch approval request
-        query = select(ApprovalRequest).where(ApprovalRequest.id == approval_request_id)
-        result = await db.execute(query)
-        approval = result.scalar()
-
-        if not approval:
-            raise ValueError(f"Approval request {approval_request_id} not found")
+        approval = await _open_request(db, approval_request_id)
         if approval.current_state not in (ApprovalState.SUBMITTED.value, ApprovalState.RECOMMENDED.value):
             raise ValueError(f"Cannot reject from state: {approval.current_state}")
 
@@ -416,7 +539,7 @@ class MutationService:
 
         # Create rejection step
         approval_step = ApprovalStep(
-            id=str(uuid4()),
+            id=uuid4(),
             approval_request_id=approval.id,
             step_no=len(approval.approval_steps) + 1,
             actor_id=current_user.id,

@@ -2,7 +2,7 @@
 
 > Generated from the SQLAlchemy models by `backend/scripts/generate_data_dictionary.py`. Do not edit by hand; run `python -m backend.scripts.generate_data_dictionary` and commit the result.
 
-**70 tables and views, 1042 columns.** Dates are stored as AD `DATE` columns with a paired `*_bs` text column (`YYYY-MM-DD` Bikram Sambat) where the business needs both calendars. Descriptions come from the model docstrings.
+**70 tables and views, 1043 columns.** Dates are stored as AD `DATE` columns with a paired `*_bs` text column (`YYYY-MM-DD` Bikram Sambat) where the business needs both calendars. Descriptions come from the model docstrings.
 
 ## Contents
 
@@ -1336,6 +1336,7 @@ Approval workflow instance.
 | `approver_id` | VARCHAR(255) | yes |  |  |
 | `submitted_at` | VARCHAR(100) | yes |  |  |
 | `completed_at` | VARCHAR(100) | yes |  |  |
+| `submit_audit_log_id` | BIGINT | yes |  |  |
 | `created_at` | DATETIME | yes | `now()` |  |
 | `updated_at` | DATETIME | yes | `now()` |  |
 | `created_by` | VARCHAR(255) | yes |  |  |

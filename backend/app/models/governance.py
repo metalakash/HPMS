@@ -1,5 +1,5 @@
 """Governance, RBAC and workflow models."""
-from sqlalchemy import Column, String, Integer, Date, Text, ForeignKey, Boolean, UniqueConstraint, Index, Table
+from sqlalchemy import BigInteger, Column, String, Integer, Date, Text, ForeignKey, Boolean, UniqueConstraint, Index, Table
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from datetime import datetime, date
@@ -102,7 +102,10 @@ class ApprovalRequest(Base, TimestampedMixin):
     
     submitted_at = Column(String(100))
     completed_at = Column(String(100))
-    
+
+    # audit_logs.id of the submission: holds the proposed changes and the justification
+    submit_audit_log_id = Column(BigInteger)
+
     approval_steps = relationship("ApprovalStep", back_populates="approval_request")
     
     __table_args__ = (
