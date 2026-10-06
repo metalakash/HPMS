@@ -16,6 +16,7 @@ from httpx import ASGITransport, AsyncClient
 
 from backend.app.database import get_db
 from backend.app.integration.finacle_adapter import (
+    FinacleAdapterBase,
     CircuitBreaker,
     CircuitBreakerState,
     MockFinacleAdapter,
@@ -195,18 +196,38 @@ def _local_account(**over):
     return SimpleNamespace(**base)
 
 
+class _LiveLikeAdapter(FinacleAdapterBase):
+    """Stands in for a real Finacle connection: answers like the mock, but is not the mock."""
+
+    async def sync_accounts(self, request):
+        return await MockFinacleAdapter().sync_accounts(request)
+
+
 async def test_sync_service_detects_and_applies_changes():
     from backend.app.services.cbs_sync_real_service import CBSSyncService
     account = _local_account(outstanding_principal=Decimal("1.00"))
     db = _FakeDB(account)
-    out = await CBSSyncService(MockFinacleAdapter()).sync_loan_account(db, PID, "ACC00001")
+    out = await CBSSyncService(_LiveLikeAdapter()).sync_loan_account(db, PID, "ACC00001")
     assert out["status"] == "success"
     changed = {d["field"] for d in out["diff_log"] if d["status"] == "changed"}
     assert "outstanding_principal" in changed
     assert out["changes_count"] == len(changed)
+    assert (out["simulated"], out["applied"]) == (False, True)
     assert account.outstanding_principal == Decimal("2800000.00")
     assert account.sync_status == "synced"
     assert db.flushed == 1
+
+
+async def test_sync_against_the_mock_adapter_reports_differences_but_changes_nothing():
+    """The mock answers every account with one sample record; it must never overwrite real balances."""
+    from backend.app.services.cbs_sync_real_service import CBSSyncService
+    account = _local_account(outstanding_principal=Decimal("1.00"))
+    db = _FakeDB(account)
+    out = await CBSSyncService(MockFinacleAdapter()).sync_loan_account(db, PID, "ACC00001")
+    assert out["status"] == "success" and out["changes_count"] >= 1
+    assert (out["simulated"], out["applied"]) == (True, False)
+    assert account.outstanding_principal == Decimal("1.00")
+    assert db.flushed == 0
 
 
 async def test_sync_service_unknown_account():

@@ -15,6 +15,7 @@ from backend.app.integration.finacle_adapter import (
     FinacleAdapterBase,
     FinacleSyncRequest,
     FinacleSyncType,
+    MockFinacleAdapter,
 )
 from backend.app.models.audit import AuditLog
 
@@ -44,7 +45,7 @@ class CBSSyncService:
         Args:
             db: Database session
             project_id: Project ID
-            loan_id: Finacle loan account ID
+            loan_id: The loan account's id, or its Finacle account number
             user_id: Current user ID for audit
 
         Returns:
@@ -53,8 +54,13 @@ class CBSSyncService:
         try:
             # Get local account
             # Scoped to the project: a loan id from another project must not be syncable through this one
+            # Clients know the loan by its own id (API responses mask the Finacle account number)
+            try:
+                matches_loan = LoanAccount.id == uuid.UUID(str(loan_id))
+            except ValueError:
+                matches_loan = LoanAccount.finacle_account_id == loan_id
             stmt = select(LoanAccount).where(
-                LoanAccount.finacle_account_id == loan_id,
+                matches_loan,
                 LoanAccount.project_id == uuid.UUID(str(project_id)),
             )
             result = await db.execute(stmt)
@@ -74,7 +80,7 @@ class CBSSyncService:
             sync_request = FinacleSyncRequest(
                 sync_type=FinacleSyncType.REALTIME_INQUIRY,
                 request_id=str(uuid.uuid4()),
-                account_ids=[loan_id],
+                account_ids=[local_account.finacle_account_id],
             )
 
             sync_response = await self.adapter.sync_with_circuit_breaker(sync_request)
@@ -118,8 +124,11 @@ class CBSSyncService:
             # Count changes
             changes = [d for d in diff_log if d["status"] == "changed"]
 
-            # Update local account if changes detected
-            if changes:
+            # The mock adapter answers every account with one built-in sample record. Comparing against
+            # it is useful to exercise the flow; writing it over real balances never is.
+            simulated = isinstance(self.adapter, MockFinacleAdapter)
+            applied = bool(changes) and not simulated
+            if applied:
                 await self._update_loan_account(db, local_account, finacle_account)
 
             # Log sync action
@@ -137,6 +146,8 @@ class CBSSyncService:
                 "status": "success",
                 "changes_count": len(changes),
                 "diff_log": diff_log,
+                "simulated": simulated,
+                "applied": applied,
             }
 
         except Exception as e:
