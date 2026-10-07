@@ -44,6 +44,9 @@ from backend.app.schemas.loan import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
+# Lifecycle fields: a direct edit would let one person move a project without a checker
+APPROVAL_ONLY_PROJECT_FIELDS = frozenset({"project_stage", "pipeline_status", "drop_reason"})
+
 
 def _get_audit_metadata(user_id: str = "anonymous", action: str = "read") -> AuditMetadata:
     """Create audit metadata for response."""
@@ -492,24 +495,27 @@ async def update_project(
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> ApiResponse[ProjectDetailResponse]:
-    """Update project fields.
+    """Correct a project's descriptive fields (its names).
 
-    Admins may update any project; makers only projects they own.
-    Moving to "dropped" requires a drop_reason.
+    Admins may update any project; makers only projects they own. Stage, pipeline status and
+    drop reason are not editable here for anyone: they change only through an approved
+    change request (POST /api/v1/mutations/submit-with-justification).
     """
 
     project = await _get_visible_project(db, current_user, project_id)
     if not await RLSService.can_update_project(db, current_user, project.id):
         raise HTTPException(status_code=403, detail="Not allowed to update this project")
 
-    _validate_status_fields(req.project_stage, req.pipeline_status)
     changes = req.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(status_code=422, detail="No fields to update")
 
-    if changes.get("pipeline_status") == PipelineStatus.DROPPED.value:
-        if not (changes.get("drop_reason") or project.drop_reason):
-            raise HTTPException(status_code=422, detail="drop_reason is required when dropping a project")
+    needs_approval = sorted(APPROVAL_ONLY_PROJECT_FIELDS & changes.keys())
+    if needs_approval:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{', '.join(needs_approval)} can only be changed through an approved change request",
+        )
 
     pre_state = {field: getattr(project, field, None) for field in changes}
     for field, value in changes.items():

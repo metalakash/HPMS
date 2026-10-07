@@ -107,17 +107,18 @@ async def test_project_lifecycle_with_row_level_security(api, db_session):
     # Malformed id is a 404, not a 500
     assert (await api.get("/api/v1/projects/not-a-uuid", headers=admin)).status_code == 404
 
-    # PATCH: owner may update; dropping needs a reason; other maker can't see it
+    # PATCH: owner may correct names; lifecycle fields need an approved change request, even for
+    # an admin; other maker can't see it
     r = await api.patch(f"/api/v1/projects/{project_id}", json={"name_en": "Renamed"}, headers=maker)
     assert r.status_code == 200 and r.json()["data"]["name_en"] == "Renamed"
-    r = await api.patch(f"/api/v1/projects/{project_id}", json={"pipeline_status": "dropped"}, headers=maker)
-    assert r.status_code == 422
-    r = await api.patch(
-        f"/api/v1/projects/{project_id}",
-        json={"pipeline_status": "dropped", "drop_reason": "Licence revoked"},
-        headers=maker,
-    )
-    assert r.status_code == 200 and r.json()["data"]["drop_reason"] == "Licence revoked"
+    for headers in (maker, admin):
+        for body in ({"pipeline_status": "dropped", "drop_reason": "Licence revoked"},
+                     {"project_stage": "operation"}, {"drop_reason": "x"},
+                     {"name_en": "Sneaky", "pipeline_status": "under_operation"}):
+            r = await api.patch(f"/api/v1/projects/{project_id}", json=body, headers=headers)
+            assert r.status_code == 409 and "change request" in r.json()["detail"], r.text
+    after = (await api.get(f"/api/v1/projects/{project_id}", headers=admin)).json()["data"]
+    assert (after["pipeline_status"], after["name_en"]) == (PROJECT["pipeline_status"], "Renamed")
     r = await api.patch(f"/api/v1/projects/{project_id}", json={"name_en": "Hijack"}, headers=other_maker)
     assert r.status_code == 404
 
