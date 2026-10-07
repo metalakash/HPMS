@@ -35,15 +35,20 @@ def test_projects_are_deterministic_unique_and_use_the_applications_vocabulary()
     projects = realistic.build_projects(random.Random(realistic.SEED))
     assert projects == realistic.build_projects(random.Random(realistic.SEED))
 
-    assert len(projects) == realistic.PROJECT_COUNT == 50
+    assert len(projects) == 50
     assert len({p["code"] for p in projects}) == 50
-    assert {p["province"] for p in projects} == set(realistic.PROVINCES)  # every UI filter option has data
+    assert len({p["name_en"] for p in projects}) == 50
+    # Real projects from the DoED list; it has none in Madhesh
+    provinces = {p["province"] for p in projects}
+    assert provinces == {"Koshi", "Bagmati", "Gandaki", "Lumbini", "Karnali", "Sudurpashchim"}
+    assert {"Kali Gandaki A", "Khimti -I", "Kulekhani-I"} <= {p["name_en"] for p in projects}
     assert {p["stage"] for p in projects} == {"feasibility", "construction", "operation"}
     valid_statuses = {s.value for s in PipelineStatus}
     for p in projects:
         assert p["status"] in valid_statuses
         assert p["status"] in integrity.STATUSES_BY_STAGE[p["stage"]], p
-        assert p["code"].split("-")[1] == realistic.PROVINCES[p["province"]]
+        assert p["code"].split("-")[1] == realistic.PROVINCE_CODES[p["province"]]
+        assert p["capacity_mw"] > 0 and p["district"]
 
 
 @pytest.mark.parametrize("seed", range(20))
@@ -506,7 +511,9 @@ async def test_project_detail_endpoints_agree_with_each_other(api, seeded):
     assert detail["project_code"] == project["project_code"]
     assert detail["loan_accounts_count"] == len(loans) == 1
     assert detail["location"]["province"] == project["province"]
-    assert [c["cod_type"] for c in detail["cod_history"]] == ["original_cod"]
+    assert [c["cod_type"] for c in detail["cod_history"]] == ["original_cod", "current_approved_cod", "actual_cod"]
+    assert all(c["date_bs"] for c in detail["cod_history"])  # Bikram Sambat dates are filled in
+    assert detail["location"]["district"]
 
     loan = loans[0]
     assert loan["finacle_account_id"] != f"FIN-{project['project_code']}"  # account number is masked
@@ -566,9 +573,9 @@ async def test_project_tab_endpoints_serve_the_seeded_operations_data(api):
 
     generation = (await api.get(f"{base}/generation-ppa")).json()["data"]
     assert generation["ppa"]["agreement_number"] == f"NEA-{rows[0]['project_code']}"
-    assert generation["summary"]["months_available"] == len(generation["monthly_data"]) == 6
+    assert generation["summary"]["months_available"] == len(generation["monthly_data"]) == 12
     months = [m["month"] for m in generation["monthly_data"]]
-    assert months == sorted(months) and len(set(months)) == 6  # oldest first
+    assert months == sorted(months) and len(set(months)) == 12  # oldest first
     for month in generation["monthly_data"]:
         assert month["season"] in ("wet", "dry")
         expected = round((month["actual_mwh"] - month["contract_mwh"]) / month["contract_mwh"] * 100, 2)
@@ -590,17 +597,108 @@ async def test_project_tab_endpoints_serve_the_seeded_operations_data(api):
     assert (esg["eia_mitigation"]["total_measures"], esg["eia_mitigation"]["completed_measures"]) == (3, 1)
 
 
+async def test_financed_projects_have_milestones_risks_and_eight_quarters_of_covenants(api):
+    for stage in ("construction", "operation"):
+        rows, _ = await _all_projects(api, stage=stage)
+        base = f"/api/v1/projects/{rows[0]['id']}"
+
+        milestones = (await api.get(f"{base}/milestones")).json()["data"]
+        assert [m["name"] for m in milestones][0] == "Financial close" and len(milestones) == 6
+        assert {m["status"] for m in milestones} <= {"planned", "in_progress", "delayed", "completed"}
+        if stage == "operation":
+            assert {m["status"] for m in milestones} == {"completed"}
+
+        risks = (await api.get(f"{base}/risks")).json()["data"]
+        assert 2 <= len(risks) <= 3
+        assert {r["severity"] for r in risks} <= {"low", "medium", "high", "critical"}
+
+        history = (await api.get(f"/api/v1/compliance/covenants/{rows[0]['id']}/history")).json()["data"]
+        assert history["quarters_available"] == 8 and len(history["trends"]) == 8
+
+
+async def test_seeded_covenant_results_come_from_the_engine_and_show_some_stress(seeded):
+    """Nothing is hand-written: the history is what the engine makes of the seeded financials."""
+    from backend.app.models.operations import CovenantHistory, CovenantTerms, FinancialPeriod
+    from backend.app.services.covenant_service import CovenantService
+
+    assert await _count(seeded, FinancialPeriod) == await _count(seeded, CovenantHistory) == 34 * 11
+    assert 3 <= await _count(seeded, CovenantTerms) <= 8
+    assert {h.data_provenance for h in (await seeded.execute(select(CovenantHistory))).scalars()} == {"CALCULATED"}
+
+    async def by_status(column, *where):
+        return dict((await seeded.execute(select(column, func.count()).where(*where).group_by(column))).all())
+
+    dscr = await by_status(CovenantHistory.dscr_status)
+    assert dscr["compliant"] > dscr.get("breached", 0) > 0  # mostly healthy, something to find
+    # Operating projects are tested once a full year of income is on file: 17 projects x 8 quarters
+    assert sum(count for status, count in dscr.items() if status != "not_tested") == 17 * 8
+    assert set(await by_status(CovenantHistory.ltv_status)) <= {"compliant", "warning", "breached"}
+
+    # A project still being built has no income to cover debt with; only its LTV is tested
+    building = select(Project.id).where(Project.project_stage == "construction")
+    assert set(await by_status(CovenantHistory.dscr_status, CovenantHistory.project_id.in_(building))) == {"not_tested"}
+
+    def snapshot(rows):
+        return sorted((str(h.project_id), h.quarter_ad, h.dscr_value, h.icr_value, h.ltv_value) for h in rows)
+
+    before = snapshot((await seeded.execute(select(CovenantHistory))).scalars())
+    assert await CovenantService.recalculate_all(seeded, today=TODAY) == 34
+    seeded.expire_all()
+    assert snapshot((await seeded.execute(select(CovenantHistory))).scalars()) == before
+
+
+async def test_seeded_water_licences_include_renewals_due(api, seeded):
+    from backend.app.models.project import WaterLicense
+    assert await _count(seeded, WaterLicense) == 50
+    lapsing = (await seeded.execute(
+        select(WaterLicense.project_id).where(WaterLicense.validity_to_ad < TODAY + timedelta(days=90)))).scalars().all()
+    assert 3 <= len(lapsing) <= 12
+
+    data = (await api.get(f"/api/v1/projects/{lapsing[0]}/hydrology")).json()["data"]
+    assert data["water_licenses"][0]["status"] in ("expiring_soon", "expired")
+
+
+async def test_operating_projects_have_maintenance_and_plant_performance(api):
+    rows, _ = await _all_projects(api, stage="operation")
+    data = (await api.get(f"/api/v1/projects/{rows[0]['id']}/maintenance", params={"months": 12})).json()["data"]
+    assert data["maintenance_schedules"]["upcoming_count"] == 2
+    assert data["maintenance_logs"]["recent_count"] >= 1
+    assert data["plant_performance"]["months_available"] >= 11
+    assert 0 < data["plant_performance"]["avg_plf_pct"] <= 100
+
+
+async def test_each_loan_has_one_current_rate_matching_the_loan(seeded):
+    from backend.app.models.financial import LoanAccountRateHistory
+    current = dict((await seeded.execute(
+        select(LoanAccountRateHistory.loan_account_id, LoanAccountRateHistory.interest_rate_pct)
+        .where(LoanAccountRateHistory.is_current == "Y"))).all())
+    loans = (await seeded.execute(select(LoanAccount))).scalars().all()
+    assert len(current) == len(loans) == 34
+    assert all(current[loan.id] == loan.interest_rate_pct for loan in loans)
+    assert await _count(seeded, LoanAccountRateHistory) == 68
+
+
+async def test_reseeding_clears_stale_change_requests(seeded):
+    await workflows.seed(seeded)
+    assert await _count(seeded, ApprovalRequest) == 4
+    await realistic.seed(seeded, today=TODAY)
+    assert await _count(seeded, ApprovalRequest) == 0  # they pointed at the replaced projects and loans
+    assert len(await workflows.seed(seeded)) == 4
+
+
 async def test_project_tab_endpoints_are_empty_but_healthy_for_a_project_without_operations_data(api):
     rows, _ = await _all_projects(api, stage="construction")
     base = f"/api/v1/projects/{rows[0]['id']}"
 
     generation = (await api.get(f"{base}/generation-ppa")).json()["data"]
     assert generation["ppa"] is None and generation["monthly_data"] == []
-    assert (await api.get(f"{base}/hydrology")).json()["data"]["water_licenses"] == []
+    hydrology = (await api.get(f"{base}/hydrology")).json()["data"]
+    assert hydrology["hydrology"].get("river_basin") is None and len(hydrology["water_licenses"]) == 1
     assert (await api.get(f"{base}/land-governance")).json()["data"]["board_of_directors"]["members"] == []
     assert (await api.get(f"{base}/esg")).json()["data"]["metrics_as_of"] is None
     assert (await api.get(f"{base}/maintenance")).status_code == 200
-    history = await api.get(f"/api/v1/compliance/covenants/{rows[0]['id']}/history")
+    unfinanced, _ = await _all_projects(api, stage="feasibility")
+    history = await api.get(f"/api/v1/compliance/covenants/{unfinanced[0]['id']}/history")
     assert history.status_code == 200 and history.json()["data"]["status"] == "no_data"
 
 
@@ -617,12 +715,76 @@ async def test_the_demo_maker_owns_the_workflow_projects_after_seeding(api, seed
     assert r.status_code == 200, r.text
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "CovenantService.calculate_metrics is a placeholder: LTV divides the sanction by NPR 1 crore per MW "
-    "and DSCR is derived from the disbursement ratio, so a loan at 60-75% of project cost reports an "
-    "LTV in the thousands of percent"))
-async def test_covenant_metrics_are_plausible_for_a_seeded_loan(api, seeded):
-    loan = (await seeded.execute(select(LoanAccount))).scalars().first()
+async def test_covenant_metrics_are_plausible_for_a_seeded_operating_loan(api, seeded):
+    loan = (await seeded.execute(
+        select(LoanAccount).join(Project, Project.id == LoanAccount.project_id)
+        .where(Project.project_stage == "operation").order_by(Project.project_code))).scalars().first()
     r = await api.get(f"/api/v1/loan-accounts/{loan.id}/covenant-metrics")
     assert r.status_code == 200, r.text
-    assert Decimal(str(r.json()["data"]["ltv"])) <= 100
+    data = r.json()["data"]
+    assert 20 <= Decimal(data["ltv"]) <= 100
+    assert Decimal("0.5") <= Decimal(data["dscr"]) <= 5 and Decimal("0.5") <= Decimal(data["icr"]) <= 6
+    assert data["metric_as_of_date"] == "2026-09-30"  # the last completed quarter before TODAY
+
+    explained = (await api.get(f"/api/v1/compliance/covenants/{loan.project_id}/calculation")).json()["data"]
+    assert explained["dscr"]["value"] == data["dscr"] and len(explained["window"]["quarters_used"]) == 4
+
+
+async def test_seeded_statement_revenue_is_the_generation_revenue(seeded):
+    """The last four quarters of a project's reported revenue add up to its twelve months of generation."""
+    from backend.app.models.operations import EnergyGenerationData, FinancialPeriod
+    project_id = (await seeded.execute(select(EnergyGenerationData.project_id))).scalars().first()
+    generated = (await seeded.execute(select(func.sum(EnergyGenerationData.revenue_npr))
+                                      .where(EnergyGenerationData.project_id == project_id))).scalar()
+    reported = (await seeded.execute(
+        select(FinancialPeriod.revenue_npr).where(FinancialPeriod.project_id == project_id)
+        .order_by(FinancialPeriod.period_end_ad.desc()).limit(4))).scalars().all()
+    assert sum(reported) == generated > 0
+
+
+# ------------------------------------------------------------------ portfolio views (analytics, maintenance, users)
+
+async def test_performance_lists_operating_projects_weakest_delivery_first(api, seeded):
+    from backend.app.models.operations import EnergyGenerationData
+    rows = (await api.get("/api/v1/analytics/performance")).json()["data"]
+    assert len(rows) == 17 and {r["months"] for r in rows} == {12}
+    delivery = [Decimal(r["delivery_pct"]) for r in rows]
+    assert delivery == sorted(delivery) and all(80 < d < 110 for d in delivery)
+
+    first = rows[0]
+    actual, contract = (await seeded.execute(
+        select(func.sum(EnergyGenerationData.actual_energy_mwh), func.sum(EnergyGenerationData.contract_energy_mwh))
+        .where(EnergyGenerationData.project_id == uuid.UUID(first["project_id"])))).one()
+    assert Decimal(first["actual_gwh"]) == (actual / 1000).quantize(Decimal("0.01"))
+    assert Decimal(first["delivery_pct"]) == (actual / contract * 100).quantize(Decimal("0.01"))
+    assert 0 < Decimal(first["avg_plf_pct"]) <= 100 and first["covenant_status"] in (
+        "compliant", "warning", "breached")
+    assert all(r["serious_risks"] <= r["open_risks"] for r in rows)
+
+
+async def test_maintenance_lists_upcoming_soonest_first_and_completed_latest_first(api):
+    data = (await api.get("/api/v1/maintenance")).json()["data"]
+    assert (len(data["upcoming"]), len(data["completed"])) == (34, 51)
+    due = [m["scheduled_date_ad"] for m in data["upcoming"]]
+    done = [m["actual_date_ad"] for m in data["completed"]]
+    assert due == sorted(due) and done == sorted(done, reverse=True)
+    assert all(m["scheduled_date_bs"] and m["project_name"] for m in data["upcoming"])
+    assert (await api.get("/api/v1/maintenance", params={"days_back": 10})).json()["data"]["completed"] == []
+
+
+async def test_portfolio_views_respect_visibility_and_users_are_admin_only(api, seeded):
+    await workflows.seed(seeded)
+    maker, guest = await _as(api, "maker"), await _as(api, "guest")
+
+    mine = {p["id"] for p in (await api.get("/api/v1/projects", headers=maker, params={"page_size": 100})).json()["data"]}
+    rows = (await api.get("/api/v1/analytics/performance", headers=maker)).json()["data"]
+    assert {r["project_id"] for r in rows} <= mine
+    upcoming = (await api.get("/api/v1/maintenance", headers=maker)).json()["data"]["upcoming"]
+    assert {m["project_id"] for m in upcoming} <= mine
+    assert (await api.get("/api/v1/analytics/performance", headers=guest)).json()["data"] == []
+    assert (await api.get("/api/v1/maintenance", headers=guest)).json()["data"] == {"upcoming": [], "completed": []}
+
+    assert (await api.get("/api/v1/admin/users", headers=maker)).status_code == 403
+    users = (await api.get("/api/v1/admin/users")).json()["data"]
+    assert {"admin", "maker", "guest"} <= {u["username"] for u in users}
+    assert next(u for u in users if u["username"] == "maker")["role"] == "maker"

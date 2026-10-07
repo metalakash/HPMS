@@ -1,20 +1,26 @@
-"""Seed 50 synthetic hydropower projects with loans for Phase 11 testing.
+"""Seed a realistic test portfolio: 50 real hydropower projects with synthetic lending data.
 
-Project names are illustrative (some borrow the names of real Nepalese schemes); every
-figure is synthetic. The output is deterministic so E2E tests can rely on it.
+Project identity (name, capacity, river, province, district, municipality, licence stage) comes
+from backend/data/merged_hydropower_master.csv, the Niti Foundation / DoED licence list. Everything
+about the bank's relationship with a project (loans, schedules, covenants, milestones, risks,
+operations, governance, ESG) is synthetic, generated from the project's size and stage. The output
+is deterministic, including project ids, so tests and links survive a reseed.
 
-WARNING: this deletes every project, loan, tranche and repayment before seeding, along with
-project ownership and the generation, hydrology, land, governance and ESG records of projects.
+WARNING: this deletes every project and everything that hangs off one (loans, schedules, milestones,
+risks, licences, operations records, ownership) and all maker-checker requests, then reseeds. Run
+seed_test_workflows afterwards to recreate the change requests.
 
 Run from the repository root:
     python -m backend.scripts.seed_realistic_data
 """
 
 import asyncio
+import csv
 import random
 import uuid
 from datetime import date, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Dict, List
 
 from sqlalchemy import delete
@@ -23,68 +29,98 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.database import engine
 from backend.app.models.auth import ProjectOwner
 from backend.app.models.financial import DisbursementTranche, LoanAccount, LoanAccountRateHistory, Repayment
+from backend.app.models.governance import ApprovalRequest, ApprovalStep
 from backend.app.models.operations import (
-    BoardOfDirectors, EIAMitigationChecklist, EnergyGenerationData, ESGMetrics, HydrologyDetailed,
-    LandAcquisitionTracking, PPAAgreement, ShareholdingHierarchy,
+    BoardOfDirectors, CovenantHistory, CovenantTerms, EIAMitigationChecklist, EnergyGenerationData, ESGMetrics,
+    FinancialPeriod, HydrologyDetailed, LandAcquisitionTracking, MaintenanceLog, MaintenanceSchedule, NEAPPARate,
+    PlantPerformance, PPAAgreement, ShareholdingHierarchy,
 )
-from backend.app.models.project import Project, ProjectTechnicalSpecs
+from backend.app.models.project import Project, ProjectTechnicalSpecs, WaterLicense
+from backend.app.models.risk import Milestone, RiskRegisterEntry
+from backend.app.services.covenant_engine import Quarter
+from backend.app.services.covenant_service import CovenantService
+from backend.app.services.risk_service import bs_string, compute_severity
 
 SEED = 20261005
-PROJECT_COUNT = 50
-COST_PER_MW = Decimal("300000000")  # NPR 30 crore per MW
+SOURCE = Path(__file__).resolve().parent.parent / "data" / "merged_hydropower_master.csv"
+ID_NAMESPACE = uuid.UUID("6f0f3b52-5d0a-4a3e-9d0b-2b7f3f1c9a10")
+COST_PER_MW = Decimal("200000000")  # NPR 20 crore per MW, typical for run-of-river
 MONEY = Decimal("0.01")
 
-# The seven provinces the web UI filters on, with the code used in project_code.
+# DoED province numbers -> the names the web UI filters on, and the code used in project_code.
+# Madhesh (Province 2) has no licensed hydropower in the source list.
 PROVINCES = {
-    "Koshi": "KO", "Madhesh": "MA", "Bagmati": "BA", "Gandaki": "GA",
-    "Lumbini": "LU", "Karnali": "KA", "Sudurpashchim": "SU",
+    "Province 1": ("Koshi", "KO"), "Province 2": ("Madhesh", "MA"), "Province 3": ("Bagmati", "BA"),
+    "Province 4": ("Gandaki", "GA"), "Province 5": ("Lumbini", "LU"), "Province 6": ("Karnali", "KA"),
+    "Province 7": ("Sudurpashchim", "SU"),
 }
+PROVINCE_CODES = dict(PROVINCES.values())
+BASINS = {"Koshi": "Koshi", "Madhesh": "Bagmati", "Bagmati": "Bagmati", "Gandaki": "Gandaki",
+          "Lumbini": "West Rapti", "Karnali": "Karnali", "Sudurpashchim": "Mahakali"}
 
-# Pipeline statuses that make sense for each stage (see models.project.PipelineStatus).
-STATUS_BY_STAGE = {
-    "feasibility": ["proposal_under_pipeline", "under_review", "approved"],
-    "construction": ["yet_to_start_drawdown", "under_construction"],
-    "operation": ["under_operation"],
+# DoED licence type -> project stage, how many of each to take, and the statuses that fit the stage
+STAGES = {
+    "Operation": ("operation", 17, ["under_operation"]),
+    "Generation": ("construction", 17, ["yet_to_start_drawdown", "under_construction", "under_construction"]),
+    "Survey": ("feasibility", 16, ["proposal_under_pipeline", "under_review", "approved"]),
 }
-
-NAMED_PROJECTS = [
-    ("Upper Marsyangdi", 50, "Gandaki"),
-    ("Tamor Storage", 756, "Koshi"),
-    ("Likhu-4", 52, "Bagmati"),
-    ("Khimti", 60, "Bagmati"),
-    ("Kali Gandaki A", 144, "Gandaki"),
-    ("Bhotekoshi", 45, "Bagmati"),
-    ("Nyadi", 30, "Gandaki"),
-    ("Upper Indrawati", 35, "Bagmati"),
-    ("Modi", 25, "Gandaki"),
-    ("Arun-3", 900, "Koshi"),
-    ("Budhigandaki", 1200, "Gandaki"),
-    ("Sunkoshi-3", 536, "Bagmati"),
-    ("Upper Karnali", 900, "Karnali"),
-    ("West Seti", 750, "Sudurpashchim"),
-    ("Rapti Diversion", 18, "Lumbini"),
-]
+WET_MONTHS = {6, 7, 8, 9, 10, 11}
+# Share of installed capacity generated, and the PPA rate in NPR per MWh (posted rate after escalation)
+SEASONS = {True: ("wet", Decimal("0.85"), Decimal("5600")), False: ("dry", Decimal("0.45"), Decimal("9800"))}
+FINANCIAL_QUARTERS = 11  # three more than the eight shown, so the oldest shown has a full year behind it
 
 
 def money(value: Decimal) -> Decimal:
     return value.quantize(MONEY)
 
 
+def _num(rng: random.Random, low: float, high: float, places: int = 2) -> Decimal:
+    return Decimal(str(round(rng.uniform(low, high), places)))
+
+
+def _months_before(first_of_month: date, back: int) -> date:
+    index = first_of_month.year * 12 + first_of_month.month - 1 - back
+    return date(index // 12, index % 12 + 1, 1)
+
+
+def _bs(day: date | None) -> str | None:
+    return bs_string(day) if day else None
+
+
+def load_source() -> List[Dict[str, str]]:
+    with SOURCE.open(encoding="utf-8", newline="") as handle:
+        return [row for row in csv.DictReader(handle) if row["province"] in PROVINCES and row["capacity_mw"]]
+
+
 def build_projects(rng: random.Random) -> List[Dict[str, Any]]:
-    projects = [{"name_en": n, "capacity_mw": c, "province": p} for n, c, p in NAMED_PROJECTS]
-    provinces = list(PROVINCES)
-    while len(projects) < PROJECT_COUNT:
-        projects.append({
-            "name_en": f"Synthetic Hydro {len(projects) + 1}",
-            "capacity_mw": rng.randint(15, 500),
-            "province": provinces[len(projects) % len(provinces)],
-        })
-    stages = list(STATUS_BY_STAGE)
-    for i, project in enumerate(projects, start=1):
-        project["code"] = f"HPM-{PROVINCES[project['province']]}-{i:04d}"
-        project["stage"] = stages[i % len(stages)]
-        project["status"] = rng.choice(STATUS_BY_STAGE[project["stage"]])
-    return projects
+    """50 real projects: the largest of each licence stage plus a random spread of the rest."""
+    source = load_source()
+    chosen: List[Dict[str, Any]] = []
+    for licence_type, (stage, count, statuses) in STAGES.items():
+        pool = sorted((r for r in source if r["license_type"] == licence_type), key=lambda r: r["project_name"])
+        largest = sorted(pool, key=lambda r: -float(r["capacity_mw"]))[:5]
+        rest = [r for r in pool if r not in largest]
+        picked = largest + rng.sample(rest, count - len(largest))
+        # Every province this stage has should be findable through the UI's province filter:
+        # swap a randomly drawn row from the best-represented province for one from each missing province.
+        for province in sorted({r["province"] for r in pool} - {r["province"] for r in picked}):
+            counts: Dict[str, int] = {}
+            for row in picked[5:]:
+                counts[row["province"]] = counts.get(row["province"], 0) + 1
+            crowded = max(sorted(counts), key=counts.get)
+            victim = next(i for i in range(5, len(picked)) if picked[i]["province"] == crowded)
+            picked[victim] = next(r for r in rest if r["province"] == province and r not in picked)
+        for row in sorted(picked, key=lambda r: r["project_name"]):
+            chosen.append({
+                "name_en": row["project_name"].strip(), "capacity_mw": Decimal(row["capacity_mw"]),
+                "province": PROVINCES[row["province"]][0], "district": row["district"].strip().title() or None,
+                "local_level": row["municipality"].strip() or None, "river": row["river"].strip() or None,
+                "promoter": row["promoter"].strip() or None, "licence_number": row["license_number"].strip(),
+                "stage": stage, "status": rng.choice(statuses),
+            })
+    for index, project in enumerate(chosen, start=1):
+        project["code"] = f"HPM-{PROVINCE_CODES[project['province']]}-{index:04d}"
+    return chosen
 
 
 def build_tranches(rng: random.Random, disbursed: Decimal, first: date) -> List[Dict[str, Any]]:
@@ -138,62 +174,225 @@ def build_repayments(rng: random.Random, principal: Decimal, rate_pct: Decimal, 
     return rows
 
 
-BASINS = {"Koshi": "Koshi", "Madhesh": "Bagmati", "Bagmati": "Bagmati", "Gandaki": "Gandaki",
-          "Lumbini": "West Rapti", "Karnali": "Karnali", "Sudurpashchim": "Mahakali"}
-WET_MONTHS = {6, 7, 8, 9, 10, 11}
+def cod_dates(rng: random.Random, stage: str, today: date) -> Dict[str, Any]:
+    """Commercial operation dates that fit the stage: achieved, slipping, or only planned."""
+    if stage == "operation":
+        original = date(today.year - rng.randint(3, 9), rng.randint(1, 12), 1)
+        actual = original + timedelta(days=rng.choice([0, 0, 45, 120, 210]))
+        dates = {"original_cod_ad": original, "current_approved_cod_ad": actual, "actual_cod_ad": actual}
+    elif stage == "construction":
+        original = date(today.year + rng.randint(0, 2), rng.randint(1, 12), 1)
+        approved = original + timedelta(days=rng.choice([0, 0, 90, 180, 300]))
+        dates = {"original_cod_ad": original, "current_approved_cod_ad": approved,
+                 "forecast_cod_ad": approved + timedelta(days=rng.choice([0, 0, 60]))}
+    else:
+        dates = {"original_cod_ad": date(today.year + rng.randint(3, 6), rng.randint(1, 12), 1)}
+    return {**dates, **{key.replace("_ad", "_bs"): _bs(value) for key, value in dates.items()}}
+
+
+MILESTONES = [
+    ("Financial close", "FINANCING", 0.05), ("Access road and camp", "CIVIL", 0.20),
+    ("Headworks and tunnel", "CIVIL", 0.55), ("Powerhouse electro-mechanical works", "ELECTROMECHANICAL", 0.80),
+    ("Transmission line and grid connection", "TRANSMISSION", 0.92), ("Commercial operation", "COD", 1.00),
+]
+
+
+def build_milestones(rng: random.Random, project_id, stage: str, dates: Dict[str, Any], today: date) -> List[Milestone]:
+    """Construction milestones over the four years up to COD; a slipped COD moves the forecasts with it."""
+    slip = dates["current_approved_cod_ad"] - dates["original_cod_ad"]
+    start = dates["original_cod_ad"] - timedelta(days=4 * 365)
+    out = []
+    for sequence, (name, category, fraction) in enumerate(MILESTONES, start=1):
+        planned = start + timedelta(days=int(4 * 365 * fraction))
+        forecast = planned + slip
+        if stage == "operation" or forecast <= today - timedelta(days=30):
+            status, done, actual = "completed", Decimal("100"), forecast
+        elif forecast <= today + timedelta(days=200):
+            status, done, actual = ("delayed" if slip else "in_progress"), _num(rng, 35, 90), None
+        else:
+            status, done, actual = "planned", Decimal("0"), None
+        out.append(Milestone(
+            id=uuid.uuid4(), project_id=project_id, name=name, category=category, sequence=sequence,
+            planned_date_ad=planned, planned_date_bs=_bs(planned), forecast_date_ad=forecast,
+            forecast_date_bs=_bs(forecast), actual_date_ad=actual, actual_date_bs=_bs(actual),
+            status=status, percent_complete=done,
+            remarks="Revised with the approved COD" if slip and status != "completed" else None))
+    return out
+
+
+RISKS = {
+    "construction": [
+        ("Tunnel geology worse than the DPR assumed", "technical", "Additional rock support; contingency drawdown"),
+        ("Monsoon access road closures", "climate", "Pre-monsoon stockpiling of materials"),
+        ("Cost overrun on electro-mechanical supply", "financial", "Fixed-price supply contract; FX hedge"),
+        ("Transmission line right-of-way disputes", "social", "Compensation committee with the local level"),
+    ],
+    "operation": [
+        ("Dry-season generation below the PPA contract energy", "climate", "Hydrology review; PPA energy table revision"),
+        ("NEA payment delays", "financial", "Monitor receivables ageing; escrow sweep"),
+        ("Sediment damage to turbine runners", "technical", "Annual runner overhaul; desander flushing"),
+        ("Water use licence renewal", "legal", "File renewal six months before expiry"),
+    ],
+}
+
+
+def build_risks(rng: random.Random, project_id, stage: str, today: date) -> List[RiskRegisterEntry]:
+    out = []
+    for title, risk_type, mitigation in rng.sample(RISKS[stage], rng.randint(2, 3)):
+        likelihood, impact = rng.randint(1, 4), rng.randint(2, 5)
+        out.append(RiskRegisterEntry(
+            id=uuid.uuid4(), project_id=project_id, title=title, risk_type=risk_type, likelihood=likelihood,
+            impact=impact, severity=compute_severity(likelihood, impact), mitigation_action=mitigation,
+            mitigation_owner="Project monitoring unit", mitigation_due_ad=today + timedelta(days=rng.randint(30, 240)),
+            mitigation_status=rng.choice(["open", "in_progress", "in_progress", "mitigated"]), trigger_source="manual"))
+    return out
+
+
+def monthly_energy(rng: random.Random, capacity: Decimal, month: date) -> Dict[str, Any]:
+    """Contracted and delivered energy for a month, and what NEA pays for it."""
+    season, factor, rate = SEASONS[month.month in WET_MONTHS]
+    contract = money(capacity * Decimal("720") * factor)
+    actual = money(contract * _num(rng, 0.86, 1.06, 4))
+    return {"season": season, "contract": contract, "actual": actual, "revenue": money(actual * rate)}
+
+
+def build_financial_periods(rng: random.Random, project_id, stage: str, capacity: Decimal, project_cost: Decimal,
+                            monthly_revenue: Dict[date, Decimal], stressed: bool, today: date) -> List[FinancialPeriod]:
+    """The quarterly figures the covenant engine tests.
+
+    An operating project reports income for every quarter; revenue is the generation revenue of
+    the quarter's months. A stressed project's operating costs climb (repairs after flood damage)
+    until coverage fails. A project under construction has no income, only a yearly valuation.
+    """
+    latest = Quarter.of(today).shift(-1)
+    valuation = money(project_cost * _num(rng, 1.0, 1.25, 4))
+    cost_share = _num(rng, 0.10, 0.15, 4)
+    rows = []
+    for back in range(FINANCIAL_QUARTERS - 1, -1, -1):
+        quarter = latest.shift(-back)
+        row = FinancialPeriod(
+            id=uuid.uuid4(), project_id=project_id, quarter_ad=quarter.label, period_end_ad=quarter.end,
+            period_end_bs=_bs(quarter.end), is_audited=back >= 4, data_provenance="MANUAL_ENTRY",
+            source_reference="Audited accounts" if back >= 4 else "Management accounts")
+        if quarter.number == 2 or back == FINANCIAL_QUARTERS - 1:  # revalued once a year
+            row.security_value_npr = valuation
+            valuation = money(valuation * _num(rng, 0.98, 1.03, 4))
+        if stage == "operation":
+            revenue = Decimal("0")
+            for offset in range(3):
+                month = date(quarter.year, quarter.start.month + offset, 1)
+                if month not in monthly_revenue:
+                    monthly_revenue[month] = monthly_energy(rng, capacity, month)["revenue"]
+                revenue += monthly_revenue[month]
+            share = cost_share + (Decimal("0.07") * max(0, 6 - back) if stressed else Decimal("0"))
+            row.revenue_npr = revenue
+            row.operating_expenses_npr = money(revenue * share)
+            row.royalty_npr = money(revenue * Decimal("0.025"))
+            row.tax_paid_npr = Decimal("0")  # income tax holiday
+            row.depreciation_npr = money(project_cost / 40 / 4)
+        rows.append(row)
+    return rows
+
+
+def build_water_licence(rng: random.Random, project_id, data: Dict[str, Any], index: int, today: date) -> WaterLicense:
+    """A DoED licence; a few are close to expiry or lapsed so the renewal alerts have something to show."""
+    remaining = {3: 45, 7: 75, 11: -20}.get(index % 17, rng.randint(400, 3600))
+    valid_to = today + timedelta(days=remaining)
+    valid_from = valid_to - timedelta(days=rng.choice([5, 10, 35]) * 365)
+    kind = "Generation" if data["stage"] != "feasibility" else "Survey"
+    return WaterLicense(
+        id=uuid.uuid4(), project_id=project_id, license_number=f"DoED-{kind[0]}-{data['licence_number']}-{data['code']}",
+        issuing_authority="Department of Electricity Development", river_basin=BASINS[data["province"]],
+        validity_from_ad=valid_from, validity_from_bs=_bs(valid_from), validity_to_ad=valid_to,
+        validity_to_bs=_bs(valid_to),
+        terms=f"{kind} licence for {data['capacity_mw']} MW on {data['river'] or 'the river'}",
+        status="active" if remaining >= 0 else "expired")
 
 
 def build_operations(rng: random.Random, project_id, data: Dict[str, Any], today: date) -> List[Any]:
-    """Generation, hydrology, land, governance and ESG records for one operating project."""
-    capacity = Decimal(data["capacity_mw"])
+    """Generation, tariff, plant performance, maintenance, hydrology, land, governance and ESG records."""
+    capacity = data["capacity_mw"]
+    first = date(today.year, today.month, 1)
     ppa = PPAAgreement(
         id=uuid.uuid4(), project_id=project_id, agreement_number=f"NEA-{data['code']}",
-        purchaser="Nepal Electricity Authority", effective_date_ad=date(2022, 7, 1), expiry_date_ad=date(2052, 7, 1),
+        purchaser="Nepal Electricity Authority", effective_date_ad=date(2018, 7, 1), expiry_date_ad=date(2048, 7, 1),
         tariff_type="ROR", escalation_pct_annual=Decimal("3.00"), status="active")
     records: List[Any] = [ppa]
+    for season, _, rate in SEASONS.values():
+        records.append(NEAPPARate(id=uuid.uuid4(), project_id=project_id, valid_from_ad=date(2018, 7, 1),
+                                  season=season, rate_per_mwh_npr=rate, is_current=True))
 
-    first = date(today.year, today.month, 1)
-    for back in range(1, 7):  # the six complete months before this one
-        month = date(first.year + (first.month - back - 1) // 12, (first.month - back - 1) % 12 + 1, 1)
+    for back in range(1, 13):  # the twelve complete months before this one
+        month = _months_before(first, back)
         wet = month.month in WET_MONTHS
-        contract = money(capacity * Decimal("720") * Decimal("0.65" if wet else "0.35"))
-        actual = money(contract * Decimal(str(round(rng.uniform(0.88, 1.06), 4))))
-        rate = Decimal("4800" if wet else "8400")  # NPR per MWh
+        availability = _num(rng, 88, 99)
+        energy = monthly_energy(rng, capacity, month)
+        contract, actual = energy["contract"], energy["actual"]
+        forced = rng.choice([0, 0, 0, 6, 14])
+        scheduled = 0 if wet else rng.choice([0, 0, 24])
         records.append(EnergyGenerationData(
-            id=uuid.uuid4(), project_id=project_id, ppa_agreement_id=ppa.id, month_ad=month,
+            id=uuid.uuid4(), project_id=project_id, ppa_agreement_id=ppa.id, month_ad=month, month_bs=_bs(month),
             season="wet" if wet else "dry", contract_energy_mwh=contract, actual_energy_mwh=actual,
-            availability_pct=Decimal(str(round(rng.uniform(90, 99), 2))), curtailment_mwh=Decimal("0"),
-            revenue_npr=money(actual * rate)))
+            availability_pct=availability,
+            curtailment_mwh=money(contract * _num(rng, 0, 0.03, 4)) if wet else Decimal("0"),
+            revenue_npr=energy["revenue"]))
+        records.append(PlantPerformance(
+            id=uuid.uuid4(), project_id=project_id, month_ad=month, month_bs=_bs(month),
+            efficiency_pct=_num(rng, 86, 93), availability_pct=availability,
+            availability_hours=720 - forced - scheduled, outage_hours=forced + scheduled,
+            forced_outage_count=1 if forced else 0, forced_outage_hours=forced,
+            scheduled_maintenance_outage_hours=scheduled, plf_pct=money(actual / (capacity * 720) * 100)))
+
+    equipment = ["Unit 1 turbine runner", "Unit 2 generator", "Main inlet valve", "Desander gates",
+                 "Step-up transformer"]
+    for name in rng.sample(equipment, 2):
+        due = today + timedelta(days=rng.randint(10, 80))
+        records.append(MaintenanceSchedule(
+            id=uuid.uuid4(), project_id=project_id, equipment_name=name, maintenance_type="preventive",
+            scheduled_date_ad=due, scheduled_date_bs=_bs(due),
+            estimated_duration_hours=rng.choice([24, 48, 72]), estimated_impact_mwh=money(capacity * 12),
+            contractor_name="O&M contractor", status="scheduled"))
+    for name in rng.sample(equipment, 3):
+        hours = rng.choice([8, 24, 48])
+        done = today - timedelta(days=rng.randint(20, 330))
+        records.append(MaintenanceLog(
+            id=uuid.uuid4(), project_id=project_id, equipment_name=name,
+            maintenance_type=rng.choice(["preventive", "preventive", "corrective"]),
+            actual_date_ad=done, actual_date_bs=_bs(done), duration_hours=hours,
+            downtime_mwh=money(capacity * hours * Decimal("0.4")), contractor_name="O&M contractor",
+            cost_npr=money(capacity * Decimal(rng.randint(20000, 90000))), notes="Completed as planned"))
 
     records.append(HydrologyDetailed(
-        id=uuid.uuid4(), project_id=project_id, river_basin=BASINS[data["province"]],
-        catchment_area_sqkm=Decimal(rng.randint(300, 6000)),
-        design_discharge_m3s=Decimal(str(round(rng.uniform(15, 250), 2))),
-        median_flow_m3s=Decimal(str(round(rng.uniform(20, 320), 2))), measurement_date_ad=date(2021, 3, 1)))
+        id=uuid.uuid4(), project_id=project_id, river_basin=BASINS[data["province"]], sub_basin=data["river"],
+        catchment_area_sqkm=money(capacity * _num(rng, 12, 60)),
+        design_discharge_m3s=money(capacity * _num(rng, 0.5, 1.6)),
+        median_flow_m3s=money(capacity * _num(rng, 0.7, 2.2)), measurement_date_ad=date(2016, 3, 1),
+        source_reference="Detailed project report"))
 
-    required = Decimal(rng.randint(300, 3000))
-    acquired = money(required * Decimal(str(round(rng.uniform(0.85, 1.0), 2))))
+    required = money(capacity * _num(rng, 8, 22))
+    acquired = money(required * _num(rng, 0.9, 1.0))
     records.append(LandAcquisitionTracking(
         id=uuid.uuid4(), project_id=project_id, total_area_required_ropani=required,
         total_area_acquired_ropani=acquired, acquisition_pct=money(acquired / required * 100),
         compensation_paid_npr=money(acquired * Decimal("450000")),
-        compensation_outstanding_npr=money((required - acquired) * Decimal("450000")),
-        last_update_date_ad=today))
-    for name, title in (("Director A", "Chairperson"), ("Director B", "Managing Director"), ("Director C", "Director")):
-        records.append(BoardOfDirectors(id=uuid.uuid4(), project_id=project_id, director_name=name, title=title,
-                                        appointment_date_ad=date(2021, 1, 15)))
-    for entity, kind, share in (("Promoter group", "promoter", "51"), ("Institutional investor", "company", "30"),
+        compensation_outstanding_npr=money((required - acquired) * Decimal("450000")), last_update_date_ad=today))
+    for title in ("Chairperson", "Managing Director", "Director"):
+        records.append(BoardOfDirectors(id=uuid.uuid4(), project_id=project_id, title=title,
+                                        director_name=f"{title} (name not on file)",
+                                        appointment_date_ad=date(2017, 1, 15)))
+    promoter = data["promoter"] or "Promoter group"
+    for entity, kind, share in ((promoter, "promoter", "51"), ("Institutional investors", "company", "30"),
                                 ("Public shareholders", "public", "19")):
-        records.append(ShareholdingHierarchy(id=uuid.uuid4(), project_id=project_id, entity_name=entity,
+        records.append(ShareholdingHierarchy(id=uuid.uuid4(), project_id=project_id, entity_name=entity[:255],
                                              entity_type=kind, share_pct=Decimal(share),
-                                             effective_from_ad=date(2021, 1, 15)))
+                                             effective_from_ad=date(2017, 1, 15)))
 
     avoided = money(capacity * Decimal("2500"))
     records.append(ESGMetrics(
         id=uuid.uuid4(), project_id=project_id, metric_date_ad=first, carbon_credits_generated=avoided,
         ghg_emissions_avoided_tonnes=avoided, co2_avoided_tonnes_per_year=avoided,
-        local_employment_count=rng.randint(40, 600), community_grievance_count=rng.randint(0, 12),
-        grievance_resolution_rate_pct=Decimal(str(round(rng.uniform(70, 100), 2)))))
+        local_employment_count=rng.randint(25, 400), community_grievance_count=rng.randint(0, 12),
+        grievance_resolution_rate_pct=_num(rng, 70, 100)))
     for measure, status, pct in (("Compensatory afforestation", "in_progress", "80"),
                                  ("Fish passage", "completed", "100"), ("Biodiversity monitoring", "planned", "0")):
         records.append(EIAMitigationChecklist(id=uuid.uuid4(), project_id=project_id, mitigation_measure=measure,
@@ -201,52 +400,51 @@ def build_operations(rng: random.Random, project_id, data: Dict[str, Any], today
     return records
 
 
+# Children before parents; approval requests point at projects and loans by id, so they go too.
+DELETE_ORDER = (
+    ApprovalStep, ApprovalRequest, Repayment, DisbursementTranche, LoanAccountRateHistory, LoanAccount,
+    EnergyGenerationData, NEAPPARate, PPAAgreement, PlantPerformance, MaintenanceLog, MaintenanceSchedule,
+    HydrologyDetailed, LandAcquisitionTracking, BoardOfDirectors, ShareholdingHierarchy, ESGMetrics,
+    EIAMitigationChecklist, CovenantHistory, FinancialPeriod, CovenantTerms, Milestone, RiskRegisterEntry, WaterLicense, ProjectTechnicalSpecs,
+    ProjectOwner, Project,
+)
+
+
 async def seed(session: AsyncSession, today: date | None = None) -> int:
-    """Replace all project and loan data in ``session`` with the synthetic set. The caller commits."""
+    """Replace all project data in ``session`` with the test portfolio. The caller commits."""
     rng = random.Random(SEED)
     today = today or date.today()
     projects = build_projects(rng)
 
-    for model in (Repayment, DisbursementTranche, LoanAccountRateHistory, LoanAccount,
-                  EnergyGenerationData, PPAAgreement, HydrologyDetailed, LandAcquisitionTracking,
-                  BoardOfDirectors, ShareholdingHierarchy, ESGMetrics, EIAMitigationChecklist,
-                  ProjectTechnicalSpecs, ProjectOwner, Project):
+    for model in DELETE_ORDER:
         await session.execute(delete(model))
 
     for index, data in enumerate(projects):
+        stage, capacity = data["stage"], data["capacity_mw"]
+        dates = cod_dates(rng, stage, today)
         project = Project(
-            id=uuid.UUID(int=rng.getrandbits(128), version=4),
-            project_code=data["code"],
-            name_en=data["name_en"],
-            name_np=data["name_en"],
-            province=data["province"],
-            installed_capacity_mw=Decimal(data["capacity_mw"]),
-            project_stage=data["stage"],
-            pipeline_status=data["status"],
-            original_cod_ad=date(2024 + index % 5, 1 + index % 12, 1),
-        )
+            id=uuid.uuid5(ID_NAMESPACE, data["name_en"]), project_code=data["code"], name_en=data["name_en"],
+            name_np=data["name_en"],  # the source has no Nepali names
+            province=data["province"], district=data["district"], local_level=data["local_level"],
+            installed_capacity_mw=capacity, project_stage=stage, pipeline_status=data["status"], **dates)
         session.add(project)
+        await session.flush()
         session.add(ProjectTechnicalSpecs(
-            id=uuid.uuid4(), project_id=project.id,
-            design_head_m=Decimal(str(round(rng.uniform(50, 300), 2))),
-            design_discharge_cumecs=Decimal(str(round(rng.uniform(10, 200), 4))),
-            plant_type=rng.choice(["run_of_river", "storage", "cascade"]),
-            turbine_type=rng.choice(["francis", "pelton", "turgo"]),
-            transmission_km=Decimal(str(round(rng.uniform(5, 100), 2))),
-        ))
+            id=uuid.uuid4(), project_id=project.id, design_head_m=_num(rng, 50, 600),
+            design_discharge_cumecs=money(capacity * _num(rng, 0.5, 1.6)),
+            plant_type="storage" if "Kulekhani" in data["name_en"] else "run_of_river",
+            turbine_type=rng.choice(["francis", "pelton", "turgo"]), transmission_km=_num(rng, 3, 60)))
+        session.add(build_water_licence(rng, project.id, data, index, today))
 
-        # Projects still in feasibility have no drawn loan yet.
-        if data["stage"] == "feasibility":
+        # Projects still in feasibility have a survey licence and nothing else yet.
+        if stage == "feasibility":
             continue
-        if data["stage"] == "operation":
-            for record in build_operations(rng, project.id, data, today):
-                session.add(record)
 
-        project_cost = Decimal(data["capacity_mw"]) * COST_PER_MW
-        debt_share = Decimal(str(round(rng.uniform(0.60, 0.75), 4)))
+        project_cost = capacity * COST_PER_MW
+        debt_share = _num(rng, 0.60, 0.75, 4)
         sanctioned = money(project_cost * debt_share)
-        disbursed = money(sanctioned * Decimal(str(round(rng.uniform(0.70, 1.0), 4))))
-        rate = Decimal(str(round(rng.uniform(8.5, 11.5), 2)))
+        disbursed = money(sanctioned * _num(rng, 0.70, 1.0, 4))
+        rate = _num(rng, 8.5, 11.5)
         tenor, grace = rng.randint(10, 15), rng.randint(1, 3)
         first_due = date(2024, 6, 1)
         delinquent = index % 10 == 4  # roughly one loan in ten has a missed instalment
@@ -254,26 +452,56 @@ async def seed(session: AsyncSession, today: date | None = None) -> int:
         repayments = build_repayments(rng, disbursed, rate, tenor, grace, first_due, today, delinquent)
         repaid = sum((r["principal_paid"] for r in repayments), Decimal("0"))
         overdue = [r for r in repayments if r["days_past_due"] > 0]
+        outstanding = disbursed - repaid
+        maturity = date(first_due.year + tenor, 6, 1)
 
         loan = LoanAccount(
-            id=uuid.uuid4(), project_id=project.id,
-            finacle_account_id=f"FIN-{data['code']}",
+            id=uuid.uuid4(), project_id=project.id, finacle_account_id=f"FIN-{data['code']}",
             facility_type="term_loan" if index % 3 else "syndicated_term_loan",
-            sanctioned_amount=sanctioned, disbursed_amount=disbursed,
-            outstanding_principal=disbursed - repaid,
+            sanctioned_amount=sanctioned, disbursed_amount=disbursed, outstanding_principal=outstanding,
             overdue_principal=sum((r["principal_due"] for r in overdue), Decimal("0")),
             overdue_interest=sum((r["interest_due"] for r in overdue), Decimal("0")),
             interest_rate_pct=rate,  # covenant metrics are left for the application to calculate
-            maturity_ad=date(first_due.year + tenor, 6, 1),
-            sync_status="success",
-        )
+            maturity_ad=maturity, maturity_bs=_bs(maturity), sync_status="success")
         session.add(loan)
+        await session.flush()  # the unit of work does not order every child table after its parent
         for tranche in build_tranches(rng, disbursed, date(2022, 1, 15)):
             session.add(DisbursementTranche(id=uuid.uuid4(), loan_account_id=loan.id, **tranche))
         for repayment in repayments:
             session.add(Repayment(id=uuid.uuid4(), loan_account_id=loan.id, **repayment))
 
+        # One rate reset a year ago, so the loan has a history as well as a current rate
+        reset = date(today.year - 1, 7, 16)
+        session.add(LoanAccountRateHistory(
+            id=uuid.uuid4(), loan_account_id=loan.id, interest_rate_pct=rate + _num(rng, 0.25, 1.0),
+            valid_from_ad=date(2022, 1, 15), valid_to_ad=reset - timedelta(days=1), is_current="N",
+            reason_for_change="Rate at sanction"))
+        session.add(LoanAccountRateHistory(
+            id=uuid.uuid4(), loan_account_id=loan.id, interest_rate_pct=rate, valid_from_ad=reset,
+            is_current="Y", reason_for_change="Base rate reset"))
+
+        for record in build_milestones(rng, project.id, stage, dates, today):
+            session.add(record)
+        for record in build_risks(rng, project.id, stage, today):
+            session.add(record)
+        monthly_revenue: Dict[date, Decimal] = {}
+        if stage == "operation":
+            for record in build_operations(rng, project.id, data, today):
+                session.add(record)
+                if isinstance(record, EnergyGenerationData):
+                    monthly_revenue[record.month_ad] = record.revenue_npr
+        for record in build_financial_periods(rng, project.id, stage, capacity, project_cost, monthly_revenue,
+                                              stressed=index % 9 == 2, today=today):
+            session.add(record)
+        if index % 7 == 3:  # a few facilities were sanctioned on their own terms rather than the bank defaults
+            session.add(CovenantTerms(
+                id=uuid.uuid4(), project_id=project.id, dscr_min=Decimal("1.20"), ltv_max=Decimal("75"),
+                icr_min=Decimal("1.75"), warning_margin_pct=Decimal("8"),
+                source_reference=f"Sanction letter SL/{data['code']}"))
+
     await session.flush()
+    # Covenant results are not seeded: the engine works them out from the figures above
+    await CovenantService.recalculate_all(session, today=today)
     return len(projects)
 
 

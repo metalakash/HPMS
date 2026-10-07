@@ -9,21 +9,37 @@ python -m backend.scripts.validate_data_integrity
 
 ## `seed_realistic_data.py`
 
-**Deletes every project, loan, tranche, repayment and project-ownership row, and the generation,
-hydrology, land, governance and ESG records of projects**, then creates 50 synthetic projects. It fails (rather than deleting more) if other tables still reference a project.
+**Deletes every project and everything attached to one** (loans, schedules, rate history, milestones,
+risks, licences, reported financials, covenant terms and history, operations records, ownership) **and all maker-checker requests**,
+then creates the test portfolio. It fails rather than deleting more if another table still references
+a project. Run `seed_test_workflows` afterwards to recreate the change requests.
 
-- Names are illustrative; all figures are synthetic. Output is deterministic, including project
-  ids, so re-running gives the same data.
-- Provinces, stages and pipeline statuses use the application's own values, and every status is
-  one that fits its stage.
-- Projects in feasibility (16) have no loan. The other 34 have one loan each with 3-5 tranches
-  that add up to the disbursed amount and a semi-annual schedule: interest-only during a 1-3 year
-  grace period, then equal principal instalments, interest on the reducing balance.
-- Instalments due on or before today are paid; later ones are not. About one loan in ten has
-  missed its most recent instalment.
-- Covenant metrics (DSCR/LTV/ICR) are left empty for the application to calculate.
-- The 17 operating projects also get a PPA, six months of generation, hydrology, land acquisition,
-  directors, shareholders, ESG metrics and EIA measures, so the project tabs have data.
+- **Real identity, synthetic lending.** The 50 projects are taken from
+  `backend/data/merged_hydropower_master.csv` (Niti Foundation / DoED licence list): name, capacity,
+  river, province, district and municipality are real, and the licence type sets the stage
+  (17 operating, 17 under construction, 16 in feasibility). Everything about the bank's exposure is
+  generated: loans, COD dates, covenants, milestones, risks, operations, governance and ESG figures.
+  The source has no Madhesh projects and no Nepali names.
+- Deterministic, including project ids, so re-running gives the same portfolio.
+- Feasibility projects have a survey licence only. The other 34 have:
+  - one loan with 3-5 tranches adding up to the disbursed amount, a semi-annual schedule
+    (interest-only grace, then equal principal, interest on the reducing balance) and a rate history;
+    instalments already due are paid, and about one loan in ten has missed its latest one
+  - six construction milestones tied to the COD dates (a slipped COD shows delayed milestones)
+  - two or three risk register entries
+  - eleven quarters of reported figures (`project_financial_periods`): a yearly valuation of the
+    security, and for operating projects income, costs, royalty and depreciation. Revenue is the
+    generation revenue of the quarter's months. A few projects' costs climb until coverage fails.
+  - covenant history that is **calculated, not seeded**: the seed ends by running the covenant
+    engine over those figures. Operating projects get DSCR, ICR and LTV; projects under
+    construction have no income, so only LTV is tested.
+  - a handful of projects carry their own sanction terms (`covenant_terms`) instead of the bank defaults
+  - a DoED licence; three are close to expiry or lapsed
+- The 17 operating projects also have a PPA with NEA wet/dry rates, twelve months of generation and
+  plant performance, maintenance schedules and logs, hydrology, land acquisition, directors,
+  shareholders, ESG metrics and EIA measures.
+- Dates carry their Bikram Sambat equivalents.
+- Covenant metrics on the loan itself (DSCR/LTV/ICR) are the engine's latest result for its project.
 
 ## `validate_data_integrity.py`
 
