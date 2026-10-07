@@ -287,17 +287,11 @@ async def export_covenant_pdf(
 
         # Get all loans for authorized projects with metrics
         from backend.app.models.financial import LoanAccount
-        from backend.app.services.covenant_service import CovenantService
 
         result = await db.execute(
             select(LoanAccount).where(LoanAccount.project_id.in_(authorized_ids))
         )
         loans = result.scalars().all()
-
-        # Calculate metrics for loans missing them
-        for loan in loans:
-            if not loan.dscr or not loan.metric_as_of_date:
-                await CovenantService.calculate_metrics(db, loan)
 
         # Aggregate covenant data
         dscr_values = [float(l.dscr) for l in loans if l.dscr]

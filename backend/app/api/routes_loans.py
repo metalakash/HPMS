@@ -183,7 +183,7 @@ async def trigger_rate_sync(
         raise HTTPException(status_code=400, detail=f"Unknown sync_type: {sync_type}")
 
     # Get adapter and sync service
-    adapter = get_adapter("mock")  # Use mock for Phase 2; real adapter in Phase 2.5
+    adapter = get_adapter()  # CBS_ADAPTER: mock unless the deployment configures a real source
     service = CBSSyncService(adapter=adapter)
 
     # Trigger sync
@@ -246,22 +246,22 @@ async def get_covenant_metrics(
     if not await RLSService.can_view_project(db, current_user, loan.project_id):
         raise HTTPException(status_code=404, detail=f"Loan {loan_id} not found")
 
-    # Calculate if missing
-    if not loan.dscr or not loan.metric_as_of_date:
-        from backend.app.services.covenant_service import CovenantService
-        await CovenantService.calculate_metrics(db, loan)
-        await db.flush()
-
-    # Prepare response with pass/fail flags
+    # The metrics are maintained by the covenant engine whenever its inputs change; a ratio that
+    # could not be tested is null and does not pass.
+    from backend.app.services.covenant_service import CovenantService
+    terms, _ = await CovenantService.terms_for(db, loan.project_id)
     metrics = CovenantMetricsResponse(
         loan_account_id=str(loan.id),
         dscr=loan.dscr,
         ltv=loan.ltv,
         icr=loan.icr,
         metric_as_of_date=loan.metric_as_of_date,
-        dscr_pass=(loan.dscr or 0) >= 1.25,
-        ltv_pass=(loan.ltv or 0) <= 70,
-        icr_pass=(loan.icr or 0) >= 2.0,
+        dscr_pass=loan.dscr is not None and loan.dscr >= terms.dscr_min,
+        ltv_pass=loan.ltv is not None and loan.ltv <= terms.ltv_max,
+        icr_pass=loan.icr is not None and loan.icr >= terms.icr_min,
+        dscr_threshold=terms.dscr_min,
+        ltv_threshold=terms.ltv_max,
+        icr_threshold=terms.icr_min,
     )
 
     return ApiResponse(

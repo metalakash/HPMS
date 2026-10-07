@@ -2,14 +2,14 @@
 
 > Generated from the SQLAlchemy models by `backend/scripts/generate_data_dictionary.py`. Do not edit by hand; run `python -m backend.scripts.generate_data_dictionary` and commit the result.
 
-**70 tables and views, 1043 columns.** Dates are stored as AD `DATE` columns with a paired `*_bs` text column (`YYYY-MM-DD` Bikram Sambat) where the business needs both calendars. Descriptions come from the model docstrings.
+**72 tables and views, 1072 columns.** Dates are stored as AD `DATE` columns with a paired `*_bs` text column (`YYYY-MM-DD` Bikram Sambat) where the business needs both calendars. Descriptions come from the model docstrings.
 
 ## Contents
 
 - **Projects**: `hydrology_records`, `land_records`, `project_capacity_history`, `project_technical_specs`, `projects`, `rcod_events`, `water_licenses`
 - **Loans and financing**: `budget_lines`, `cbs_sync_logs`, `disbursement_tranches`, `loan_account_rate_history`, `loan_accounts`, `loan_exposure_sync_history`, `loan_exposure_sync_schedules`, `repayments`
 - **Consortium**: `consortium_exposure_v`, `consortium_facilities`, `consortium_members`
-- **Operations: PPA, hydrology, land, ESG, maintenance, covenants**: `board_of_directors`, `covenant_history`, `eia_mitigation_checklist`, `energy_generation_data`, `esg_metrics`, `hydrology_detailed`, `land_acquisition_tracking`, `maintenance_logs`, `maintenance_schedules`, `nea_ppa_rates`, `plant_performance`, `ppa_agreements`, `shareholding_hierarchy`, `tariff_structures`
+- **Operations: PPA, hydrology, land, ESG, maintenance, covenants**: `board_of_directors`, `covenant_history`, `covenant_terms`, `eia_mitigation_checklist`, `energy_generation_data`, `esg_metrics`, `hydrology_detailed`, `land_acquisition_tracking`, `maintenance_logs`, `maintenance_schedules`, `nea_ppa_rates`, `plant_performance`, `ppa_agreements`, `project_financial_periods`, `shareholding_hierarchy`, `tariff_structures`
 - **Risk register, milestones, insurance, permits, ESIA, community**: `community_engagements`, `esia_monitoring_records`, `insurance_policies`, `milestones`, `project_permits`, `risk_register`
 - **Regulatory filing calendar, reminders, stakeholder contacts**: `filing_calendar`, `regulatory_requirements`, `stakeholder_contacts`, `user_reminders`
 - **Report builder**: `report_definitions`
@@ -524,6 +524,24 @@ Quarterly covenant metric history for trend analysis.
 
 Constraints and composite indexes: unique (project_id, quarter_ad); index `ix_covenant_project_quarter` (project_id, quarter_ad).
 
+### `covenant_terms`
+
+A project's covenant thresholds from its sanction letter. Projects without a row use the defaults.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | UUID | no |  | PK |
+| `project_id` | UUID | no |  | FK → projects.id, unique |
+| `dscr_min` | NUMERIC(10, 4) | no |  |  |
+| `ltv_max` | NUMERIC(10, 4) | no |  |  |
+| `icr_min` | NUMERIC(10, 4) | no |  |  |
+| `warning_margin_pct` | NUMERIC(6, 2) | no |  |  |
+| `source_reference` | VARCHAR(255) | yes |  |  |
+| `created_at` | DATETIME | yes | `now()` |  |
+| `updated_at` | DATETIME | yes | `now()` |  |
+| `created_by` | VARCHAR(255) | yes |  |  |
+| `updated_by` | VARCHAR(255) | yes |  |  |
+
 ### `eia_mitigation_checklist`
 
 Environmental Impact Assessment mitigation measures tracking.
@@ -773,6 +791,33 @@ Power Purchase Agreement with NEA or private buyers.
 | `updated_at` | DATETIME | yes | `now()` |  |
 
 Constraints and composite indexes: index `ix_ppa_project_status` (project_id, status).
+
+### `project_financial_periods`
+
+One quarter of a borrower's reported figures: the inputs the covenant tests are built from.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | UUID | no |  | PK |
+| `project_id` | UUID | no |  | FK → projects.id, indexed |
+| `quarter_ad` | VARCHAR(10) | no |  |  |
+| `period_end_ad` | DATE | no |  |  |
+| `period_end_bs` | VARCHAR(10) | yes |  |  |
+| `revenue_npr` | NUMERIC(20, 2) | yes |  |  |
+| `operating_expenses_npr` | NUMERIC(20, 2) | yes |  |  |
+| `royalty_npr` | NUMERIC(20, 2) | yes |  |  |
+| `tax_paid_npr` | NUMERIC(20, 2) | yes |  |  |
+| `depreciation_npr` | NUMERIC(20, 2) | yes |  |  |
+| `security_value_npr` | NUMERIC(20, 2) | yes |  |  |
+| `is_audited` | BOOLEAN | no | `False` |  |
+| `data_provenance` | VARCHAR(50) | yes | `MANUAL_ENTRY` |  |
+| `source_reference` | VARCHAR(255) | yes |  |  |
+| `created_at` | DATETIME | yes | `now()` |  |
+| `updated_at` | DATETIME | yes | `now()` |  |
+| `created_by` | VARCHAR(255) | yes |  |  |
+| `updated_by` | VARCHAR(255) | yes |  |  |
+
+Constraints and composite indexes: unique (project_id, quarter_ad).
 
 ### `shareholding_hierarchy`
 

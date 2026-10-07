@@ -183,9 +183,12 @@ class CovenantMetricsResponse(BaseModel):
     metric_as_of_date: Optional[date] = Field(None, description="Date metrics were calculated")
 
     # Status indicators
-    dscr_pass: bool = Field(description="DSCR >= 1.25 threshold")
-    ltv_pass: bool = Field(description="LTV <= 70% threshold")
-    icr_pass: bool = Field(description="ICR >= 2.0 threshold")
+    dscr_pass: bool = Field(description="DSCR was tested and is at or above its threshold")
+    ltv_pass: bool = Field(description="LTV was tested and is at or below its threshold")
+    icr_pass: bool = Field(description="ICR was tested and is at or above its threshold")
+    dscr_threshold: Optional[Decimal] = Field(None, description="Minimum DSCR for this loan's project")
+    ltv_threshold: Optional[Decimal] = Field(None, description="Maximum LTV (%) for this loan's project")
+    icr_threshold: Optional[Decimal] = Field(None, description="Minimum ICR for this loan's project")
 
     class Config:
         strict = True

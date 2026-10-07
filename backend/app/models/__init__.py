@@ -19,7 +19,7 @@ from .operations import (
     PPAAgreement, EnergyGenerationData, NEAPPARate, TariffStructure,
     HydrologyDetailed, LandAcquisitionTracking, BoardOfDirectors, ShareholdingHierarchy,
     ESGMetrics, EIAMitigationChecklist, MaintenanceSchedule, MaintenanceLog,
-    PlantPerformance, CovenantHistory,
+    PlantPerformance, CovenantHistory, FinancialPeriod, CovenantTerms,
 )
 
 from .risk import (
@@ -88,4 +88,6 @@ __all__ = [
     "MaintenanceLog",
     "PlantPerformance",
     "CovenantHistory",
+    "FinancialPeriod",
+    "CovenantTerms",
 ]

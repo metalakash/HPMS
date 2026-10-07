@@ -486,6 +486,53 @@ class CovenantHistory(Base, TimestampedMixin):
     )
 
 
+class FinancialPeriod(Base, TimestampedMixin):
+    """One quarter of a borrower's reported figures: the inputs the covenant tests are built from."""
+
+    __tablename__ = 'project_financial_periods'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), nullable=False, index=True)
+
+    quarter_ad = Column(String(10), nullable=False)  # e.g., "2026-Q3" (calendar quarter)
+    period_end_ad = Column(Date, nullable=False)
+    period_end_bs = Column(String(10))
+
+    # Income statement for the quarter, NPR. Empty before commercial operation.
+    revenue_npr = Column(Numeric(20, 2))
+    operating_expenses_npr = Column(Numeric(20, 2))
+    royalty_npr = Column(Numeric(20, 2))
+    tax_paid_npr = Column(Numeric(20, 2))
+    depreciation_npr = Column(Numeric(20, 2))
+
+    # Value of the security at the period end, where a valuation is on file
+    security_value_npr = Column(Numeric(20, 2))
+
+    is_audited = Column(Boolean, nullable=False, default=False)
+    data_provenance = Column(String(50), default='MANUAL_ENTRY')
+    source_reference = Column(String(255))  # audited accounts, management accounts, valuation report
+
+    __table_args__ = (
+        UniqueConstraint('project_id', 'quarter_ad', name='uq_financial_period_project_quarter'),
+    )
+
+
+class CovenantTerms(Base, TimestampedMixin):
+    """A project's covenant thresholds from its sanction letter. Projects without a row use the defaults."""
+
+    __tablename__ = 'covenant_terms'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), nullable=False, unique=True)
+
+    dscr_min = Column(Numeric(10, 4), nullable=False)
+    ltv_max = Column(Numeric(10, 4), nullable=False)
+    icr_min = Column(Numeric(10, 4), nullable=False)
+    warning_margin_pct = Column(Numeric(6, 2), nullable=False)
+
+    source_reference = Column(String(255))  # sanction letter / facility agreement reference
+
+
 # ============================================================================
 # Update Project model relationships (reference at bottom)
 # ============================================================================

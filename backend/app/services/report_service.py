@@ -15,6 +15,7 @@ from sqlalchemy.orm import joinedload
 from backend.app.models.project import Project, ProjectCapacityHistory
 from backend.app.models.financial import LoanAccount, LoanAccountRateHistory, BudgetLine
 from backend.app.models.audit import AuditLog, AuditLogRead
+from backend.app.services import covenant_engine
 from backend.app.services.report_dates import add_bs_columns
 from backend.app.schemas.report_schema import (
     PortfolioReportRow,
@@ -26,7 +27,8 @@ from backend.app.schemas.report_schema import (
 logger = logging.getLogger(__name__)
 
 
-COVENANT_THRESHOLDS = {"dscr_min": Decimal("1.25"), "ltv_max": Decimal("70"), "icr_min": Decimal("2.0")}
+# The bank-wide defaults; a project with its own sanction terms is tested against those by the engine
+COVENANT_THRESHOLDS = covenant_engine.DEFAULT_TERMS.as_thresholds()
 
 
 def covenant_shortfall_row(account, project) -> Dict[str, Any]:
