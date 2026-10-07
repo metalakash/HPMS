@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 try:
     import redis
     from redis import Redis
+    from redis.client import PubSub
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
@@ -169,7 +170,7 @@ class RedisService:
             logger.error(f"Error getting pending events: {e}")
             return []
 
-    def subscribe_channel(self, user_id: UUID) -> Optional[redis.pubsub.PubSub]:
+    def subscribe_channel(self, user_id: UUID) -> Optional["PubSub"]:
         """Subscribe to user's notification channel.
 
         Args:
