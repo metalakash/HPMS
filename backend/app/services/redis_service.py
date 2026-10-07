@@ -195,7 +195,7 @@ class RedisService:
             logger.error(f"Error subscribing to channel: {e}")
             return None
 
-    def unsubscribe_channel(self, pubsub: redis.pubsub.PubSub, user_id: UUID) -> bool:
+    def unsubscribe_channel(self, pubsub: "PubSub", user_id: UUID) -> bool:
         """Unsubscribe from user's notification channel.
 
         Args:
