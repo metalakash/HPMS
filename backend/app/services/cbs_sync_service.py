@@ -30,8 +30,10 @@ from backend.app.integration.finacle_adapter import (
     FinacleSyncRequest,
     FinacleSyncType,
     FinacleAccountRecord,
+    MockFinacleAdapter,
 )
 from backend.app.integration.finacle_schema import FinacleFieldMapping
+from backend.app.services.cbs_sync_real_service import apply_cbs_record
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +77,14 @@ class CBSSyncService:
         dlq_flag = "ok"
         errors = []
         accounts_synced = 0
+        accounts_not_tracked = 0
         rate_changes = 0
 
         try:
+            # A source that answers one account at a time is asked about every account HPMS holds
+            if not account_ids and getattr(self.adapter, "requires_account_ids", False):
+                account_ids = list((await db.execute(select(LoanAccount.finacle_account_id))).scalars())
+
             # Create sync request
             request = FinacleSyncRequest(
                 sync_type=sync_type,
@@ -99,6 +106,9 @@ class CBSSyncService:
                 dlq_flag = "dlq"  # Retryable error
                 raise Exception(error_msg)
 
+            # Rows of an extract that could not be read are reported, not dropped silently
+            errors.extend(getattr(self.adapter, 'row_errors', []))
+
             # Update loan accounts and detect rate changes
             for cbs_account in response.account_records:
                 try:
@@ -109,6 +119,9 @@ class CBSSyncService:
                         accounts_synced += 1
                     if rate_changed:
                         rate_changes += 1
+                except LookupError:
+                    # An extract carries the bank's whole loan book; accounts HPMS does not hold are not errors
+                    accounts_not_tracked += 1
                 except Exception as e:
                     error_msg = f"Failed to sync account {cbs_account.finacle_account_id}: {str(e)}"
                     logger.error(error_msg)
@@ -143,9 +156,10 @@ class CBSSyncService:
             'sync_log_id': str(sync_log_id),
             'status': dlq_flag,
             'accounts_synced': accounts_synced,
+            'accounts_not_tracked': accounts_not_tracked,
             'rate_changes': rate_changes,
             'errors': errors,
-            'message': f"Synced {accounts_synced} accounts, {rate_changes} rate changes, "
+            'message': f"Synced {accounts_synced} accounts ({accounts_not_tracked} not held in HPMS), {rate_changes} rate changes, "
                       f"{len(errors)} errors" + (f" (DLQ)" if dlq_flag == "dlq" else ""),
         }
 
@@ -161,17 +175,25 @@ class CBSSyncService:
             (was_updated, rate_changed)
         """
 
-        # Find existing account
-        stmt = select(LoanAccount).where(
-            LoanAccount.finacle_account_id == cbs_account.finacle_account_id
-        )
-        result = await db.execute(stmt)
-        existing_account = result.scalar_one_or_none()
+        existing_account = (await db.execute(
+            select(LoanAccount).where(LoanAccount.finacle_account_id == cbs_account.finacle_account_id)
+        )).scalar_one_or_none()
+        if existing_account is None:
+            # HPMS links an account to a project when the loan is recorded; it never invents the link
+            raise LookupError(f"Account {cbs_account.finacle_account_id} is not held in HPMS")
 
-        # Determine if this is new or update
-        is_new = existing_account is None
+        if isinstance(self.adapter, MockFinacleAdapter):
+            written = await self._apply_mock_record(db, existing_account, cbs_account, user_id)
+        else:
+            written = await apply_cbs_record(db, existing_account, cbs_account, user_id, self.adapter.name)
+            if written:
+                from backend.app.services.covenant_service import CovenantService
+                await CovenantService.recalculate_project(db, existing_account.project_id)
+        return (True, "interest_rate_pct" in written)
 
-        # Prepare update data
+    async def _apply_mock_record(self, db: AsyncSession, existing_account: LoanAccount,
+                                 cbs_account: FinacleAccountRecord, user_id: str) -> dict:
+        """The original behaviour, kept for the mock adapter: overwrite the account from the sample record."""
         update_data = {
             'facility_type': cbs_account.account_type,
             'sanctioned_amount': cbs_account.sanctioned_amount,
@@ -190,58 +212,16 @@ class CBSSyncService:
             'source_reference': f"Finacle:{cbs_account.finacle_account_id}",
             'updated_by': user_id,
         }
-
-        rate_changed = False
-
-        if is_new:
-            # NEW ACCOUNT: must have project_id (try to link by customer_id or fail)
-            logger.info(f"Creating new loan account: {cbs_account.finacle_account_id}")
-
-            # For now, fail if no project link. In Phase 2, implement customer → project mapping
-            raise ValueError(
-                f"New account {cbs_account.finacle_account_id} has no project mapping. "
-                "Manual linking required."
-            )
-
-        else:
-            # EXISTING ACCOUNT: check for rate change
-            old_rate = existing_account.interest_rate_pct
-            new_rate = cbs_account.interest_rate_pct
-
-            if old_rate != new_rate:
-                rate_changed = True
-                logger.info(
-                    f"Rate change detected for {cbs_account.finacle_account_id}: "
-                    f"{old_rate}% → {new_rate}%"
-                )
-
-                # Create history record for old rate (mark as no longer current)
-                if old_rate:
-                    await self._archive_rate(
-                        db,
-                        existing_account.id,
-                        old_rate,
-                        user_id,
-                    )
-
-                # Create new rate history entry (current)
-                await self._record_rate_change(
-                    db,
-                    existing_account.id,
-                    new_rate,
-                    cbs_account.rate_reset_date,
-                    user_id,
-                )
-
-            # Update the account
-            stmt = (
-                update(LoanAccount)
-                .where(LoanAccount.id == existing_account.id)
-                .values(**update_data)
-            )
-            await db.execute(stmt)
-
-        return (True, rate_changed)
+        old_rate = existing_account.interest_rate_pct
+        new_rate = cbs_account.interest_rate_pct
+        rate_changed = old_rate != new_rate
+        if rate_changed:
+            logger.info(f"Rate change detected: {old_rate}% -> {new_rate}%")
+            if old_rate:
+                await self._archive_rate(db, existing_account.id, old_rate, user_id)
+            await self._record_rate_change(db, existing_account.id, new_rate, cbs_account.rate_reset_date, user_id)
+        await db.execute(update(LoanAccount).where(LoanAccount.id == existing_account.id).values(**update_data))
+        return {"interest_rate_pct": new_rate} if rate_changed else {}
 
     async def _archive_rate(
         self,

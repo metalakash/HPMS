@@ -60,6 +60,21 @@ class Settings(BaseSettings):
         "/api/v1/admin,/api/v1/cbs,/api/v1/reports/schedules,/api/v1/regulatory/requirements,/api/v1/stakeholders")
     TRUSTED_PROXY_HOPS: int = int(os.getenv("TRUSTED_PROXY_HOPS", "0"))  # proxies in front of the app (X-Forwarded-For)
 
+    # Core banking integration (integration/cbs_adapters.py, docs/CBS-INTEGRATION.md)
+    # mock = built-in sample record, never saved; stub = refuse; file = end-of-day extract; http = API inquiry
+    CBS_ADAPTER: str = os.getenv("CBS_ADAPTER", "mock")
+    CBS_MAPPING_FILE: str = os.getenv("CBS_MAPPING_FILE", "")  # JSON: where each field is in the bank's data
+    CBS_EXTRACT_DIR: str = os.getenv("CBS_EXTRACT_DIR", "")  # file adapter: where the bank drops its extract
+    CBS_EXTRACT_MAX_AGE_HOURS: int = int(os.getenv("CBS_EXTRACT_MAX_AGE_HOURS", "0"))  # 0 = any age accepted
+    CBS_HTTP_BASE_URL: str = os.getenv("CBS_HTTP_BASE_URL", "")
+    CBS_HTTP_AUTH_HEADER: str = os.getenv("CBS_HTTP_AUTH_HEADER", "")  # e.g. Authorization or X-API-Key
+    CBS_HTTP_AUTH_VALUE: str = os.getenv("CBS_HTTP_AUTH_VALUE", "")  # secret; set in the environment only
+    CBS_HTTP_TIMEOUT_SECONDS: float = float(os.getenv("CBS_HTTP_TIMEOUT_SECONDS", "15"))
+    CBS_HTTP_VERIFY_TLS: bool = os.getenv("CBS_HTTP_VERIFY_TLS", "true").lower() == "true"
+    CBS_HTTP_CLIENT_CERT: str = os.getenv("CBS_HTTP_CLIENT_CERT", "")  # mutual TLS, if the bank requires it
+    CBS_HTTP_CLIENT_KEY: str = os.getenv("CBS_HTTP_CLIENT_KEY", "")
+    CBS_MAX_CALLS_PER_DAY: int = int(os.getenv("CBS_MAX_CALLS_PER_DAY", "1000"))
+
     # Audit
     # Not a confirmed NRB figure: set from the bank's records-retention policy. Purging is manual and off by default.
     AUDIT_RETENTION_YEARS: int = int(os.getenv("AUDIT_RETENTION_YEARS", "7"))

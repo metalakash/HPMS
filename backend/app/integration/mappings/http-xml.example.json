@@ -1,0 +1,18 @@
+{
+  "name": "EXAMPLE XML account inquiry (invented layout - replace with the bank's)",
+  "fields": {
+    "finacle_account_id": "AcctId",
+    "outstanding_principal": "Bal/Principal",
+    "interest_rate_pct": "IntRate",
+    "maturity_date": "MatDt"
+  },
+  "date_formats": ["%Y%m%d", "%Y-%m-%d"],
+  "http": {
+    "method": "POST",
+    "path": "/inquiry",
+    "format": "xml",
+    "record_path": "Body/LoanInqRs",
+    "headers": {"Content-Type": "application/xml"},
+    "body_template": "<LoanInqRq><RequestId>{request_id}</RequestId><Timestamp>{timestamp}</Timestamp><AcctId>{account_id}</AcctId></LoanInqRq>"
+  }
+}

@@ -38,6 +38,7 @@ dependencies = [
     "boto3>=1.34.0",
     "aiosmtplib>=3.0.0",
     "redis>=5.0.0",
+    "httpx>=0.25.0",  # core banking HTTP adapter (also the test client)
     # Transitive packages with known advisories (pip-audit 2026-10): pin a floor so builds cannot resolve older
     "urllib3>=2.8.0",
     "anyio>=4.14.2",

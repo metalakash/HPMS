@@ -1,0 +1,22 @@
+{
+  "name": "EXAMPLE nightly loan extract (invented layout - replace with the bank's)",
+  "fields": {
+    "finacle_account_id": "ACCT_NO",
+    "account_status": "STATUS",
+    "sanctioned_amount": "LIMIT_AMT",
+    "disbursed_amount": "DISB_AMT",
+    "outstanding_principal": "BAL_AMT",
+    "outstanding_interest": "INT_ACCRUED",
+    "overdue_principal": "OD_PRIN",
+    "overdue_interest": "OD_INT",
+    "interest_rate_pct": "INT_RATE",
+    "rate_reset_date": "RATE_DT",
+    "maturity_date": "MAT_DT"
+  },
+  "date_formats": ["%d-%m-%Y"],
+  "negate": ["outstanding_principal"],
+  "thousands_separator": ",",
+  "defaults": {"currency_code": "NPR"},
+  "status_values": {"A": "ACTIVE", "C": "CLOSED", "D": "DORMANT"},
+  "file": {"pattern": "loans_*.txt", "delimiter": "|", "encoding": "utf-8-sig"}
+}

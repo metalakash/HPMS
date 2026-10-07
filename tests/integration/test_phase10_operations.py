@@ -152,7 +152,7 @@ async def test_cbs_sync_route_returns_service_result(api, monkeypatch):
     result = {"status": "success", "changes_count": 2, "diff_log": [], "sync_timestamp": "x"}
     calls = []
 
-    async def fake(self, db, project_id, loan_id, user_id="system"):
+    async def fake(self, db, project_id, loan_id, user_id="system", **options):
         calls.append((project_id, loan_id, user_id))
         return result
 
@@ -203,19 +203,7 @@ class _LiveLikeAdapter(FinacleAdapterBase):
         return await MockFinacleAdapter().sync_accounts(request)
 
 
-async def test_sync_service_detects_and_applies_changes():
-    from backend.app.services.cbs_sync_real_service import CBSSyncService
-    account = _local_account(outstanding_principal=Decimal("1.00"))
-    db = _FakeDB(account)
-    out = await CBSSyncService(_LiveLikeAdapter()).sync_loan_account(db, PID, "ACC00001")
-    assert out["status"] == "success"
-    changed = {d["field"] for d in out["diff_log"] if d["status"] == "changed"}
-    assert "outstanding_principal" in changed
-    assert out["changes_count"] == len(changed)
-    assert (out["simulated"], out["applied"]) == (False, True)
-    assert account.outstanding_principal == Decimal("2800000.00")
-    assert account.sync_status == "synced"
-    assert db.flushed == 1
+# Applying a real adapter's record needs the audit chain: see test_cbs_adapters.py
 
 
 async def test_sync_against_the_mock_adapter_reports_differences_but_changes_nothing():

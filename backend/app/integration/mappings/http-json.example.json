@@ -1,0 +1,14 @@
+{
+  "name": "EXAMPLE REST account inquiry (invented layout - replace with the bank's)",
+  "fields": {
+    "finacle_account_id": "accountNo",
+    "account_status": "status",
+    "outstanding_principal": "balances.principal",
+    "outstanding_interest": "balances.interest",
+    "overdue_principal": "balances.overduePrincipal",
+    "interest_rate_pct": "pricing.rate",
+    "maturity_date": "maturityDate"
+  },
+  "date_formats": ["%Y-%m-%d"],
+  "http": {"method": "GET", "path": "/loans/{account_id}", "format": "json", "record_path": "data"}
+}

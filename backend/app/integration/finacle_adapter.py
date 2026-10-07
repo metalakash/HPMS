@@ -164,7 +164,14 @@ class CircuitBreaker:
 
 
 class FinacleAdapterBase(ABC):
-    """Abstract interface for Finacle CBS adapter implementations."""
+    """Abstract interface for core banking adapter implementations."""
+
+    name = "adapter"
+    requires_account_ids = False  # True when the source can only be asked about named accounts
+
+    def describe(self) -> Dict[str, Any]:
+        """What this adapter is connected to, for the status endpoint. Never includes credentials."""
+        return {"adapter": self.name}
 
     def __init__(
         self,
@@ -228,7 +235,6 @@ class FinacleAdapterBase(ABC):
             "overdue_principal",
             "overdue_interest",
             "interest_rate_pct",
-            "account_status",
             "maturity_date",
         ]
 
@@ -236,6 +242,16 @@ class FinacleAdapterBase(ABC):
         for field in fields_to_compare:
             local_value = local_account.get(field)
             finacle_value = getattr(finacle_account, field, None)
+
+            # The source does not supply this field: nothing to compare and nothing will be written
+            if finacle_value is None:
+                diff_log.append({
+                    "field": field,
+                    "previous_value": float(local_value) if isinstance(local_value, Decimal) else local_value,
+                    "new_value": None,
+                    "status": "not_provided",
+                })
+                continue
 
             # Convert Decimal to float for comparison
             if isinstance(finacle_value, Decimal):
@@ -277,6 +293,8 @@ class MockFinacleAdapter(FinacleAdapterBase):
     Returns synthetic account records without hitting real CBS.
     Supports simulating various scenarios: success, failures, timeouts.
     """
+
+    name = "mock"
 
     def __init__(self, failure_mode: str = "success"):
         super().__init__()
@@ -369,6 +387,8 @@ class StubFinacleAdapter(FinacleAdapterBase):
     In production, inject a real adapter implementation.
     """
 
+    name = "stub"
+
     async def sync_accounts(
         self,
         request: FinacleSyncRequest,
@@ -380,18 +400,61 @@ class StubFinacleAdapter(FinacleAdapterBase):
         )
 
 
-def get_adapter(adapter_type: str = "mock") -> FinacleAdapterBase:
-    """Factory to get appropriate adapter implementation.
+_configured: Optional[FinacleAdapterBase] = None
 
-    Args:
-        adapter_type: "mock" for testing, "stub" for production placeholder
 
-    Returns:
-        Adapter instance (mock or stub)
+def build_adapter(settings: Any) -> FinacleAdapterBase:
+    """The adapter the environment asks for (CBS_ADAPTER = mock | stub | file | http)."""
+    kind = (settings.CBS_ADAPTER or "mock").strip().lower()
+    if kind == "mock":
+        return MockFinacleAdapter(failure_mode="success")
+    if kind == "stub":
+        return StubFinacleAdapter()
+
+    from .cbs_adapters import CBSMapping, FileExtractAdapter, HttpAdapter
+    limiter = RateLimiter(max_calls=settings.CBS_MAX_CALLS_PER_DAY)
+    if kind == "file":
+        if not settings.CBS_EXTRACT_DIR:
+            raise ValueError("CBS_ADAPTER=file needs CBS_EXTRACT_DIR")
+        mapping = (CBSMapping.load(settings.CBS_MAPPING_FILE) if settings.CBS_MAPPING_FILE
+                   else CBSMapping.default_extract())
+        return FileExtractAdapter(mapping, settings.CBS_EXTRACT_DIR,
+                                  max_age_hours=settings.CBS_EXTRACT_MAX_AGE_HOURS or None, rate_limiter=limiter)
+    if kind == "http":
+        if not (settings.CBS_MAPPING_FILE and settings.CBS_HTTP_BASE_URL):
+            raise ValueError("CBS_ADAPTER=http needs CBS_MAPPING_FILE and CBS_HTTP_BASE_URL")
+        cert = None
+        if settings.CBS_HTTP_CLIENT_CERT:
+            cert = ((settings.CBS_HTTP_CLIENT_CERT, settings.CBS_HTTP_CLIENT_KEY) if settings.CBS_HTTP_CLIENT_KEY
+                    else settings.CBS_HTTP_CLIENT_CERT)
+        return HttpAdapter(
+            CBSMapping.load(settings.CBS_MAPPING_FILE), settings.CBS_HTTP_BASE_URL,
+            auth_header=settings.CBS_HTTP_AUTH_HEADER, auth_value=settings.CBS_HTTP_AUTH_VALUE,
+            timeout_seconds=settings.CBS_HTTP_TIMEOUT_SECONDS, verify_tls=settings.CBS_HTTP_VERIFY_TLS,
+            client_cert=cert, rate_limiter=limiter)
+    raise ValueError(f"Unknown adapter type: {kind}")
+
+
+def get_adapter(adapter_type: Optional[str] = None) -> FinacleAdapterBase:
+    """The core banking adapter.
+
+    With no argument: the one configured by CBS_ADAPTER, built once and shared so its circuit
+    breaker and rate limiter see every call. With "mock" or "stub": a fresh one of that kind.
     """
+    global _configured
     if adapter_type == "mock":
         return MockFinacleAdapter(failure_mode="success")
-    elif adapter_type == "stub":
+    if adapter_type == "stub":
         return StubFinacleAdapter()
-    else:
+    if adapter_type is not None:
         raise ValueError(f"Unknown adapter type: {adapter_type}")
+    if _configured is None:
+        from backend.app.config import settings
+        _configured = build_adapter(settings)
+    return _configured
+
+
+def reset_adapter() -> None:
+    """Forget the configured adapter so the next call rebuilds it (after a settings change, and in tests)."""
+    global _configured
+    _configured = None

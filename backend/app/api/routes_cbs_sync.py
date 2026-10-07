@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,7 @@ router = APIRouter(prefix="/api/v1/cbs", tags=["cbs"])
 class CBSSyncRequest(BaseModel):
     """CBS sync request."""
     loan_id: str
+    dry_run: bool = False  # compare with the core banking system without writing anything
 
 
 class CBSDiffLog(BaseModel):
@@ -53,8 +54,7 @@ async def get_cbs_status(
         raise HTTPException(status_code=403, detail="Admin or auditor role required")
 
     try:
-        adapter = get_adapter("mock")
-        sync_service = CBSSyncService(adapter)
+        sync_service = CBSSyncService(get_adapter())
         status = sync_service.get_adapter_status()
 
         return ApiResponse(
@@ -81,27 +81,22 @@ async def get_cbs_status(
 async def sync_cbs_account(
     project_id: str,
     request: CBSSyncRequest,
+    http_request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> ApiResponse[Dict[str, Any]]:
     """Sync CBS Finacle account for a project/loan.
 
-    Performs on-demand sync with Finacle API:
-    1. Queries Finacle for current account status
-    2. Compares with local cached values
-    3. Returns diff log (before/after)
-    4. Updates local database if changes detected
-    5. Logs audit trail
-
-    Args:
-    - project_id: Project ID
-    - loan_id: Finacle loan account ID
+    1. Reads the account through the configured adapter (CBS_ADAPTER)
+    2. Compares it with the local copy and returns the field-by-field diff
+    3. Unless dry_run is set or the adapter is the mock, writes the differences, adds an audit
+       entry and re-tests the project's covenants
 
     Returns:
-    - diff_log: List of field changes
-    - sync_timestamp: When sync completed
-    - status: 'success' or 'error'
-    - changes_count: Number of fields that changed
+    - diff_log: each compared field with its status (changed / same / not_provided)
+    - status: 'success', 'no_data' or 'error'
+    - changes_count: number of fields that differ
+    - applied: whether anything was written; simulated: the mock adapter answered
     """
     if not any(r.value in ("admin", "maker", "approver") for r in current_user.roles):
         raise HTTPException(status_code=403, detail="Admin, maker or approver role required")
@@ -118,14 +113,19 @@ async def sync_cbs_account(
         from backend.app.integration.finacle_adapter import get_adapter
         from backend.app.services.cbs_sync_real_service import CBSSyncService
 
-        # Get adapter and service
-        adapter = get_adapter("mock")  # Use mock by default; set via env for production
-        sync_service = CBSSyncService(adapter)
+        from backend.app.config import settings
+        from backend.app.middleware.security import client_ip
 
-        # Perform sync
+        sync_service = CBSSyncService(get_adapter())
         sync_result = await sync_service.sync_loan_account(
-            db, project_id, request.loan_id, user_id=current_user.username
+            db, project_id, request.loan_id, user_id=current_user.username, dry_run=request.dry_run,
+            user_role=current_user.roles[0].value if current_user.roles else None,
+            source_ip=client_ip(http_request.scope, settings.TRUSTED_PROXY_HOPS),
         )
+        # A real sync is kept even when nothing differed (it records when the loan was last checked);
+        # a dry run and the mock adapter never write
+        if sync_result.get("status") == "success" and sync_result.get("simulated") is False and not request.dry_run:
+            await db.commit()
 
         return ApiResponse(
             data=sync_result,
