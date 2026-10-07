@@ -111,6 +111,7 @@ from backend.app.api.routes_ws import router as ws_router
 from backend.app.api.routes_i18n import router as i18n_router
 from backend.app.api.routes_compliance import router as compliance_router
 from backend.app.api.routes_covenants import router as covenants_router
+from backend.app.api.routes_portfolio import router as portfolio_router
 from backend.app.api.routes_analytics import router as analytics_router
 from backend.app.api.routes_admin import router as admin_router
 from backend.app.api.routes_risk import router as risk_router
@@ -134,6 +135,7 @@ app.include_router(ws_router)
 app.include_router(i18n_router)
 app.include_router(compliance_router)
 app.include_router(covenants_router)
+app.include_router(portfolio_router)
 app.include_router(analytics_router)
 app.include_router(cbs_router)
 app.include_router(report_builder_router)

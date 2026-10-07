@@ -6,7 +6,15 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import { useEffect } from 'react';
-import { authApi, loansApi, mutationsApi, projectsApi } from '@/services/endpoints';
+import {
+  adminApi,
+  authApi,
+  covenantsApi,
+  loansApi,
+  mutationsApi,
+  portfolioApi,
+  projectsApi,
+} from '@/services/endpoints';
 import { useAuthStore } from '@/store/useAuthStore';
 import type {
   ApprovalQueueFilters,
@@ -30,6 +38,8 @@ export const queryKeys = {
   loanList: (filters: LoanFilters) => ['loans', 'list', filters] as const,
   projectTab: (id: string, tab: string) => ['projects', 'detail', id, tab] as const,
   approvals: ['approvals'] as const,
+  covenants: ['covenants'] as const,
+  covenantDetail: (id: string, part: 'history' | 'calculation') => ['covenants', id, part] as const,
   approvalQueue: (filters: ApprovalQueueFilters) => ['approvals', 'queue', filters] as const,
 };
 
@@ -139,6 +149,44 @@ export function useEsg(id: string) {
   return useQuery({
     queryKey: queryKeys.projectTab(id, 'esg'),
     queryFn: () => projectsApi.esg(id),
+  });
+}
+
+export function usePortfolioPerformance() {
+  return useQuery({ queryKey: ['portfolio', 'performance'], queryFn: portfolioApi.performance });
+}
+
+export function usePortfolioMaintenance() {
+  return useQuery({ queryKey: ['portfolio', 'maintenance'], queryFn: portfolioApi.maintenance });
+}
+
+export function useUsers() {
+  return useQuery({ queryKey: ['admin', 'users'], queryFn: adminApi.users });
+}
+
+export function useCbsStatus() {
+  return useQuery({ queryKey: ['admin', 'cbs-status'], queryFn: adminApi.cbsStatus });
+}
+
+export function useAuditChain() {
+  return useQuery({ queryKey: ['admin', 'audit-chain'], queryFn: adminApi.auditChain });
+}
+
+export function useCovenantResults() {
+  return useQuery({ queryKey: queryKeys.covenants, queryFn: covenantsApi.results });
+}
+
+export function useCovenantHistory(projectId: string) {
+  return useQuery({
+    queryKey: queryKeys.covenantDetail(projectId, 'history'),
+    queryFn: () => covenantsApi.history(projectId),
+  });
+}
+
+export function useCovenantCalculation(projectId: string) {
+  return useQuery({
+    queryKey: queryKeys.covenantDetail(projectId, 'calculation'),
+    queryFn: () => covenantsApi.calculation(projectId),
   });
 }
 

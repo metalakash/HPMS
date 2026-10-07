@@ -1,118 +1,67 @@
 import { useState } from 'react';
-import { AlertCircle, Check, Zap } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Check } from 'lucide-react';
 import { Card, CardHeader } from '@/components/common/Card';
 import { DataTable, type Column } from '@/components/common/DataTable';
-import { Badge } from '@/components/common/Badge';
+import { Skeleton } from '@/components/common/Skeleton';
 import { StatCard } from '@/components/common/StatCard';
-import { EmptyState } from '@/components/common/States';
+import { EmptyState, ErrorState } from '@/components/common/States';
+import {
+  CovenantDetailDrawer,
+  CovenantStatusBadge,
+  formatRatio,
+} from '@/components/drawers/CovenantDetailDrawer';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { CovenantDetailDrawer, AlertRemediationDrawer } from '@/components/drawers';
-import { formatDate } from '@/utils/format';
+import { useCovenantResults } from '@/hooks/queries';
+import type { CovenantMetric, CovenantResultRow } from '@/types/api';
+import { formatDate, humanize } from '@/utils/format';
 
-interface CovenantAlert {
-  id: string;
-  projectId: string;
-  project_name: string;
-  covenant_type: 'DSCR' | 'LTV' | 'ICR';
-  current_value: number;
-  threshold: number;
-  status: 'breached' | 'warning' | 'compliant';
-  last_checked: string;
+function Ratio({ metric, unit }: { metric: CovenantMetric; unit: 'x' | '%' }) {
+  const tone =
+    metric.status === 'breached' ? 'text-danger' : metric.status === 'warning' ? 'text-warning' : '';
+  return (
+    <span className={`tabular-nums ${tone} ${tone && 'font-semibold'}`}>
+      {formatRatio(metric, unit)}
+      {tone && <span className="sr-only"> ({metric.status})</span>}
+    </span>
+  );
 }
 
-const mockAlerts: CovenantAlert[] = [
-  {
-    id: '1',
-    projectId: 'proj-001',
-    project_name: 'Upper Tamakoshi',
-    covenant_type: 'DSCR',
-    current_value: 1.45,
-    threshold: 1.20,
-    status: 'compliant',
-    last_checked: new Date().toISOString(),
-  },
-  {
-    id: '2',
-    projectId: 'proj-002',
-    project_name: 'Khimti Khola',
-    covenant_type: 'LTV',
-    current_value: 0.78,
-    threshold: 0.75,
-    status: 'warning',
-    last_checked: new Date().toISOString(),
-  },
-  {
-    id: '3',
-    projectId: 'proj-003',
-    project_name: 'Kali Gandaki A',
-    covenant_type: 'ICR',
-    current_value: 1.85,
-    threshold: 2.0,
-    status: 'breached',
-    last_checked: new Date().toISOString(),
-  },
-];
-
 export default function CompliancePage() {
-  const [selectedCovenant, setSelectedCovenant] = useState<CovenantAlert | null>(null);
-  const [selectedAlerts, setSelectedAlerts] = useState<CovenantAlert | null>(null);
-  const columns: Column<CovenantAlert>[] = [
+  const results = useCovenantResults();
+  const [selected, setSelected] = useState<CovenantResultRow | null>(null);
+  const rows = results.data ?? [];
+  const count = (status: CovenantResultRow['overall_status']) =>
+    rows.filter((row) => row.overall_status === status).length;
+
+  const columns: Column<CovenantResultRow>[] = [
     {
-      key: 'project_name',
+      key: 'project',
       header: 'Project',
-      render: (item) => (
+      render: (row) => (
         <button
-          onClick={() => setSelectedCovenant(item)}
-          className="text-primary hover:underline font-medium"
+          type="button"
+          onClick={() => setSelected(row)}
+          className="text-left font-medium text-primary hover:underline"
         >
-          {item.project_name}
+          {row.project_name}
+          <span className="block text-xs font-normal text-muted">{row.project_code}</span>
         </button>
       ),
     },
+    { key: 'stage', header: 'Stage', hideOnMobile: true, render: (row) => humanize(row.project_stage) },
+    { key: 'dscr', header: 'DSCR', align: 'right', render: (row) => <Ratio metric={row.dscr} unit="x" /> },
+    { key: 'icr', header: 'ICR', align: 'right', render: (row) => <Ratio metric={row.icr} unit="x" /> },
+    { key: 'ltv', header: 'LTV', align: 'right', render: (row) => <Ratio metric={row.ltv} unit="%" /> },
+    { key: 'status', header: 'Status', render: (row) => <CovenantStatusBadge status={row.overall_status} /> },
     {
-      key: 'covenant_type',
-      header: 'Covenant Type',
-      render: (item) => item.covenant_type,
-    },
-    {
-      key: 'current_value',
-      header: 'Current Value',
-      render: (item) => (
-        <span className="font-semibold">
-          {item.current_value.toFixed(2)}{item.covenant_type === 'LTV' ? '%' : 'x'}
-        </span>
-      ),
-    },
-    {
-      key: 'status',
-      header: 'Status',
-      render: (item) => (
-        <Badge
-          tone={
-            item.status === 'compliant' ? 'success' : item.status === 'warning' ? 'warning' : 'danger'
-          }
-        >
-          {item.status === 'compliant' ? 'Compliant' : item.status === 'warning' ? 'Warning' : 'Breached'}
-        </Badge>
-      ),
-    },
-    {
-      key: 'last_checked',
-      header: 'Last Checked',
+      key: 'tested',
+      header: 'Tested at',
       hideOnMobile: true,
-      render: (item) => formatDate(item.last_checked, 'en'),
-    },
-    {
-      key: 'alerts',
-      header: 'Alerts',
-      hideOnMobile: true,
-      render: (item) => (
-        <button
-          onClick={() => setSelectedAlerts(item)}
-          className="text-info hover:underline text-sm font-medium"
-        >
-          View →
-        </button>
+      render: (row) => (
+        <>
+          {row.quarter}
+          <span className="block text-xs text-muted">{formatDate(row.test_date)}</span>
+        </>
       ),
     },
   ];
@@ -121,75 +70,63 @@ export default function CompliancePage() {
     <>
       <PageHeader
         title="Compliance"
-        description="Covenant monitoring, alerts and audit trail"
+        description="Covenant tests calculated from each borrower's reported financials and loan schedule"
       />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard
-          label="Covenants Monitored"
+          label="Projects tested"
           icon={<Check className="size-4" />}
-          value="24"
+          value={rows.length}
+          loading={results.isLoading}
         />
         <StatCard
-          label="Active Alerts"
+          label="In breach"
           icon={<AlertCircle className="size-4" />}
-          value="3"
+          value={count('breached')}
+          loading={results.isLoading}
         />
         <StatCard
-          label="Last Sync"
-          icon={<Zap className="size-4" />}
-          value="2 hours ago"
+          label="Close to a limit"
+          icon={<AlertTriangle className="size-4" />}
+          value={count('warning')}
+          loading={results.isLoading}
         />
       </div>
 
       <div className="mt-6">
         <Card>
           <CardHeader
-            title="Covenant Status"
-            description="Click on a project to view covenant trends. Click 'View' to see renewal alerts."
+            title="Covenant status"
+            description="Latest test per project, breaches first. Select a project to see the calculation and its history."
           />
-          {mockAlerts.length === 0 ? (
-            <EmptyState title="No alerts" description="All covenants are in compliance." />
+          {results.isError ? (
+            <ErrorState error={results.error} onRetry={() => void results.refetch()} />
+          ) : results.isLoading ? (
+            <Skeleton className="h-48 w-full" />
           ) : (
             <DataTable
-              caption="Covenant alerts - click rows to drill down"
+              caption="Latest covenant test per project"
               columns={columns}
-              rows={mockAlerts}
-              rowKey={(item) => item.id}
-              empty={<EmptyState title="No alerts" />}
+              rows={rows}
+              rowKey={(row) => row.project_id}
+              empty={
+                <EmptyState
+                  title="No covenant tests yet"
+                  description="Results appear once a project's quarterly financials are recorded."
+                />
+              }
             />
           )}
         </Card>
       </div>
 
-      {/* Covenant Detail Drawer */}
-      {selectedCovenant && (
+      {selected && (
         <CovenantDetailDrawer
-          isOpen={!!selectedCovenant}
-          onClose={() => setSelectedCovenant(null)}
-          projectId={selectedCovenant.projectId}
-          projectName={selectedCovenant.project_name}
-          covenantType={selectedCovenant.covenant_type}
-          currentValue={selectedCovenant.current_value}
-          threshold={selectedCovenant.threshold}
-        />
-      )}
-
-      {/* Alert Remediation Drawer */}
-      {selectedAlerts && (
-        <AlertRemediationDrawer
-          isOpen={!!selectedAlerts}
-          onClose={() => setSelectedAlerts(null)}
-          projectId={selectedAlerts.projectId}
-          projectName={selectedAlerts.project_name}
-          onInitiateRenewal={(alertId, alertType) => {
-            console.log('Initiating renewal for', alertId, alertType);
-            // TODO: Call API to create workflow task
-          }}
-          onEscalateToLegal={(alertId, alertType) => {
-            console.log('Escalating to legal for', alertId, alertType);
-            // TODO: Call API to escalate to legal team
-          }}
+          isOpen
+          onClose={() => setSelected(null)}
+          projectId={selected.project_id}
+          projectName={selected.project_name}
         />
       )}
     </>

@@ -464,3 +464,152 @@ export interface NotificationEvent {
   message: string | null;
   timestamp: string;
 }
+
+// ---- Covenants (compliance)
+
+export type CovenantStatus = 'compliant' | 'warning' | 'breached' | 'not_tested';
+
+export interface CovenantMetric {
+  value: DecimalString | number | null;
+  threshold: DecimalString | number | null;
+  status: CovenantStatus | null;
+  /** Why the ratio could not be tested. */
+  note?: string | null;
+}
+
+/** A project's most recent covenant test. */
+export interface CovenantResultRow {
+  project_id: string;
+  project_code: string;
+  project_name: string;
+  project_stage: ProjectStage;
+  quarter: string;
+  test_date: string | null;
+  overall_status: CovenantStatus;
+  dscr: CovenantMetric;
+  ltv: CovenantMetric;
+  icr: CovenantMetric;
+}
+
+export interface CovenantTrend {
+  quarter: string;
+  quarter_bs: string | null;
+  covenant_date: string | null;
+  dscr: CovenantMetric;
+  ltv: CovenantMetric;
+  icr: CovenantMetric;
+}
+
+export interface CovenantHistory {
+  project_id: string;
+  quarters_available: number;
+  latest_quarter?: string;
+  overall_status?: CovenantStatus;
+  trends: CovenantTrend[];
+}
+
+/** One quarter's result with the figures it was built from. */
+export interface CovenantCalculation {
+  quarter: string;
+  test_date: string;
+  window: { from: string; to: string; quarters_used: string[] };
+  overall_status: CovenantStatus;
+  dscr: CovenantMetric;
+  icr: CovenantMetric;
+  ltv: CovenantMetric;
+  inputs: {
+    revenue: DecimalString | null;
+    ebitda: DecimalString | null;
+    cfads: DecimalString | null;
+    ebit: DecimalString | null;
+    principal_due: DecimalString;
+    interest_due: DecimalString;
+    debt_service: DecimalString;
+    outstanding_principal: DecimalString | null;
+    security_value: DecimalString | null;
+  };
+  terms_source: string;
+}
+
+// ---- Portfolio views (analytics, maintenance, admin)
+
+export interface PerformanceRow {
+  project_id: string;
+  project_code: string;
+  project_name: string;
+  installed_capacity_mw: DecimalString;
+  months: number;
+  first_month: string;
+  last_month: string;
+  actual_gwh: DecimalString;
+  contract_gwh: DecimalString;
+  delivery_pct: DecimalString | null;
+  revenue_npr: DecimalString | null;
+  avg_plf_pct: DecimalString | null;
+  avg_availability_pct: DecimalString | null;
+  forced_outage_hours: number | null;
+  open_risks: number;
+  serious_risks: number;
+  covenant_status: CovenantStatus | null;
+}
+
+interface MaintenanceBase {
+  id: string;
+  project_id: string;
+  project_code: string;
+  project_name: string;
+  equipment_name: string;
+  maintenance_type: string | null;
+  contractor_name: string | null;
+}
+
+export interface MaintenanceUpcoming extends MaintenanceBase {
+  scheduled_date_ad: string;
+  scheduled_date_bs: string | null;
+  estimated_duration_hours: number | null;
+  estimated_impact_mwh: DecimalString | null;
+  status: string;
+  overdue: boolean;
+}
+
+export interface MaintenanceCompleted extends MaintenanceBase {
+  actual_date_ad: string;
+  actual_date_bs: string | null;
+  duration_hours: number | null;
+  downtime_mwh: DecimalString | null;
+  cost_npr: DecimalString | null;
+  notes: string | null;
+}
+
+export interface PortfolioMaintenance {
+  upcoming: MaintenanceUpcoming[];
+  completed: MaintenanceCompleted[];
+}
+
+export interface UserAccount {
+  id: string;
+  username: string;
+  full_name: string | null;
+  email: string;
+  role: string;
+  is_active: boolean;
+  directory_synced: boolean;
+  last_login_at: string | null;
+}
+
+export interface CbsStatus {
+  adapter: string;
+  mapping?: string;
+  latest_file?: string;
+  latest_file_age_hours?: number;
+  problem?: string;
+  circuit_breaker: { state: string; failure_count: number };
+  rate_limiter: { max_calls_per_day: number; calls_used_today: number; remaining_calls: number };
+}
+
+export interface AuditChainStatus {
+  ok: boolean;
+  rows_checked: number;
+  first_bad_id: number | null;
+  problem: string | null;
+}

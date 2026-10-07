@@ -4,9 +4,14 @@ import type {
   ApprovalDecisionResult,
   ApprovalQueue,
   ApprovalQueueFilters,
+  AuditChainStatus,
+  CbsStatus,
   CbsSyncResult,
   ChangeRequest,
   ChangeRequestResult,
+  CovenantCalculation,
+  CovenantHistory,
+  CovenantResultRow,
   EsgData,
   ExposureImportItem,
   ExposureImportResult,
@@ -21,6 +26,9 @@ import type {
   MfaSetup,
   MfaStatus,
   MilestoneItem,
+  PerformanceRow,
+  PortfolioMaintenance,
+  UserAccount,
   ProjectDetail,
   ProjectDisbursements,
   ProjectFilters,
@@ -124,6 +132,34 @@ export const mutationsApi = {
         remarks,
       })
       .then((r) => r.data.data),
+};
+
+export const covenantsApi = {
+  /** Latest result per project the caller may see, breaches first. */
+  results: () =>
+    api.get<ApiResponse<CovenantResultRow[]>>('/api/v1/compliance/covenants').then((r) => r.data.data),
+  history: (projectId: string) =>
+    api
+      .get<ApiResponse<CovenantHistory>>(`/api/v1/compliance/covenants/${projectId}/history`)
+      .then((r) => r.data.data),
+  /** The working behind the latest tested quarter. */
+  calculation: (projectId: string) =>
+    api
+      .get<ApiResponse<CovenantCalculation>>(`/api/v1/compliance/covenants/${projectId}/calculation`)
+      .then((r) => r.data.data),
+};
+
+export const portfolioApi = {
+  performance: () =>
+    api.get<ApiResponse<PerformanceRow[]>>('/api/v1/analytics/performance').then((r) => r.data.data),
+  maintenance: () =>
+    api.get<ApiResponse<PortfolioMaintenance>>('/api/v1/maintenance').then((r) => r.data.data),
+};
+
+export const adminApi = {
+  users: () => api.get<ApiResponse<UserAccount[]>>('/api/v1/admin/users').then((r) => r.data.data),
+  cbsStatus: () => api.get<ApiResponse<CbsStatus>>('/api/v1/cbs/status').then((r) => r.data.data),
+  auditChain: () => api.get<AuditChainStatus>('/api/v1/admin/audit/verify').then((r) => r.data),
 };
 
 export const cbsApi = {
