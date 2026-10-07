@@ -25,22 +25,22 @@ from backend.app.security.auth_middleware import CurrentUser
 from backend.app.security.ldap_provider import UserRole
 from backend.app.services.mutation_service import MutationService
 
-# Two approvers, because the recommendation and the final approval must come from different people.
+# Sample staff (invented names) who raise and decide the seeded requests. Two approvers, because the
+# recommendation and the final approval must come from different people.
 TEST_USERS = {
-    "maker": ("e2e.maker", UserRole.MAKER),
-    "recommender": ("e2e.recommender", UserRole.APPROVER),
-    "approver": ("e2e.approver", UserRole.APPROVER),
+    "maker": ("sunita.shrestha", UserRole.MAKER, "Sunita Shrestha"),
+    "recommender": ("bikash.adhikari", UserRole.APPROVER, "Bikash Adhikari"),
+    "approver": ("anjali.gurung", UserRole.APPROVER, "Anjali Gurung"),
 }
 
 
 DEMO_MAKER = "maker"  # LocalDevAuthProvider account; its user row is otherwise created at first login
 
 
-async def _ensure_user(session: AsyncSession, username: str, role: UserRole) -> CurrentUser:
+async def _ensure_user(session: AsyncSession, username: str, role: UserRole, full_name: str = "") -> CurrentUser:
     user = (await session.execute(select(User).where(User.username == username))).scalar_one_or_none()
     if user is None:
-        email = "maker@sbl.local" if username == DEMO_MAKER else f"{username}@hpms.test"
-        user = User(username=username, email=email, full_name=username,
+        user = User(username=username, email=f"{username}@sbl.local", full_name=full_name or username,
                     default_role=role.value, created_by="seed_test_workflows")
         session.add(user)
         await session.flush()
@@ -50,7 +50,7 @@ async def _ensure_user(session: AsyncSession, username: str, role: UserRole) -> 
 
 async def seed(session: AsyncSession) -> List[Dict[str, str]]:
     """Create one request per workflow state. Returns [] if they already exist."""
-    users = {key: await _ensure_user(session, name, role) for key, (name, role) in TEST_USERS.items()}
+    users = {key: await _ensure_user(session, *account) for key, account in TEST_USERS.items()}
     maker = users["maker"]
 
     existing = (await session.execute(
