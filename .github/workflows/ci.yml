@@ -37,7 +37,7 @@ jobs:
       - name: Tests (database-backed tests must not be skipped)
         shell: bash  # with pipefail, so a failing pytest fails the step despite the tee
         run: |
-          pytest tests -q -W ignore -rs | tee pytest.log
+          python -m pytest tests -q -W ignore -rs | tee pytest.log  # -m puts the repository root on the path
           ! grep -q "skipped" pytest.log
 
   frontend:
