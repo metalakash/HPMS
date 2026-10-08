@@ -1,6 +1,8 @@
 import {
   Banknote,
+  CalendarClock,
   ClipboardCheck,
+  FileSpreadsheet,
   FolderKanban,
   KeyRound,
   LayoutDashboard,
@@ -35,6 +37,9 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/compliance', label: 'Compliance', icon: ShieldCheck, available: true },
   { to: '/analytics', label: 'Analytics', icon: LineChart, available: true },
   { to: '/maintenance', label: 'Maintenance', icon: Wrench, available: true },
+  // The report builder is open to the roles that see the whole portfolio
+  { to: '/reports', label: 'Reports', icon: FileSpreadsheet, available: true, roles: ['admin', 'auditor'] },
+  { to: '/regulatory', label: 'Regulatory', icon: CalendarClock, available: true },
   { to: '/security', label: 'Security', icon: KeyRound, available: true },
   { to: '/admin', label: 'Admin', icon: Settings, available: true, roles: ['admin'] },
 ];

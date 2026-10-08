@@ -137,6 +137,9 @@ class ScriptedDB:
     async def flush(self):
         pass
 
+    async def commit(self):
+        self.committed = True
+
     async def delete(self, obj):
         self.deleted = obj
 

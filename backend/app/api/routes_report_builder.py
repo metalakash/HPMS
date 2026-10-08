@@ -144,7 +144,7 @@ async def create_definition(body: DefinitionBody, db: AsyncSession = Depends(get
         owner_username=user.username, created_by=user.username, updated_by=user.username,
     )
     db.add(d)
-    await db.flush()
+    await db.commit()
     return _view(d)
 
 
@@ -166,7 +166,7 @@ async def update_definition(definition_id: str, body: DefinitionPatch, db: Async
     for key, value in changes.items():
         setattr(d, key, value)
     d.updated_by = user.username
-    await db.flush()
+    await db.commit()
     return _view(d)
 
 
@@ -176,7 +176,7 @@ async def delete_definition(definition_id: str, db: AsyncSession = Depends(get_d
     d = await _visible(db, user, definition_id)
     _require_owner(d, user)
     await db.delete(d)
-    await db.flush()
+    await db.commit()
     return Response(status_code=204)
 
 

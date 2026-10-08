@@ -101,7 +101,7 @@ async def create_requirement(body: RequirementBody, db: AsyncSession = Depends(g
     r = RegulatoryRequirement(**body.model_dump(), created_by=user.username, updated_by=user.username)
     db.add(r)
     try:
-        await db.flush()
+        await db.commit()
     except IntegrityError:
         raise HTTPException(status_code=409, detail=f"Requirement code already exists: {body.code}")
     return _req_view(r)
@@ -114,7 +114,7 @@ async def update_requirement(requirement_id: str, body: RequirementPatch, db: As
     for key, value in body.model_dump(exclude_unset=True).items():
         setattr(r, key, value)
     r.updated_by = user.username
-    await db.flush()
+    await db.commit()
     return _req_view(r)
 
 
@@ -123,7 +123,7 @@ async def delete_requirement(requirement_id: str, db: AsyncSession = Depends(get
                              user: CurrentUser = Depends(require_admin)):
     r = await _get_requirement(db, requirement_id)
     await db.delete(r)  # cascades to its calendar rows; deactivate instead to keep history
-    await db.flush()
+    await db.commit()
     return Response(status_code=204)
 
 
@@ -136,6 +136,7 @@ async def generate_calendar(requirement_id: str, body: GenerateBody, db: AsyncSe
         created = await generate_filings(db, r, body.from_date, body.to_date, body.project_ids, user.username)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    await db.commit()
     return {"requirement": r.code, "created": created}
 
 
@@ -234,7 +235,7 @@ async def update_filing(filing_id: str, body: FilingPatch, db: AsyncSession = De
         if key in changes:
             setattr(entry, key, changes[key])
     entry.updated_by = user.username
-    await db.flush()
+    await db.commit()
     return _filing_view(entry, requirement)
 
 
@@ -291,7 +292,7 @@ async def create_reminder(body: ReminderBody, db: AsyncSession = Depends(get_db)
         remind_on_bs=bs_string(body.remind_on_ad), project_id=body.project_id, entity_type=body.entity_type,
         entity_id=body.entity_id, status="active", created_by=user.username, updated_by=user.username)
     db.add(r)
-    await db.flush()
+    await db.commit()
     return _reminder_view(r)
 
 
@@ -307,7 +308,7 @@ async def update_reminder(reminder_id: str, body: ReminderPatch, db: AsyncSessio
         if r.status == "sent" and "status" not in changes:
             r.status, r.sent_at = "active", None
     r.updated_by = user.username
-    await db.flush()
+    await db.commit()
     return _reminder_view(r)
 
 
@@ -316,7 +317,7 @@ async def delete_reminder(reminder_id: str, db: AsyncSession = Depends(get_db),
                           user: CurrentUser = Depends(get_current_user)):
     r = await _own_reminder(db, user, reminder_id)
     await db.delete(r)
-    await db.flush()
+    await db.commit()
     return Response(status_code=204)
 
 
@@ -382,7 +383,7 @@ async def create_contact(body: ContactBody, db: AsyncSession = Depends(get_db),
                          user: CurrentUser = Depends(require_admin)):
     c = StakeholderContact(**body.model_dump(), created_by=user.username, updated_by=user.username)
     db.add(c)
-    await db.flush()
+    await db.commit()
     return _contact_view(c)
 
 
@@ -393,7 +394,7 @@ async def update_contact(contact_id: str, body: ContactPatch, db: AsyncSession =
     for key, value in body.model_dump(exclude_unset=True).items():
         setattr(c, key, value)
     c.updated_by = user.username
-    await db.flush()
+    await db.commit()
     return _contact_view(c)
 
 
@@ -402,5 +403,5 @@ async def delete_contact(contact_id: str, db: AsyncSession = Depends(get_db),
                          user: CurrentUser = Depends(require_admin)):
     c = await _get_contact(db, contact_id)
     await db.delete(c)
-    await db.flush()
+    await db.commit()
     return Response(status_code=204)

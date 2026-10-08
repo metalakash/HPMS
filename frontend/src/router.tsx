@@ -13,6 +13,8 @@ const CompliancePage = lazy(() => import('@/pages/CompliancePage'));
 const AnalyticsPage = lazy(() => import('@/pages/AnalyticsPage'));
 const MaintenancePage = lazy(() => import('@/pages/MaintenancePage'));
 const AdminPage = lazy(() => import('@/pages/AdminPage'));
+const ReportsPage = lazy(() => import('@/pages/ReportsPage'));
+const RegulatoryPage = lazy(() => import('@/pages/RegulatoryPage'));
 const SecurityPage = lazy(() => import('@/pages/SecurityPage'));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
 
@@ -29,6 +31,8 @@ export const routes: RouteObject[] = [
       { path: 'compliance', element: <CompliancePage /> },
       { path: 'analytics', element: <AnalyticsPage /> },
       { path: 'maintenance', element: <MaintenancePage /> },
+      { path: 'reports', element: <ReportsPage /> },
+      { path: 'regulatory', element: <RegulatoryPage /> },
       { path: 'admin', element: <AdminPage /> },
       { path: 'security', element: <SecurityPage /> },
       { path: '*', element: <NotFoundPage /> },

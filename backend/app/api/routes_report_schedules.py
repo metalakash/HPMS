@@ -123,7 +123,7 @@ async def create_schedule(body: ScheduleBody, db: AsyncSession = Depends(get_db)
         definition_id=body.definition_id,
     )
     job.created_by = job.updated_by = user.username
-    await db.flush()
+    await db.commit()
     return _view(job)
 
 
@@ -140,7 +140,7 @@ async def update_schedule(job_id: str, body: SchedulePatch, db: AsyncSession = D
     if changes.get("is_enabled"):  # re-enabled after a pause: do not fire for the missed window
         job.next_run_at = next_run_after(job.schedule, _now())
     job.updated_by = user.username
-    await db.flush()
+    await db.commit()
     return _view(job)
 
 
@@ -149,7 +149,7 @@ async def delete_schedule(job_id: str, db: AsyncSession = Depends(get_db),
                           user: CurrentUser = Depends(require_admin)):
     job = await _get_job(db, job_id)
     await db.delete(job)
-    await db.flush()
+    await db.commit()
     return Response(status_code=204)
 
 
@@ -161,7 +161,7 @@ async def run_now(job_id: str, db: AsyncSession = Depends(get_db),
     saved_next = job.next_run_at
     run = await SchedulerService(get_email_service()).execute_job(db, job.id)
     job.next_run_at = saved_next
-    await db.flush()
+    await db.commit()
     return _run_view(run)
 
 
