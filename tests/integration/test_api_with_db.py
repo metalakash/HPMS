@@ -234,7 +234,7 @@ async def test_reports(api, db_session):
 
 
 async def test_readiness_uses_database(api):
-    assert (await api.get("/ready")).json() == {"status": "ready"}
+    assert (await api.get("/ready")).json()["status"] == "ready"
 
 
 async def test_compliance_audit_log_access_control(api, db_session):

@@ -274,7 +274,7 @@ async def test_alerts_are_emailed_when_addresses_are_configured(monkeypatch, rec
 
 async def test_unusable_sources_raise_clear_errors():
     ex = BackgroundSyncExecutor(Factory())
-    for src, text in (("FINACLE_CBS", "not implemented"), ("CSV_UPLOAD", "nothing to fetch"), ("ODBC", "Unknown")):
+    for src, text in (("FINACLE_CBS", "core banking adapter"), ("CSV_UPLOAD", "nothing to fetch"), ("ODBC", "Unknown")):
         with pytest.raises(SourceError, match=text):
             await ex.fetch(schedule(sync_source=src))
     with pytest.raises(SourceError, match="webhook_url is not set"):

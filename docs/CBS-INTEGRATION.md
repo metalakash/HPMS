@@ -124,13 +124,35 @@ With `CBS_ADAPTER=file` and no mapping file, HPMS falls back to the placeholder 
 - `GET /api/v1/cbs/status` shows the adapter, the mapping name, the newest extract and its age,
   the circuit breaker and the rate limiter. It never shows credentials.
 
+## Checking a bank's sample extract
+
+Before connecting anything, run the checker on the sample file. It reads the file exactly as the
+adapter would and writes nothing:
+
+```
+python -m backend.scripts.check_cbs_extract loans_sample.txt --mapping bank-mapping.json
+python -m backend.scripts.check_cbs_extract loans_sample.txt --mapping bank-mapping.json --compare
+```
+
+It reports the rows read, each rejected row with the reason, which fields the extract supplies,
+which synced fields it never supplies, and with `--compare` how the accounts line up with the
+loans HPMS holds and how many a sync would change. Account numbers are shown by their last four
+characters only.
+
+## Running it every night
+
+Create a sync schedule (`POST /api/v1/loan-accounts/sync-schedule`) with `sync_source`
+`FINACLE_CBS`, a `frequency` of `daily` and a `scheduled_time_utc`. At that time HPMS reads the
+configured adapter, updates the loans it holds, re-tests covenants, checks the schedule's alert
+thresholds and records the run in the sync history. A schedule is refused, with the reason in its
+history, while `CBS_ADAPTER` is `mock` or `stub`.
+
 ## Not done yet
 
 - **No connection to a real core banking system has been tested.** The adapters are tested
   against invented layouts and a fake HTTP server.
 - Fetching the extract over SFTP: HPMS reads a local directory; something else (the bank's
   transfer job, or a mounted share) has to put the file there.
-- The nightly batch is triggered by an API call; it is not yet on the scheduler.
 - Repayment schedules and disbursement tranches are not synced, only account-level balances.
 - Token refresh (OAuth client credentials) for the HTTP adapter: only static header credentials
   and mutual TLS are supported.

@@ -415,3 +415,89 @@ async def test_the_default_adapter_is_still_the_mock_and_never_writes(api, db_se
     assert (data["simulated"], data["applied"], data["adapter"]) == (True, False, "mock")
     await db_session.refresh(loan)
     assert loan.outstanding_principal == Decimal("78000000") and await audit_rows(db_session, loan.id) == []
+
+
+# ------------------------------------------------------------------ onboarding: checking a bank's extract
+
+def test_the_extract_checker_reports_what_a_file_holds_without_touching_anything(tmp_path, capsys):
+    from backend.scripts import check_cbs_extract as checker
+    spec = tmp_path / "bank.json"
+    spec.write_text(json.dumps(EXTRACT_MAPPING), encoding="utf-8")
+    extract = write_extract(tmp_path, "loans_sample.txt", ROW, "LN-0002|A|5|5|oops|0|9|16-07-2026")
+
+    summary = checker.inspect(extract, CBSMapping.load(str(spec)))
+    assert len(summary["records"]) == 1 and summary["row_errors"] == [
+        "line 3: outstanding_principal: 'oops' is not a number"]
+    assert summary["supplied"]["outstanding_principal"] == 1 and "maturity_date" not in summary["supplied"]
+    # What a sync would leave alone because this bank's extract does not carry it
+    assert summary["synced_but_missing"] == ["maturity_date", "outstanding_interest", "overdue_interest"]
+
+    assert checker.main([str(extract), "--mapping", str(spec)]) == 0
+    out = capsys.readouterr().out
+    assert "Rows read     : 1" in out and "Rows rejected : 1" in out and "Result: usable" in out
+    assert "LN-0001" not in out  # account numbers are not echoed
+
+    wrong = tmp_path / "other.txt"
+    wrong.write_text("ACCOUNT;BALANCE\nLN-1;5\n", encoding="utf-8")
+    assert checker.main([str(wrong), "--mapping", str(spec)]) == 1
+    assert "has no column ACCT_NO" in capsys.readouterr().out
+    assert checker.main([str(tmp_path / "missing.txt"), "--mapping", str(spec)]) == 1
+    assert checker.main([str(extract), "--mapping", str(tmp_path / "nope.json")]) == 1
+
+
+async def test_the_extract_checker_lines_accounts_up_with_held_loans(db_session, loan, tmp_path):
+    from backend.scripts import check_cbs_extract as checker
+    extract = write_extract(tmp_path, "loans_sample.txt", ROW, "LN-5000|A|100|80|-60|0|10.5|01-01-2026")
+    summary = checker.inspect(extract, mapping())
+
+    result = await checker.compare(summary["records"], db_session)
+    held = (await db_session.execute(select(func.count()).select_from(LoanAccount))).scalar()
+    assert (result["held"], result["matched"], result["would_change"]) == (held, 1, 1)
+    assert result["in_extract_not_held"] == 1 and "LN-0001" not in result["held_not_in_extract"]
+
+    text = "\n".join(checker.report(extract, mapping(), summary, result))
+    assert "a sync would change : 1" in text and "(ignored by a sync)" in text
+    await db_session.refresh(loan)
+    assert loan.outstanding_principal == Decimal("78000000")  # nothing was written
+
+
+# ------------------------------------------------------------------ the nightly schedule
+
+async def test_a_core_banking_schedule_refreshes_held_loans_from_the_adapter(api, db_session, loan, tmp_path):
+    from backend.app.models.financial import LoanExposureSyncHistory, LoanExposureSyncSchedule
+    from backend.app.services.background_sync_executor import BackgroundSyncExecutor
+
+    schedule = LoanExposureSyncSchedule(name="Nightly CBS", frequency="daily", scheduled_time_utc="18:30",
+                                        sync_source="FINACLE_CBS", is_active="Y")
+    db_session.add(schedule)
+    await db_session.flush()
+    executor = BackgroundSyncExecutor(None)
+
+    # With no real source connected the run is refused and says why
+    finacle_adapter.reset_adapter()
+    assert await executor.run_schedule(db_session, schedule) == "failed"
+    await db_session.refresh(loan)
+    assert loan.outstanding_principal == Decimal("78000000")
+
+    use_extract(tmp_path, ROW, "LN-5000|A|100|80|-60|0|10.5|01-01-2026", "LN-5001|A|100|80|bad|0|10.5|01-01-2026")
+    assert await executor.run_schedule(db_session, schedule) == "partial_success"
+    await db_session.refresh(loan)
+    assert loan.outstanding_principal == Decimal("75000000.00")
+    assert [(a.action_performed, a.user_id) for a in await audit_rows(db_session, loan.id)] == [
+        ("cbs_sync", "scheduler")]
+
+    history = (await db_session.execute(
+        select(LoanExposureSyncHistory).where(LoanExposureSyncHistory.schedule_id == schedule.id)
+        .order_by(LoanExposureSyncHistory.created_at, LoanExposureSyncHistory.started_at))).scalars().all()
+    by_status = {h.status: h for h in history}
+    assert set(by_status) == {"failed", "partial_success"}
+    assert "No core banking source is connected (CBS_ADAPTER=mock)" in by_status["failed"].error_message
+    done = by_status["partial_success"]
+    assert (done.updated_count, done.created_count, done.skipped_count) == (1, 0, 2)
+    assert "line 4" in done.error_message
+
+
+async def test_ready_reports_the_schema_revision(api):
+    body = (await api.get("/ready")).json()
+    assert body["status"] == "ready"
+    assert body["schema_revision"] == body["expected_revision"] and body["expected_revision"].startswith("0")

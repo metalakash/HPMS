@@ -7,6 +7,7 @@ from slowapi.util import get_remote_address
 import asyncio
 import logging
 import os
+from typing import Optional
 from datetime import datetime
 
 from sqlalchemy import text
@@ -161,14 +162,48 @@ async def health_check():
 # Ready check (includes DB)
 @app.get("/ready", tags=["monitoring"])
 async def ready_check(db=Depends(get_db)):
-    """Readiness check - confirms DB connectivity."""
+    """Readiness check: the database answers and its schema is the one this build expects.
+
+    ``schema_revision`` is what the database is migrated to and ``expected_revision`` is the
+    newest migration in this build; when they differ the status is "schema_behind", because
+    endpoints that use newer tables will fail.
+    """
     try:
-        # Simple check that DB session works
         await db.execute(text("SELECT 1"))
-        return {"status": "ready"}
     except Exception as e:
         logger.error(f"Readiness check failed: {e}")
         raise HTTPException(status_code=503, detail="Database unavailable")
+
+    expected = _expected_revision()
+    try:
+        current = (await db.execute(text("SELECT version_num FROM alembic_version"))).scalar()
+    except Exception:
+        await db.rollback()
+        current = None  # a database that was never migrated has no alembic_version table
+    matches = expected is None or current == expected
+    return {"status": "ready" if matches else "schema_behind",
+            "schema_revision": current, "expected_revision": expected}
+
+
+def _expected_revision() -> Optional[str]:
+    """The head of the migrations shipped with this build; None if they are not on disk."""
+    global _head_revision
+    if _head_revision is None:
+        try:
+            from pathlib import Path
+            from alembic.config import Config
+            from alembic.script import ScriptDirectory
+            root = Path(__file__).resolve().parents[2]
+            config = Config(str(root / "alembic.ini"))
+            config.set_main_option("script_location", str(root / "alembic"))
+            _head_revision = ScriptDirectory.from_config(config).get_current_head() or ""
+        except Exception as e:
+            logger.warning(f"Could not read the migration head: {e}")
+            _head_revision = ""
+    return _head_revision or None
+
+
+_head_revision: Optional[str] = None
 
 # Startup/shutdown events
 @app.on_event("startup")

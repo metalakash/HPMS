@@ -20,4 +20,5 @@ USER appuser
 
 EXPOSE 8000
 
-CMD alembic upgrade head; uvicorn backend.app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+# && not ;  a failed migration fails the deploy, and the platform keeps the previous version running
+CMD alembic upgrade head && uvicorn backend.app.main:app --host 0.0.0.0 --port ${PORT:-8000}

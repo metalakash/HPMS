@@ -104,7 +104,7 @@ class BackgroundSyncExecutor:
         if schedule.sync_source == "BANK_API":
             return await self._fetch_bank_api(schedule)
         if schedule.sync_source == "FINACLE_CBS":
-            raise SourceError("FINACLE_CBS source is not implemented yet (the CBS adapter is mock-backed)")
+            raise SourceError("FINACLE_CBS schedules read through the core banking adapter, not fetch()")
         if schedule.sync_source == "CSV_UPLOAD":
             raise SourceError("CSV_UPLOAD schedules have nothing to fetch; upload through /loans/exposure-sync")
         raise SourceError(f"Unknown sync_source: {schedule.sync_source}")
@@ -172,6 +172,9 @@ class BackgroundSyncExecutor:
                 db, sid, status, total, created, updated, skipped, error_message=error, alerts=alerts,
                 duration_seconds=elapsed(), started_at=started.isoformat())
 
+        if schedule.sync_source == "FINACLE_CBS":
+            return await self._run_cbs_batch(db, schedule, record)
+
         try:
             raw = await self.fetch(schedule)
         except SourceError as e:
@@ -209,6 +212,49 @@ class BackgroundSyncExecutor:
             await self._send_alert_emails(schedule.alert_email_addresses, schedule.name, alerts)
         logger.info("Sync %s: %s (created=%d updated=%d skipped=%d)", schedule.name, status,
                     outcome["created_count"], outcome["updated_count"], outcome["skipped_count"])
+        return status
+
+    async def _run_cbs_batch(self, db, schedule: LoanExposureSyncSchedule, record) -> str:
+        """Refresh every held loan from the configured core banking adapter (CBS_ADAPTER).
+
+        Balances of loans HPMS already holds are updated; accounts it does not hold are counted as
+        skipped, never created. Refused while the adapter is the mock or the stub, so a schedule
+        cannot overwrite balances with sample data.
+        """
+        from backend.app.integration.finacle_adapter import (
+            FinacleSyncType, MockFinacleAdapter, StubFinacleAdapter, get_adapter)
+        from backend.app.services.cbs_sync_service import CBSSyncService
+
+        try:
+            adapter = get_adapter()
+        except Exception as e:
+            await record("failed", error=f"Core banking adapter is misconfigured: {str(e)[:300]}")
+            return "failed"
+        if isinstance(adapter, (MockFinacleAdapter, StubFinacleAdapter)):
+            await record("failed", error=f"No core banking source is connected (CBS_ADAPTER={adapter.name})")
+            return "failed"
+
+        try:
+            result = await CBSSyncService(adapter).sync_loan_accounts(
+                db, FinacleSyncType.EOD_BATCH, user_id="scheduler")
+            alerts = await LoanSyncSchedulerService.check_policy_violations(db, str(schedule.id))
+        except Exception as e:
+            logger.exception("Sync %s: core banking batch crashed", schedule.name)
+            await db.rollback()
+            await record("failed", error=f"Core banking batch failed: {type(e).__name__}")
+            return "failed"
+
+        updated, skipped, errors = result["accounts_synced"], result["accounts_not_tracked"], result["errors"]
+        if result["status"] != "ok":
+            status = "failed"
+        else:
+            status = "partial_success" if errors else "success"
+        await record(status, updated + skipped + len(errors), 0, updated, skipped + len(errors),
+                     error="; ".join(errors)[:1000] or None, alerts=alerts)
+        if alerts and schedule.alert_email_addresses:
+            await self._send_alert_emails(schedule.alert_email_addresses, schedule.name, alerts)
+        logger.info("Sync %s: %s (updated=%d not held=%d errors=%d)", schedule.name, status, updated, skipped,
+                    len(errors))
         return status
 
     async def _send_alert_emails(self, addresses: str, schedule_name: str, alerts) -> None:
