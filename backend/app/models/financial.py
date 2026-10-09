@@ -1,5 +1,5 @@
 """Financial Data Integration models."""
-from sqlalchemy import Column, String, Numeric, Integer, Date, Text, ForeignKey, Enum, Index, UniqueConstraint, func
+from sqlalchemy import Boolean, Column, String, Numeric, Integer, Date, Text, ForeignKey, Enum, Index, UniqueConstraint, func
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from datetime import datetime
@@ -24,7 +24,8 @@ class LoanAccount(Base, TimestampedMixin):
     
     # Encrypted field for sensitive data
     finacle_account_id = Column(String(500), unique=True, nullable=False)  # pgcrypto encrypted
-    
+    customer_cif = Column(String(50), index=True)  # the borrower's customer number in the CBS; several accounts can share one
+
     facility_type = Column(String(100))
     sanctioned_amount = Column(Numeric(20, 4), nullable=False)
     disbursed_amount = Column(Numeric(20, 4), default=Decimal("0"))
@@ -142,6 +143,113 @@ class LoanAccountRateHistory(Base, TimestampedMixin):
         Index('ix_rate_history_current', 'loan_account_id', 'is_current'),
         Index('ix_rate_history_validity', 'valid_from_ad', 'valid_to_ad'),
     )
+
+class LoanProjectionQuarter(Base, TimestampedMixin):
+    """One fiscal quarter of the bank's loan projection for a borrower.
+
+    Quarters end with Ashoj, Poush, Chaitra and Ashad. The opening row is the position the
+    projection starts from; every later row is opening plus disbursement less repayment.
+    """
+
+    __tablename__ = 'loan_projection_quarters'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), nullable=False, index=True)
+
+    fiscal_year = Column(String(7), nullable=False)  # e.g., "2082/83"
+    quarter = Column(Integer, nullable=False)  # 1 = Ashoj end ... 4 = Ashad end
+    period_end_ad = Column(Date, nullable=False, index=True)
+    period_end_bs = Column(String(10))
+    is_opening = Column(Boolean, nullable=False, default=False)
+
+    projected_disbursement = Column(Numeric(20, 4), nullable=False, default=Decimal("0"))
+    projected_repayment = Column(Numeric(20, 4), nullable=False, default=Decimal("0"))
+    projected_outstanding = Column(Numeric(20, 4), nullable=False, default=Decimal("0"))
+
+    data_provenance = Column(String(50), default='MANUAL_ENTRY')
+    source_reference = Column(String(255))
+
+    __table_args__ = (
+        UniqueConstraint('project_id', 'period_end_ad', name='uq_loan_projection_project_quarter'),
+    )
+
+
+class EnergyBond(Base, TimestampedMixin):
+    """An energy bond the bank holds. It counts towards energy-sector financing while it is held."""
+
+    __tablename__ = 'energy_bonds'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(255), nullable=False)
+    amount = Column(Numeric(20, 4), nullable=False)  # face value allotted, NPR
+    yield_pct = Column(Numeric(7, 4))
+
+    investment_date_ad = Column(Date)
+    investment_date_bs = Column(String(10))
+    maturity_date_ad = Column(Date)
+    maturity_date_bs = Column(String(10))
+
+    data_provenance = Column(String(50), default='MANUAL_ENTRY')
+    source_reference = Column(String(255))
+
+
+class EnergyFinancingQuarter(Base, TimestampedMixin):
+    """Bank-wide inputs to the energy-financing ratio for one fiscal quarter.
+
+    The two ``_actual`` columns are filled for quarters that have passed. Where they are empty the
+    ratio uses the loan projection and the bond register instead.
+    """
+
+    __tablename__ = 'energy_financing_quarters'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    fiscal_year = Column(String(7), nullable=False)  # e.g., "2082/83"
+    quarter = Column(Integer, nullable=False)  # 1 = Ashoj end ... 4 = Ashad end
+    period_end_ad = Column(Date, nullable=False)
+    period_end_bs = Column(String(10))
+
+    bank_total_loans = Column(Numeric(22, 4))  # the bank's total loans and advances at the quarter end
+    required_pct = Column(Numeric(7, 4))  # regulator's minimum share for energy, where one applies
+    hydro_outstanding_actual = Column(Numeric(20, 4))
+    energy_bond_actual = Column(Numeric(20, 4))
+
+    data_provenance = Column(String(50), default='MANUAL_ENTRY')
+    source_reference = Column(String(255))
+
+    __table_args__ = (
+        UniqueConstraint('period_end_ad', name='uq_energy_financing_quarter'),
+    )
+
+
+class NewLoanLimit(Base, TimestampedMixin):
+    """New hydropower limit the bank plans to approve in a fiscal year: lending not yet sanctioned."""
+
+    __tablename__ = 'new_loan_limits'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    fiscal_year = Column(String(7), nullable=False, unique=True)  # e.g., "2082/83"
+    new_limit = Column(Numeric(20, 4), nullable=False)
+    drawdown_pct = Column(JSONB)  # share drawn in each year after approval, e.g. [7.5, 33.75, 40, 18.75]
+
+    data_provenance = Column(String(50), default='MANUAL_ENTRY')
+    source_reference = Column(String(255))
+
+
+class NewLoanDisbursementQuarter(Base, TimestampedMixin):
+    """Disbursement planned from the new limits in one fiscal quarter, for the whole pipeline."""
+
+    __tablename__ = 'new_loan_disbursement_quarters'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    fiscal_year = Column(String(7), nullable=False)
+    quarter = Column(Integer, nullable=False)  # 1 = Ashoj end ... 4 = Ashad end
+    period_end_ad = Column(Date, nullable=False, unique=True)
+    period_end_bs = Column(String(10))
+    planned_disbursement = Column(Numeric(20, 4), nullable=False)
+
+    data_provenance = Column(String(50), default='MANUAL_ENTRY')
+    source_reference = Column(String(255))
+
 
 class CBSSyncLog(Base, TimestampedMixin):
     """Finacle CBS synchronisation audit log."""

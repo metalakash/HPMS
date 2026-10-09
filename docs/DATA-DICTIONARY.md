@@ -2,12 +2,12 @@
 
 > Generated from the SQLAlchemy models by `backend/scripts/generate_data_dictionary.py`. Do not edit by hand; run `python -m backend.scripts.generate_data_dictionary` and commit the result.
 
-**72 tables and views, 1072 columns.** Dates are stored as AD `DATE` columns with a paired `*_bs` text column (`YYYY-MM-DD` Bikram Sambat) where the business needs both calendars. Descriptions come from the model docstrings.
+**77 tables and views, 1140 columns.** Dates are stored as AD `DATE` columns with a paired `*_bs` text column (`YYYY-MM-DD` Bikram Sambat) where the business needs both calendars. Descriptions come from the model docstrings.
 
 ## Contents
 
 - **Projects**: `hydrology_records`, `land_records`, `project_capacity_history`, `project_technical_specs`, `projects`, `rcod_events`, `water_licenses`
-- **Loans and financing**: `budget_lines`, `cbs_sync_logs`, `disbursement_tranches`, `loan_account_rate_history`, `loan_accounts`, `loan_exposure_sync_history`, `loan_exposure_sync_schedules`, `repayments`
+- **Loans and financing**: `budget_lines`, `cbs_sync_logs`, `disbursement_tranches`, `energy_bonds`, `energy_financing_quarters`, `loan_account_rate_history`, `loan_accounts`, `loan_exposure_sync_history`, `loan_exposure_sync_schedules`, `loan_projection_quarters`, `new_loan_disbursement_quarters`, `new_loan_limits`, `repayments`
 - **Consortium**: `consortium_exposure_v`, `consortium_facilities`, `consortium_members`
 - **Operations: PPA, hydrology, land, ESG, maintenance, covenants**: `board_of_directors`, `covenant_history`, `covenant_terms`, `eia_mitigation_checklist`, `energy_generation_data`, `esg_metrics`, `hydrology_detailed`, `land_acquisition_tracking`, `maintenance_logs`, `maintenance_schedules`, `nea_ppa_rates`, `plant_performance`, `ppa_agreements`, `project_financial_periods`, `shareholding_hierarchy`, `tariff_structures`
 - **Risk register, milestones, insurance, permits, ESIA, community**: `community_engagements`, `esia_monitoring_records`, `insurance_policies`, `milestones`, `project_permits`, `risk_register`
@@ -254,6 +254,49 @@ Disbursement tranche schedule and tracking.
 | `created_by` | VARCHAR(255) | yes |  |  |
 | `updated_by` | VARCHAR(255) | yes |  |  |
 
+### `energy_bonds`
+
+An energy bond the bank holds. It counts towards energy-sector financing while it is held.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | UUID | no |  | PK |
+| `name` | VARCHAR(255) | no |  |  |
+| `amount` | NUMERIC(20, 4) | no |  |  |
+| `yield_pct` | NUMERIC(7, 4) | yes |  |  |
+| `investment_date_ad` | DATE | yes |  |  |
+| `investment_date_bs` | VARCHAR(10) | yes |  |  |
+| `maturity_date_ad` | DATE | yes |  |  |
+| `maturity_date_bs` | VARCHAR(10) | yes |  |  |
+| `data_provenance` | VARCHAR(50) | yes | `MANUAL_ENTRY` |  |
+| `source_reference` | VARCHAR(255) | yes |  |  |
+| `created_at` | DATETIME | yes | `now()` |  |
+| `updated_at` | DATETIME | yes | `now()` |  |
+| `created_by` | VARCHAR(255) | yes |  |  |
+| `updated_by` | VARCHAR(255) | yes |  |  |
+
+### `energy_financing_quarters`
+
+Bank-wide inputs to the energy-financing ratio for one fiscal quarter.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | UUID | no |  | PK |
+| `fiscal_year` | VARCHAR(7) | no |  |  |
+| `quarter` | INTEGER | no |  |  |
+| `period_end_ad` | DATE | no |  |  |
+| `period_end_bs` | VARCHAR(10) | yes |  |  |
+| `bank_total_loans` | NUMERIC(22, 4) | yes |  |  |
+| `required_pct` | NUMERIC(7, 4) | yes |  |  |
+| `hydro_outstanding_actual` | NUMERIC(20, 4) | yes |  |  |
+| `energy_bond_actual` | NUMERIC(20, 4) | yes |  |  |
+| `data_provenance` | VARCHAR(50) | yes | `MANUAL_ENTRY` |  |
+| `source_reference` | VARCHAR(255) | yes |  |  |
+| `created_at` | DATETIME | yes | `now()` |  |
+| `updated_at` | DATETIME | yes | `now()` |  |
+| `created_by` | VARCHAR(255) | yes |  |  |
+| `updated_by` | VARCHAR(255) | yes |  |  |
+
 ### `loan_account_rate_history`
 
 Effective-dated interest rate history for loan accounts.
@@ -287,6 +330,7 @@ Finacle loan account linked to a project.
 | `id` | UUID | no |  | PK |
 | `project_id` | UUID | no |  | FK → projects.id, indexed |
 | `finacle_account_id` | VARCHAR(500) | no |  | unique |
+| `customer_cif` | VARCHAR(50) | yes |  | indexed |
 | `facility_type` | VARCHAR(100) | yes |  |  |
 | `sanctioned_amount` | NUMERIC(20, 4) | no |  |  |
 | `disbursed_amount` | NUMERIC(20, 4) | yes | `0` |  |
@@ -374,6 +418,67 @@ Scheduled automatic loan exposure sync (Phase 8.3 Option B).
 | `updated_at` | DATETIME | yes | `now()` |  |
 
 Constraints and composite indexes: index `ix_sync_schedule_active` (is_active, frequency).
+
+### `loan_projection_quarters`
+
+One fiscal quarter of the bank's loan projection for a borrower.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | UUID | no |  | PK |
+| `project_id` | UUID | no |  | FK → projects.id, indexed |
+| `fiscal_year` | VARCHAR(7) | no |  |  |
+| `quarter` | INTEGER | no |  |  |
+| `period_end_ad` | DATE | no |  | indexed |
+| `period_end_bs` | VARCHAR(10) | yes |  |  |
+| `is_opening` | BOOLEAN | no | `False` |  |
+| `projected_disbursement` | NUMERIC(20, 4) | no | `0` |  |
+| `projected_repayment` | NUMERIC(20, 4) | no | `0` |  |
+| `projected_outstanding` | NUMERIC(20, 4) | no | `0` |  |
+| `data_provenance` | VARCHAR(50) | yes | `MANUAL_ENTRY` |  |
+| `source_reference` | VARCHAR(255) | yes |  |  |
+| `created_at` | DATETIME | yes | `now()` |  |
+| `updated_at` | DATETIME | yes | `now()` |  |
+| `created_by` | VARCHAR(255) | yes |  |  |
+| `updated_by` | VARCHAR(255) | yes |  |  |
+
+Constraints and composite indexes: unique (project_id, period_end_ad).
+
+### `new_loan_disbursement_quarters`
+
+Disbursement planned from the new limits in one fiscal quarter, for the whole pipeline.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | UUID | no |  | PK |
+| `fiscal_year` | VARCHAR(7) | no |  |  |
+| `quarter` | INTEGER | no |  |  |
+| `period_end_ad` | DATE | no |  | unique |
+| `period_end_bs` | VARCHAR(10) | yes |  |  |
+| `planned_disbursement` | NUMERIC(20, 4) | no |  |  |
+| `data_provenance` | VARCHAR(50) | yes | `MANUAL_ENTRY` |  |
+| `source_reference` | VARCHAR(255) | yes |  |  |
+| `created_at` | DATETIME | yes | `now()` |  |
+| `updated_at` | DATETIME | yes | `now()` |  |
+| `created_by` | VARCHAR(255) | yes |  |  |
+| `updated_by` | VARCHAR(255) | yes |  |  |
+
+### `new_loan_limits`
+
+New hydropower limit the bank plans to approve in a fiscal year: lending not yet sanctioned.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | UUID | no |  | PK |
+| `fiscal_year` | VARCHAR(7) | no |  | unique |
+| `new_limit` | NUMERIC(20, 4) | no |  |  |
+| `drawdown_pct` | JSONB | yes |  |  |
+| `data_provenance` | VARCHAR(50) | yes | `MANUAL_ENTRY` |  |
+| `source_reference` | VARCHAR(255) | yes |  |  |
+| `created_at` | DATETIME | yes | `now()` |  |
+| `updated_at` | DATETIME | yes | `now()` |  |
+| `created_by` | VARCHAR(255) | yes |  |  |
+| `updated_by` | VARCHAR(255) | yes |  |  |
 
 ### `repayments`
 

@@ -6,7 +6,8 @@ from .consortium import ConsortiumFacility, ConsortiumMember, ConsortiumExposure
 from .audit import AuditLog, AuditLogRead, AuditAction
 from .governance import Role, Permission, ApprovalRequest, ApprovalStep, WorkflowDefinition, ApprovalState, role_permissions
 from .project import ProjectCapacityHistory, RCODEvent
-from .financial import LoanAccountRateHistory
+from .financial import EnergyBond, EnergyFinancingQuarter, LoanAccountRateHistory, LoanProjectionQuarter
+from .financial import NewLoanDisbursementQuarter, NewLoanLimit
 from .document import Document, DocumentVersion, DocumentApprovalRequest
 from .import_tracking import ImportBatch, ImportRowError
 from .auth import User, UserRoleAssignment, ProjectOwner
