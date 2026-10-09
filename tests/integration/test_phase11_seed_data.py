@@ -788,3 +788,108 @@ async def test_portfolio_views_respect_visibility_and_users_are_admin_only(api, 
     users = (await api.get("/api/v1/admin/users")).json()["data"]
     assert {"admin", "maker", "guest"} <= {u["username"] for u in users}
     assert next(u for u in users if u["username"] == "maker")["role"] == "maker"
+
+
+# ------------------------------------------------------------------ loan projection and energy financing
+
+def _instalments(first_due_year=2027):
+    return [{"due_date_ad": date(first_due_year + i // 2, 6 if i % 2 == 0 else 12, 1), "principal_due": Decimal("100")}
+            for i in range(6)]
+
+
+def test_fiscal_quarters_put_the_last_quarter_end_reached_at_the_opening():
+    quarters = realistic.fiscal_quarters(TODAY)
+    opening = quarters[realistic.RECORDED_QUARTERS]
+    assert (opening.label, opening.end_ad) == ("FY 2082/83 Q4", date(2026, 7, 16))
+    assert quarters[realistic.RECORDED_QUARTERS + 1].end_ad > TODAY
+    assert [q.end_ad for q in quarters] == sorted(q.end_ad for q in quarters)
+
+
+def test_projection_draws_the_undrawn_limit_while_building_and_repays_on_schedule():
+    quarters = realistic.fiscal_quarters(TODAY)[realistic.RECORDED_QUARTERS:][:12]
+    rows = realistic.build_projection("under_construction", Decimal("1000.00"), Decimal("700.00"), Decimal("700.00"),
+                                      _instalments(), quarters)
+
+    assert rows[0] == {"period": quarters[0], "is_opening": True, "disbursement": 0, "repayment": 0,
+                       "outstanding": Decimal("700.00")}
+    assert sum(r["disbursement"] for r in rows) == Decimal("300.00")
+    assert all(r["disbursement"] == 0 for r in rows[realistic.DRAWDOWN_QUARTERS + 1:])
+    # The first instalment (1 June 2027) falls in the quarter ending mid-July 2027
+    assert [r["repayment"] for r in rows[1:5]] == [0, 0, 0, Decimal("100")]
+    for before, after in zip(rows, rows[1:]):
+        assert before["outstanding"] + after["disbursement"] - after["repayment"] == after["outstanding"]
+
+
+def test_a_project_in_operation_draws_nothing_more():
+    quarters = realistic.fiscal_quarters(TODAY)[realistic.RECORDED_QUARTERS:][:8]
+    rows = realistic.build_projection("under_operation", Decimal("1000.00"), Decimal("700.00"), Decimal("650.00"),
+                                      _instalments(), quarters)
+    assert sum(r["disbursement"] for r in rows) == 0
+    assert rows[-1]["outstanding"] == Decimal("650.00") - sum(r["repayment"] for r in rows)
+
+
+def test_energy_figures_are_sized_from_the_book_and_the_new_limits_are_fully_scheduled():
+    quarters = realistic.fiscal_quarters(TODAY)
+    book = [Decimal("200000000000")] * (realistic.PROJECTION_QUARTERS + 1)
+    energy = realistic.build_energy_financing(TODAY, quarters, book)
+
+    assert len(energy["bonds"]) == 3 and all(b["maturity_date_ad"] > b["investment_date_ad"] for b in energy["bonds"])
+    inputs = energy["inputs"]
+    assert len(inputs) == realistic.RECORDED_QUARTERS + realistic.PROJECTION_QUARTERS + 1
+    recorded = [row for row in inputs if row["hydro_outstanding_actual"] is not None]
+    assert len(recorded) == realistic.RECORDED_QUARTERS + 1 and recorded[-1]["hydro_outstanding_actual"] == book[0]
+    assert [row["required_pct"] for row in inputs] == sorted(row["required_pct"] for row in inputs)
+    lending = [row["bank_total_loans"] for row in inputs]
+    assert lending == sorted(lending)
+
+    assert [limit["fiscal_year"] for limit in energy["limits"]] == ["2083/84", "2084/85", "2085/86"]
+    planned = sum(row["planned_disbursement"] for row in energy["planned"])
+    assert abs(planned - sum(limit["new_limit"] for limit in energy["limits"])) < 1
+    assert all(row["period"].end_ad > quarters[realistic.RECORDED_QUARTERS].end_ad for row in energy["planned"])
+
+
+async def test_seeded_projection_opens_at_the_loan_book_and_adds_up(api, seeded):
+    data = (await api.get("/api/v1/loans/projection")).json()["data"]
+    quarters, projects = data["quarters"], data["projects"]
+    loans = (await seeded.execute(select(func.count(), func.sum(LoanAccount.outstanding_principal)))).one()
+
+    assert len(quarters) == realistic.PROJECTION_QUARTERS + 1 and len(projects) == loans[0]
+    assert quarters[0]["is_opening"] and Decimal(quarters[0]["outstanding"]) == loans[1]
+    for before, after in zip(quarters, quarters[1:]):
+        assert (Decimal(before["outstanding"]) + Decimal(after["disbursement"]) - Decimal(after["repayment"])
+                == Decimal(after["outstanding"]))
+    assert sum(Decimal(q["disbursement"]) for q in quarters) > 0 < sum(Decimal(q["repayment"]) for q in quarters)
+    assert all(len(p["outstanding"]) == len(quarters) for p in projects)
+
+
+async def test_seeded_energy_financing_slips_below_the_minimum_unless_the_new_loans_are_made(api, seeded):
+    data = (await api.get("/api/v1/energy-financing")).json()["data"]
+    quarters = data["quarters"]
+    recorded = [q for q in quarters if q["is_actual"]]
+    projected = [q for q in quarters if not q["is_actual"]]
+
+    # The first two quarters on file have nothing two quarters back to be measured against
+    assert len(recorded) == realistic.RECORDED_QUARTERS - 1 and len(projected) == realistic.PROJECTION_QUARTERS
+    assert all(q["status"] == "met" for q in recorded)
+    assert abs(Decimal(recorded[-1]["ratio_pct"]) - realistic.OPENING_ENERGY_SHARE * 100) < Decimal("0.01")
+    assert any(q["status"] == "shortfall" for q in projected)
+    assert all(q["with_pipeline"]["status"] == "met" for q in projected)
+    assert all(Decimal(q["with_pipeline"]["ratio_pct"]) >= Decimal(q["ratio_pct"]) for q in projected)
+
+    assert len(data["bonds"]) == 3 and Decimal(data["bonds_held"]) > 0
+    pipeline = data["pipeline"]
+    assert len(pipeline["limits"]) == 3
+    assert abs(Decimal(pipeline["total_disbursement"]) - Decimal(pipeline["total_limit"])) < 1
+
+
+async def test_projection_respects_visibility_while_the_energy_share_is_bank_wide(api, seeded):
+    await workflows.seed(seeded)
+    maker, guest = await _as(api, "maker"), await _as(api, "guest")
+    mine = {p["id"] for p in (await api.get("/api/v1/projects", headers=maker, params={"page_size": 100})).json()["data"]}
+
+    rows = (await api.get("/api/v1/loans/projection", headers=maker)).json()["data"]["projects"]
+    assert {r["project_id"] for r in rows} <= mine
+    assert (await api.get("/api/v1/loans/projection", headers=guest)).json()["data"] == {"quarters": [], "projects": []}
+
+    everyone = (await api.get("/api/v1/energy-financing")).json()["data"]["quarters"]
+    assert (await api.get("/api/v1/energy-financing", headers=guest)).json()["data"]["quarters"] == everyone

@@ -3,11 +3,14 @@
 Project identity (name, capacity, river, province, district, municipality, licence stage) comes
 from backend/data/merged_hydropower_master.csv, the Niti Foundation / DoED licence list. Everything
 about the bank's relationship with a project (loans, schedules, covenants, milestones, risks,
-operations, governance, ESG) is synthetic, generated from the project's size and stage. The output
+operations, governance, ESG) is synthetic, generated from the project's size and stage. So are the
+bank-wide figures built on top of the loans: the quarterly loan projection, the energy bonds, the
+bank's total lending and the regulator's minimum share for energy, and the planned new limits. The output
 is deterministic, including project ids, so tests and links survive a reseed.
 
 WARNING: this deletes every project and everything that hangs off one (loans, schedules, milestones,
-risks, licences, operations records, ownership) and all maker-checker requests, then reseeds. Run
+risks, licences, operations records, ownership), the loan projection, bonds and energy-financing
+figures, and all maker-checker requests, then reseeds. Run
 seed_test_workflows afterwards to recreate the change requests.
 
 Run from the repository root:
@@ -28,7 +31,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.database import engine
 from backend.app.models.auth import ProjectOwner
-from backend.app.models.financial import DisbursementTranche, LoanAccount, LoanAccountRateHistory, Repayment
+from backend.app.models.financial import (
+    DisbursementTranche, EnergyBond, EnergyFinancingQuarter, LoanAccount, LoanAccountRateHistory,
+    LoanProjectionQuarter, NewLoanDisbursementQuarter, NewLoanLimit, Repayment,
+)
 from backend.app.models.governance import ApprovalRequest, ApprovalStep
 from backend.app.models.operations import (
     BoardOfDirectors, CovenantHistory, CovenantTerms, EIAMitigationChecklist, EnergyGenerationData, ESGMetrics,
@@ -37,8 +43,10 @@ from backend.app.models.operations import (
 )
 from backend.app.models.project import Project, ProjectTechnicalSpecs, WaterLicense
 from backend.app.models.risk import Milestone, RiskRegisterEntry
+from backend.app.services import energy_financing
 from backend.app.services.covenant_engine import Quarter
 from backend.app.services.covenant_service import CovenantService
+from backend.app.services.filing_calendar import FilingPeriod, period_ends
 from backend.app.services.risk_service import bs_string, compute_severity
 
 SEED = 20261005
@@ -68,6 +76,25 @@ WET_MONTHS = {6, 7, 8, 9, 10, 11}
 # Share of installed capacity generated, and the PPA rate in NPR per MWh (posted rate after escalation)
 SEASONS = {True: ("wet", Decimal("0.85"), Decimal("5600")), False: ("dry", Decimal("0.45"), Decimal("9800"))}
 FINANCIAL_QUARTERS = 11  # three more than the eight shown, so the oldest shown has a full year behind it
+
+# Loan projection and energy financing. The projection opens at the last fiscal quarter end reached.
+PROJECTION_QUARTERS = 16        # quarters projected after the opening position
+RECORDED_QUARTERS = 8           # quarters before the opening for which the energy share is on record
+DRAWDOWN_QUARTERS = 6           # a project still building draws the rest of its limit over this many
+OPENING_ENERGY_SHARE = Decimal("0.108")   # energy financing over the bank's lending at the opening
+BANK_LOAN_GROWTH = Decimal("0.010")       # the bank's total lending, per quarter
+HYDRO_BOOK_GROWTH = Decimal("0.025")      # the hydropower book, per quarter, before the opening
+# Minimum energy share: (quarters from the opening at which it takes effect, per cent). Illustrative steps.
+MINIMUM_SHARE_STEPS = [(-RECORDED_QUARTERS, Decimal("6.5")), (-4, Decimal("7")), (0, Decimal("8")), (6, Decimal("10"))]
+# Bonds: (name, share of the opening hydropower book, years since investment, tenor in years, yield)
+BONDS = [
+    ("Infrastructure Energy Bond 7%", Decimal("0.025"), 3, 7, Decimal("7")),
+    ("Green Energy Debenture 7.5%", Decimal("0.020"), 2, 10, Decimal("7.5")),
+    ("Hydropower Development Bond 4%", Decimal("0.015"), 4, 6, Decimal("4")),
+]
+NEW_LIMIT_SHARES = [Decimal("0.15"), Decimal("0.18"), Decimal("0.20")]  # of the opening book, one per fiscal year
+NEW_LIMIT_DRAWDOWN = [Decimal("10"), Decimal("30"), Decimal("40"), Decimal("20")]  # per cent drawn in each year
+CRORE = Decimal("10000000")
 
 
 def money(value: Decimal) -> Decimal:
@@ -172,6 +199,94 @@ def build_repayments(rng: random.Random, principal: Decimal, rate_pct: Decimal, 
         past[-1].update(principal_paid=Decimal("0"), interest_paid=Decimal("0"), paid_date_ad=None,
                         days_past_due=(today - past[-1]["due_date_ad"]).days)
     return rows
+
+
+def fiscal_quarters(today: date) -> List[FilingPeriod]:
+    """Fiscal quarter ends around today: the recorded quarters, the opening, the projected ones, and
+    enough beyond to schedule the last new limit's drawdown. ``[RECORDED_QUARTERS]`` is the opening."""
+    periods = period_ends("quarterly", today - timedelta(days=366 * 4), today + timedelta(days=366 * 9))
+    opening = max(i for i, period in enumerate(periods) if period.end_ad <= today)
+    return periods[opening - RECORDED_QUARTERS:]
+
+
+def _fiscal_year(period: FilingPeriod) -> str:
+    return period.label.split()[1]  # "FY 2082/83 Q1" -> "2082/83"
+
+
+def _quarter(period: FilingPeriod) -> int:
+    return int(period.label[-1])
+
+
+def build_projection(status: str, sanctioned: Decimal, disbursed: Decimal, outstanding: Decimal,
+                     repayments: List[Dict[str, Any]], quarters: List[FilingPeriod]) -> List[Dict[str, Any]]:
+    """A loan's plan by fiscal quarter, starting from its position today.
+
+    ``quarters[0]`` is the opening. Repayment is the principal falling due in each quarter on the
+    loan's own schedule. A project that is still building draws what is left of its limit in equal
+    parts; one in operation draws nothing more. Each quarter's outstanding is the one before plus
+    disbursement less repayment.
+    """
+    undrawn = sanctioned - disbursed if status in ("under_construction", "yet_to_start_drawdown") else Decimal("0")
+    draw = money(undrawn / DRAWDOWN_QUARTERS)
+    rows = [{"period": quarters[0], "is_opening": True, "disbursement": Decimal("0"), "repayment": Decimal("0"),
+             "outstanding": outstanding}]
+    for index in range(1, len(quarters)):
+        period, before = quarters[index], quarters[index - 1]
+        disbursement = Decimal("0")
+        if undrawn > 0 and index <= DRAWDOWN_QUARTERS:
+            disbursement = undrawn - draw * (DRAWDOWN_QUARTERS - 1) if index == DRAWDOWN_QUARTERS else draw
+        repayment = sum((r["principal_due"] for r in repayments
+                         if before.end_ad < r["due_date_ad"] <= period.end_ad), Decimal("0"))
+        repayment = min(repayment, rows[-1]["outstanding"] + disbursement)
+        rows.append({"period": period, "is_opening": False, "disbursement": disbursement, "repayment": repayment,
+                     "outstanding": rows[-1]["outstanding"] + disbursement - repayment})
+    return rows
+
+
+def build_energy_financing(today: date, quarters: List[FilingPeriod], projected: List[Decimal]) -> Dict[str, Any]:
+    """Bank-wide figures behind the energy-financing ratio, sized from the hydropower book.
+
+    ``projected`` is the book's outstanding at the opening and at each projected quarter end.
+    Returns the bonds, one input row per quarter, the planned new limits and their drawdown.
+    """
+    opening = RECORDED_QUARTERS
+    book = projected[0]
+    bonds = []
+    for name, share, held_years, tenor, rate in BONDS:
+        invested = date(today.year - held_years, 2, 1)
+        bonds.append({"name": name, "amount": (book * share / CRORE).quantize(Decimal("1")) * CRORE, "yield_pct": rate,
+                      "investment_date_ad": invested, "maturity_date_ad": date(invested.year + tenor, 2, 1)})
+    register = [energy_financing.Bond(b["amount"], b["investment_date_ad"], b["maturity_date_ad"]) for b in bonds]
+
+    # The bank's lending two quarters before the opening is what the opening is measured against
+    held = energy_financing.bonds_held(register, quarters[opening].end_ad)
+    lending_at_base = (book + held) / OPENING_ENERGY_SHARE
+    inputs = []
+    for index, period in enumerate(quarters[:opening + PROJECTION_QUARTERS + 1]):
+        offset = index - opening
+        recorded = offset <= 0
+        inputs.append({
+            "period": period,
+            "bank_total_loans": money(lending_at_base * (1 + BANK_LOAN_GROWTH) ** (offset + 2)),
+            "required_pct": next(pct for start, pct in reversed(MINIMUM_SHARE_STEPS) if offset >= start),
+            "hydro_outstanding_actual": money(book / (1 + HYDRO_BOOK_GROWTH) ** -offset) if recorded else None,
+            "energy_bond_actual": energy_financing.bonds_held(register, period.end_ad) if recorded else None,
+        })
+
+    # One new limit per fiscal year from the first projected quarter's, drawn evenly through each year
+    years = list(dict.fromkeys(_fiscal_year(period) for period in quarters[opening + 1:]))
+    limits, planned = [], {}
+    for approved, share in enumerate(NEW_LIMIT_SHARES):
+        limit = (book * share / CRORE).quantize(Decimal("1")) * CRORE
+        limits.append({"fiscal_year": years[approved], "new_limit": limit,
+                       "drawdown_pct": [float(pct) for pct in NEW_LIMIT_DRAWDOWN]})
+        for year, pct in enumerate(NEW_LIMIT_DRAWDOWN):
+            in_year = [period for period in quarters[opening + 1:] if _fiscal_year(period) == years[approved + year]]
+            for period in in_year:
+                planned[period.end_ad] = planned.get(period.end_ad, Decimal("0")) + money(limit * pct / 100 / len(in_year))
+    by_end = {period.end_ad: period for period in quarters}
+    return {"bonds": bonds, "inputs": inputs, "limits": limits,
+            "planned": [{"period": by_end[end], "planned_disbursement": amount} for end, amount in sorted(planned.items())]}
 
 
 def cod_dates(rng: random.Random, stage: str, today: date) -> Dict[str, Any]:
@@ -402,7 +517,9 @@ def build_operations(rng: random.Random, project_id, data: Dict[str, Any], today
 
 # Children before parents; approval requests point at projects and loans by id, so they go too.
 DELETE_ORDER = (
-    ApprovalStep, ApprovalRequest, Repayment, DisbursementTranche, LoanAccountRateHistory, LoanAccount,
+    ApprovalStep, ApprovalRequest, EnergyFinancingQuarter, EnergyBond, NewLoanDisbursementQuarter, NewLoanLimit,
+    LoanProjectionQuarter, Repayment, DisbursementTranche, LoanAccountRateHistory,
+    LoanAccount,
     EnergyGenerationData, NEAPPARate, PPAAgreement, PlantPerformance, MaintenanceLog, MaintenanceSchedule,
     HydrologyDetailed, LandAcquisitionTracking, BoardOfDirectors, ShareholdingHierarchy, ESGMetrics,
     EIAMitigationChecklist, CovenantHistory, FinancialPeriod, CovenantTerms, Milestone, RiskRegisterEntry, WaterLicense, ProjectTechnicalSpecs,
@@ -418,6 +535,10 @@ async def seed(session: AsyncSession, today: date | None = None) -> int:
 
     for model in DELETE_ORDER:
         await session.execute(delete(model))
+
+    quarters = fiscal_quarters(today)
+    projection_quarters = quarters[RECORDED_QUARTERS:RECORDED_QUARTERS + PROJECTION_QUARTERS + 1]
+    book = [Decimal("0")] * len(projection_quarters)
 
     for index, data in enumerate(projects):
         stage, capacity = data["stage"], data["capacity_mw"]
@@ -469,6 +590,15 @@ async def seed(session: AsyncSession, today: date | None = None) -> int:
             session.add(DisbursementTranche(id=uuid.uuid4(), loan_account_id=loan.id, **tranche))
         for repayment in repayments:
             session.add(Repayment(id=uuid.uuid4(), loan_account_id=loan.id, **repayment))
+        for position, row in enumerate(build_projection(data["status"], sanctioned, disbursed, outstanding,
+                                                        repayments, projection_quarters)):
+            book[position] += row["outstanding"]
+            session.add(LoanProjectionQuarter(
+                id=uuid.uuid4(), project_id=project.id, fiscal_year=_fiscal_year(row["period"]),
+                quarter=_quarter(row["period"]), period_end_ad=row["period"].end_ad, period_end_bs=row["period"].end_bs,
+                is_opening=row["is_opening"], projected_disbursement=row["disbursement"],
+                projected_repayment=row["repayment"], projected_outstanding=row["outstanding"],
+                data_provenance="SYNTHETIC"))
 
         # One rate reset a year ago, so the loan has a history as well as a current rate
         reset = date(today.year - 1, 7, 16)
@@ -498,6 +628,24 @@ async def seed(session: AsyncSession, today: date | None = None) -> int:
                 id=uuid.uuid4(), project_id=project.id, dscr_min=Decimal("1.20"), ltv_max=Decimal("75"),
                 icr_min=Decimal("1.75"), warning_margin_pct=Decimal("8"),
                 source_reference=f"Sanction letter SL/{data['code']}"))
+
+    energy = build_energy_financing(today, quarters, book)
+    for bond in energy["bonds"]:
+        session.add(EnergyBond(
+            id=uuid.uuid4(), investment_date_bs=_bs(bond["investment_date_ad"]),
+            maturity_date_bs=_bs(bond["maturity_date_ad"]), data_provenance="SYNTHETIC", **bond))
+    for row in energy["inputs"]:
+        period = row.pop("period")
+        session.add(EnergyFinancingQuarter(
+            id=uuid.uuid4(), fiscal_year=_fiscal_year(period), quarter=_quarter(period), period_end_ad=period.end_ad,
+            period_end_bs=period.end_bs, data_provenance="SYNTHETIC", **row))
+    for limit in energy["limits"]:
+        session.add(NewLoanLimit(id=uuid.uuid4(), data_provenance="SYNTHETIC", **limit))
+    for row in energy["planned"]:
+        period = row["period"]
+        session.add(NewLoanDisbursementQuarter(
+            id=uuid.uuid4(), fiscal_year=_fiscal_year(period), quarter=_quarter(period), period_end_ad=period.end_ad,
+            period_end_bs=period.end_bs, planned_disbursement=row["planned_disbursement"], data_provenance="SYNTHETIC"))
 
     await session.flush()
     # Covenant results are not seeded: the engine works them out from the figures above
