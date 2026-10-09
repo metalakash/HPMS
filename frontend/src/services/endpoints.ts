@@ -26,6 +26,8 @@ import type {
   MfaSetup,
   MfaStatus,
   MilestoneItem,
+  EnergyFinancing,
+  LoanProjection,
   PerformanceRow,
   PortfolioMaintenance,
   UserAccount,
@@ -154,6 +156,10 @@ export const portfolioApi = {
     api.get<ApiResponse<PerformanceRow[]>>('/api/v1/analytics/performance').then((r) => r.data.data),
   maintenance: () =>
     api.get<ApiResponse<PortfolioMaintenance>>('/api/v1/maintenance').then((r) => r.data.data),
+  energyFinancing: () =>
+    api.get<ApiResponse<EnergyFinancing>>('/api/v1/energy-financing').then((r) => r.data.data),
+  projection: () =>
+    api.get<ApiResponse<LoanProjection>>('/api/v1/loans/projection').then((r) => r.data.data),
 };
 
 export const adminApi = {

@@ -11,6 +11,8 @@ const LoansPage = lazy(() => import('@/pages/LoansPage'));
 const ApprovalQueuePage = lazy(() => import('@/pages/ApprovalQueuePage'));
 const CompliancePage = lazy(() => import('@/pages/CompliancePage'));
 const AnalyticsPage = lazy(() => import('@/pages/AnalyticsPage'));
+const ProjectionPage = lazy(() => import('@/pages/ProjectionPage'));
+const EnergyFinancingPage = lazy(() => import('@/pages/EnergyFinancingPage'));
 const MaintenancePage = lazy(() => import('@/pages/MaintenancePage'));
 const AdminPage = lazy(() => import('@/pages/AdminPage'));
 const ReportsPage = lazy(() => import('@/pages/ReportsPage'));
@@ -30,6 +32,8 @@ export const routes: RouteObject[] = [
       { path: 'approvals', element: <ApprovalQueuePage /> },
       { path: 'compliance', element: <CompliancePage /> },
       { path: 'analytics', element: <AnalyticsPage /> },
+      { path: 'projection', element: <ProjectionPage /> },
+      { path: 'energy-financing', element: <EnergyFinancingPage /> },
       { path: 'maintenance', element: <MaintenancePage /> },
       { path: 'reports', element: <ReportsPage /> },
       { path: 'regulatory', element: <RegulatoryPage /> },

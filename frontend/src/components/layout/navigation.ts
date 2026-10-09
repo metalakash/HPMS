@@ -4,11 +4,13 @@ import {
   ClipboardCheck,
   FileSpreadsheet,
   FolderKanban,
+  Gauge,
   KeyRound,
   LayoutDashboard,
   LineChart,
   Settings,
   ShieldCheck,
+  TrendingUp,
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
@@ -26,6 +28,8 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, available: true },
   { to: '/projects', label: 'Projects', icon: FolderKanban, available: true },
   { to: '/loans', label: 'Loan accounts', icon: Banknote, available: true },
+  { to: '/projection', label: 'Loan projection', icon: TrendingUp, available: true },
+  { to: '/energy-financing', label: 'Energy financing', icon: Gauge, available: true },
   {
     to: '/approvals',
     label: 'Approvals',

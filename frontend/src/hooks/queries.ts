@@ -156,6 +156,14 @@ export function usePortfolioPerformance() {
   return useQuery({ queryKey: ['portfolio', 'performance'], queryFn: portfolioApi.performance });
 }
 
+export function useEnergyFinancing() {
+  return useQuery({ queryKey: ['portfolio', 'energy-financing'], queryFn: portfolioApi.energyFinancing });
+}
+
+export function useLoanProjection() {
+  return useQuery({ queryKey: ['portfolio', 'projection'], queryFn: portfolioApi.projection });
+}
+
 export function usePortfolioMaintenance() {
   return useQuery({ queryKey: ['portfolio', 'maintenance'], queryFn: portfolioApi.maintenance });
 }

@@ -553,6 +553,107 @@ export interface PerformanceRow {
   covenant_status: CovenantStatus | null;
 }
 
+export interface EnergyFinancingQuarter {
+  fiscal_year: string;
+  quarter: number;
+  label: string;
+  period_end_ad: string;
+  period_end_bs: string | null;
+  /** True where the bank's recorded figures were used; false where the projection was. */
+  is_actual: boolean;
+  hydro_outstanding: DecimalString;
+  energy_bonds: DecimalString;
+  energy_financing: DecimalString;
+  /** The bank's total loans and advances two quarters earlier. */
+  base_loans: DecimalString;
+  ratio_pct: DecimalString;
+  required_pct: DecimalString | null;
+  requirement: DecimalString | null;
+  /** Energy financing less the requirement; negative is a shortfall. */
+  headroom: DecimalString | null;
+  status: 'met' | 'shortfall' | null;
+  /** The same test with the planned new lending added; null when no new lending is on file. */
+  with_pipeline: {
+    new_loans_outstanding: DecimalString;
+    ratio_pct: DecimalString | null;
+    headroom: DecimalString | null;
+    status: 'met' | 'shortfall' | null;
+  } | null;
+}
+
+export interface NewLoanLimit {
+  fiscal_year: string;
+  new_limit: DecimalString;
+  /** Share drawn in each year after approval. */
+  drawdown_pct: number[] | null;
+}
+
+export interface NewLoanPipeline {
+  limits: NewLoanLimit[];
+  total_limit: DecimalString;
+  quarters: {
+    fiscal_year: string;
+    quarter: number;
+    label: string;
+    period_end_ad: string;
+    period_end_bs: string | null;
+    planned_disbursement: DecimalString;
+  }[];
+  total_disbursement: DecimalString;
+}
+
+export interface EnergyBond {
+  id: string;
+  name: string;
+  amount: DecimalString;
+  yield_pct: DecimalString | null;
+  investment_date_ad: string | null;
+  maturity_date_ad: string | null;
+  maturity_date_bs: string | null;
+  held: boolean;
+}
+
+export interface EnergyFinancing {
+  quarters: EnergyFinancingQuarter[];
+  pipeline: NewLoanPipeline;
+  bonds: EnergyBond[];
+  bonds_held: DecimalString;
+}
+
+export interface ProjectionQuarter {
+  fiscal_year: string;
+  /** 1 = Ashoj end, 2 = Poush end, 3 = Chaitra end, 4 = Ashad end */
+  quarter: number;
+  label: string;
+  period_end_ad: string;
+  period_end_bs: string | null;
+  /** The position the projection starts from; it has no flows of its own. */
+  is_opening: boolean;
+  disbursement: DecimalString;
+  repayment: DecimalString;
+  outstanding: DecimalString;
+}
+
+export interface ProjectionBorrower {
+  project_id: string;
+  project_code: string;
+  project_name: string;
+  pipeline_status: string;
+  sanctioned_amount: DecimalString | null;
+  opening_outstanding: DecimalString;
+  closing_outstanding: DecimalString;
+  peak_outstanding: DecimalString;
+  total_disbursement: DecimalString;
+  total_repayment: DecimalString;
+  /** Outstanding at each quarter end, in the order of `LoanProjection.quarters`. */
+  outstanding: (DecimalString | null)[];
+}
+
+export interface LoanProjection {
+  quarters: ProjectionQuarter[];
+  projects: ProjectionBorrower[];
+}
+
 interface MaintenanceBase {
   id: string;
   project_id: string;
