@@ -59,6 +59,13 @@ export function formatDate(value: string | null | undefined, language: Language 
   return new Intl.DateTimeFormat(locale(language), { dateStyle: 'medium' }).format(date);
 }
 
+/** Fiscal quarter label from the API, "2082-83-Q4" -> "FY 2082/83 Q4". Anything else is shown as it is. */
+export function formatFiscalQuarter(label: string | null | undefined): string {
+  if (!label) return '—';
+  const match = /^(\d{4})-(\d{2})-Q([1-4])$/.exec(label);
+  return match ? `FY ${match[1]}/${match[2]} Q${match[3]}` : label;
+}
+
 /** "under_review" -> "Under review" */
 export function humanize(value: string | null | undefined): string {
   if (!value) return '—';

@@ -5,18 +5,7 @@ import { PROJECT_STAGES, useSubmitChange } from '@/hooks/queries';
 import { getErrorMessage } from '@/services/api';
 import type { ProjectDetail } from '@/types/api';
 import { humanize } from '@/utils/format';
-
-/** backend/app/models/project.py: PipelineStatus */
-const PIPELINE_STATUSES = [
-  'proposal_under_pipeline',
-  'under_review',
-  'approved',
-  'yet_to_start_drawdown',
-  'under_construction',
-  'under_operation',
-  'settled',
-  'dropped',
-];
+import { PIPELINE_STATUSES } from '@/utils/status';
 
 const options = (values: string[]) => values.map((value) => ({ value, label: humanize(value) }));
 

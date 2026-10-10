@@ -10,10 +10,9 @@ import { PROJECT_STAGES, useProjects } from '@/hooks/queries';
 import { useUIStore } from '@/store/useUIStore';
 import type { ProjectListItem } from '@/types/api';
 import { formatDate, formatMW, humanize } from '@/utils/format';
-import { projectName, statusTone } from '@/utils/status';
+import { PIPELINE_STATUSES, projectName, statusTone } from '@/utils/status';
 
 const PAGE_SIZE = 20;
-const PIPELINE_STATUSES = ['proposal_under_pipeline', 'under_review', 'approved', 'dropped'];
 const PROVINCES = ['Koshi', 'Madhesh', 'Bagmati', 'Gandaki', 'Lumbini', 'Karnali', 'Sudurpashchim'];
 
 export default function ProjectsPage() {

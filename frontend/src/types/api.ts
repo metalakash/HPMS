@@ -632,6 +632,9 @@ export interface ProjectionQuarter {
   disbursement: DecimalString;
   repayment: DecimalString;
   outstanding: DecimalString;
+  /** Disbursement planned from new limits, bank-wide; null unless the viewer sees the whole book. */
+  new_loan_disbursement: DecimalString | null;
+  outstanding_with_new_loans: DecimalString | null;
 }
 
 export interface ProjectionBorrower {

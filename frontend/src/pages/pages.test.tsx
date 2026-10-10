@@ -99,7 +99,9 @@ describe('DashboardPage', () => {
     expect(tile('Loan accounts')).toHaveTextContent('31');
     expect(tile('In feasibility')).toHaveTextContent('4');
     expect(tile('In construction')).toHaveTextContent('7');
-    expect(tile('In operation')).toHaveTextContent('12');
+    // Settled facilities keep the operation stage but are counted apart
+    await waitFor(() => expect(tile('In operation')).toHaveTextContent('10'));
+    expect(tile('In operation')).toHaveTextContent('plus 2 settled');
 
     const table = screen.getByRole('table', { name: 'Recently added projects' });
     expect(within(table).getByRole('link', { name: 'Upper Trishuli' })).toBeInTheDocument();

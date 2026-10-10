@@ -20,7 +20,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.database import get_db
-from backend.app.models.auth import User
+from backend.app.models.auth import User, UserRole
 from backend.app.models.financial import (
     EnergyBond, EnergyFinancingQuarter, LoanAccount, LoanProjectionQuarter, NewLoanDisbursementQuarter, NewLoanLimit,
 )
@@ -150,6 +150,9 @@ async def loan_projection(
     opening position the projection starts from. ``projects`` carry each borrower's outstanding
     for the same quarters, in the same order. The figures are the lender's plan as it was
     prepared, not a forecast made here.
+
+    The disbursement planned from new limits is for the bank as a whole, so it is added only for
+    a caller who sees the whole book; otherwise those two fields are null.
     """
     visible = await RLSService.get_authorized_project_ids(db, current_user)
     records = (await db.execute(
@@ -193,6 +196,15 @@ async def loan_projection(
             "outstanding": outstanding,
         })
     rows.sort(key=lambda r: (-r["total_disbursement"], r["project_name"]))
+
+    planned = {}
+    if current_user.has_any_role([UserRole.ADMIN, UserRole.AUDITOR]):
+        planned = dict((await db.execute(
+            select(NewLoanDisbursementQuarter.period_end_ad, NewLoanDisbursementQuarter.planned_disbursement))).all())
+    drawn = energy_financing.cumulative(planned, list(quarters))
+    for end, quarter in quarters.items():
+        quarter["new_loan_disbursement"] = planned.get(end, zero) if planned else None
+        quarter["outstanding_with_new_loans"] = quarter["outstanding"] + drawn[end] if planned else None
     return _respond({"quarters": list(quarters.values()), "projects": rows}, current_user, "read_loan_projection")
 
 

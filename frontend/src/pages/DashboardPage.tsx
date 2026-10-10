@@ -24,6 +24,9 @@ export default function DashboardPage() {
   const recent = useProjects({ page: 1, page_size: RECENT_COUNT });
   const loans = useLoanAccounts({ page: 1, page_size: 1 });
   const stages = useStageCounts();
+  // A settled facility keeps its operation stage; it is counted apart from the plants still financed
+  const settled = useProjects({ page: 1, page_size: 1, status: 'settled' });
+  const settledCount = settled.data?.meta.total_count ?? 0;
 
   const columns: Column<ProjectListItem>[] = [
     {
@@ -82,8 +85,9 @@ export default function DashboardPage() {
           <StatCard
             key={stage}
             label={`In ${stage}`}
-            loading={stages.isLoading}
-            value={formatCompact(count, language)}
+            loading={stages.isLoading || (stage === 'operation' && settled.isLoading)}
+            value={formatCompact(stage === 'operation' && count !== null ? count - settledCount : count, language)}
+            hint={stage === 'operation' && settledCount > 0 ? `plus ${settledCount} settled` : undefined}
           />
         ))}
       </div>

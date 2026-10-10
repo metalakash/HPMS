@@ -27,7 +27,8 @@ export const handlers = [
     const url = new URL(request.url);
     const stage = url.searchParams.get('stage');
     const pageSize = Number(url.searchParams.get('page_size') ?? 20);
-    const total = stage ? (STAGE_TOTALS[stage] ?? 0) : 23;
+    // Two of the operating projects are settled facilities
+    const total = url.searchParams.get('status') === 'settled' ? 2 : stage ? (STAGE_TOTALS[stage] ?? 0) : 23;
     const rows = [
       makeProject(),
       makeProject({

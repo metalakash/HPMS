@@ -58,6 +58,7 @@ const USERS: UserAccount[] = [
 const quarter = (fiscal_year: string, q: number, label: string, end: string, figures: [string, string, string]) => ({
   fiscal_year, quarter: q, label, period_end_ad: end, period_end_bs: null, is_opening: false,
   disbursement: figures[0], repayment: figures[1], outstanding: figures[2],
+  new_loan_disbursement: null, outstanding_with_new_loans: null,
 });
 
 const PROJECTION: LoanProjection = {
@@ -89,6 +90,7 @@ describe('ProjectionPage', () => {
     expect(past).toHaveTextContent('Date passed');
     expect(past).toHaveTextContent('1,400');
     expect(future).not.toHaveTextContent('Date passed');
+    expect(within(table).queryByText('With planned new loans')).not.toBeInTheDocument();
 
     const tile = (label: string) => screen.getByText(label).parentElement?.parentElement;
     expect(tile('Opening outstanding')).toHaveTextContent('1,000');
@@ -99,6 +101,29 @@ describe('ProjectionPage', () => {
 
     const borrowers = screen.getByRole('table', { name: 'Projection by borrower' });
     expect(within(borrowers).getByRole('link', { name: /Sabha Khola/ })).toHaveAttribute('href', '/projects/p-1');
+  });
+
+  it('adds the planned new loans for a viewer who sees the whole book', async () => {
+    const [opening, past, future] = PROJECTION.quarters;
+    server.use(http.get('*/api/v1/loans/projection', () => HttpResponse.json(envelope({
+      ...PROJECTION,
+      quarters: [
+        { ...opening, new_loan_disbursement: '0', outstanding_with_new_loans: '1000.00' },
+        { ...past, new_loan_disbursement: '0', outstanding_with_new_loans: '1400.00' },
+        { ...future, new_loan_disbursement: '250.00', outstanding_with_new_loans: '1750.00' },
+      ],
+    }))));
+    signIn();
+    renderRoute('/projection');
+
+    const table = await screen.findByRole('table', {
+      name: 'Projected disbursement, repayment and outstanding by fiscal quarter',
+    });
+    expect(within(table).getByText('With planned new loans')).toBeInTheDocument();
+    const [, , pastRow, futureRow] = within(table).getAllByRole('row');
+    expect(pastRow).toHaveTextContent('none this quarter');
+    expect(futureRow).toHaveTextContent('1,750');
+    expect(futureRow).toHaveTextContent('this quarter');
   });
 
   it('says so when no projection is on file', async () => {
