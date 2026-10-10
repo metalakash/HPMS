@@ -21,16 +21,20 @@ bank or hosting access stay in Phase 12.
 
 ## Tasks
 
-### 14.1 Commit hygiene — not started
-- [ ] Commit the uncommitted Phase 11–13 changes in logical splits (covenant engine, CBS adapters
-      and checker, portfolio pages reading real data, Reports and Regulatory screens, load test,
-      deploy safety, docs)
-- [ ] Commit `alembic/versions/026_fiscal_quarter_covenants.py` with the covenant changes it depends on
-- [ ] Commit or deliberately discard `docs/DEMO-SCRIPT.md`, `docs/GO-TO-MARKET-PLAN.md` and
-      `docs/OUTREACH-EMAIL-DRAFTS.md`
-- [ ] Confirm `test_data_dictionary` passes after the import-related files are reviewed (it failed
-      locally while the bank-import files were uncommitted)
-- [ ] Re-run backend, frontend and CI on the resulting head
+### 14.1 Commit hygiene — ✅ done 2026-10-10 (not pushed)
+- [x] Uncommitted work committed in five splits: `dbc0ccc` covenant fiscal quarters (with migration
+      026), `4cf3941` compliance page, `f154c57` portfolio and shared status list, `3be7c92`
+      projection page, `30aaf37` RFP gap audit and this kickoff
+- [x] Migration 026 committed with the covenant changes. It deletes calendar-keyed covenant rows,
+      so it must not be run against the bank-data database without a decision
+- [ ] `docs/DEMO-SCRIPT.md` is still untracked: not yet reviewed for commit
+- [ ] `docs/GO-TO-MARKET-PLAN.md` and `docs/OUTREACH-EMAIL-DRAFTS.md` are untracked and **kept out
+      of git**: they hold named individuals' personal email addresses and a named lead. Decide
+      whether they live outside the repo
+- [x] `test_data_dictionary` passes now; the bank-import files it complained about are committed
+- [x] Local verification before commit: backend 1033 passed, 0 failed, 0 skipped (DB tests run
+      against a private PostgreSQL 18 test cluster, UTF8); frontend typecheck clean, 182 passed,
+      2 expected failures. CI not yet re-run on the new head
 
 ### 14.2 Maker-checker for covenant inputs — not started
 - [ ] Route creation and changes of `project_financial_periods` through the change-request flow
