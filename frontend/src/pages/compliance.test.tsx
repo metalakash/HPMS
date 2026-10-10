@@ -19,8 +19,8 @@ function makeRow(overrides: Partial<CovenantResultRow> = {}): CovenantResultRow 
     project_code: 'HPM-BA-0012',
     project_name: 'Mailung Khola',
     project_stage: 'operation',
-    quarter: '2026-Q3',
-    test_date: '2026-09-30',
+    quarter: '2083-84-Q1',
+    test_date: '2026-10-17',
     overall_status: 'breached',
     dscr: metric('1.0712', '1.2500', 'breached'),
     icr: metric('2.1000', '2.0000', 'warning'),
@@ -42,20 +42,20 @@ const BUILDING = makeRow({
 const HISTORY: CovenantHistory = {
   project_id: 'p-1',
   quarters_available: 2,
-  latest_quarter: '2026-Q3',
+  latest_quarter: '2083-84-Q1',
   overall_status: 'breached',
   trends: [
-    { quarter: '2026-Q2', quarter_bs: '2083-Q2', covenant_date: '2026-06-30',
+    { quarter: '2082-83-Q4', quarter_bs: '2082-83-Q4', covenant_date: '2026-07-16',
       dscr: metric('1.3400', '1.25', 'warning'), icr: metric('2.3', '2', 'compliant'), ltv: metric('44.39', '70', 'compliant') },
-    { quarter: '2026-Q3', quarter_bs: '2083-Q3', covenant_date: '2026-09-30',
+    { quarter: '2083-84-Q1', quarter_bs: '2083-84-Q1', covenant_date: '2026-10-17',
       dscr: metric('1.0712', '1.25', 'breached'), icr: metric('2.1', '2', 'warning'), ltv: metric('44.39', '70', 'compliant') },
   ],
 };
 
 const CALCULATION: CovenantCalculation = {
-  quarter: '2026-Q3',
-  test_date: '2026-09-30',
-  window: { from: '2025-10-01', to: '2026-09-30', quarters_used: ['2025-Q4', '2026-Q1', '2026-Q2', '2026-Q3'] },
+  quarter: '2083-84-Q1',
+  test_date: '2026-10-17',
+  window: { from: '2025-10-18', to: '2026-10-17', quarters_used: ['2082-83-Q2', '2082-83-Q3', '2082-83-Q4', '2083-84-Q1'] },
   overall_status: 'breached',
   dscr: { ...metric('1.0712', '1.2500', 'breached'), note: null },
   icr: { ...metric(null, '2.0000', 'not_tested'), note: 'Depreciation is not reported for every quarter' },
@@ -108,7 +108,7 @@ describe('CompliancePage', () => {
     const drawer = await screen.findByRole('dialog');
     expect(within(drawer).getByRole('heading', { name: 'Covenants: Mailung Khola' })).toBeInTheDocument();
 
-    expect(await within(drawer).findByText('How 2026-Q3 was calculated')).toBeInTheDocument();
+    expect(await within(drawer).findByText('How FY 2083/84 Q1 was calculated')).toBeInTheDocument();
     expect(drawer).toHaveTextContent('Required minimum: 1.25x');
     expect(drawer).toHaveTextContent('tested against sanction terms');
     // An untested ratio says why instead of showing a number
@@ -116,9 +116,9 @@ describe('CompliancePage', () => {
     expect(within(drawer).getByText('Not tested')).toBeInTheDocument();
 
     const [, latest, earlier] = within(within(drawer).getByRole('table')).getAllByRole('row');
-    expect(latest).toHaveTextContent('2026-Q3');
+    expect(latest).toHaveTextContent('FY 2083/84 Q1');
     expect(latest).toHaveTextContent('1.07x (Breached)');
-    expect(earlier).toHaveTextContent('2026-Q2');
+    expect(earlier).toHaveTextContent('FY 2082/83 Q4');
     expect(earlier).toHaveTextContent('1.34x (Warning)');
   });
 

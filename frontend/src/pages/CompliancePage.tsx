@@ -13,7 +13,7 @@ import {
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useCovenantResults } from '@/hooks/queries';
 import type { CovenantMetric, CovenantResultRow } from '@/types/api';
-import { formatDate, humanize } from '@/utils/format';
+import { formatDate, formatFiscalQuarter, humanize } from '@/utils/format';
 
 function Ratio({ metric, unit }: { metric: CovenantMetric; unit: 'x' | '%' }) {
   const tone =
@@ -59,7 +59,7 @@ export default function CompliancePage() {
       hideOnMobile: true,
       render: (row) => (
         <>
-          {row.quarter}
+          {formatFiscalQuarter(row.quarter)}
           <span className="block text-xs text-muted">{formatDate(row.test_date)}</span>
         </>
       ),

@@ -3,7 +3,7 @@ import { Skeleton } from '@/components/common/Skeleton';
 import { ErrorState } from '@/components/common/States';
 import { useCovenantCalculation, useCovenantHistory } from '@/hooks/queries';
 import type { CovenantCalculation, CovenantMetric, CovenantStatus } from '@/types/api';
-import { formatDate, formatNPR, toNumber } from '@/utils/format';
+import { formatDate, formatFiscalQuarter, formatNPR, toNumber } from '@/utils/format';
 import { DetailDrawer } from './DetailDrawer';
 
 const STATUS_LABEL: Record<CovenantStatus, string> = {
@@ -50,7 +50,7 @@ function Working({ calculation }: { calculation: CovenantCalculation }) {
   return (
     <section aria-labelledby="covenant-working">
       <h3 id="covenant-working" className="text-sm font-semibold">
-        How {calculation.quarter} was calculated
+        How {formatFiscalQuarter(calculation.quarter)} was calculated
       </h3>
       <p className="mt-1 text-xs text-muted">
         Twelve months from {formatDate(window.from)} to {formatDate(window.to)}, tested against{' '}
@@ -91,7 +91,7 @@ export function CovenantDetailDrawer({ isOpen, onClose, projectId, projectName }
         <p className="text-sm text-muted">No covenant tests have been run for this project.</p>
       ) : (
         <div className="space-y-6">
-          <section aria-label={`Latest test, ${latest.quarter}`} className="space-y-3">
+          <section aria-label={`Latest test, ${formatFiscalQuarter(latest.quarter)}`} className="space-y-3">
             {RATIOS.map((ratio) => {
               const metric = calculation.data?.[ratio.key] ?? latest[ratio.key];
               return (
@@ -133,7 +133,7 @@ export function CovenantDetailDrawer({ isOpen, onClose, projectId, projectName }
               <tbody>
                 {[...history.data.trends].reverse().map((trend) => (
                   <tr key={trend.quarter} className="border-b border-line last:border-0">
-                    <th scope="row" className="py-2 text-left font-normal">{trend.quarter}</th>
+                    <th scope="row" className="py-2 text-left font-normal">{formatFiscalQuarter(trend.quarter)}</th>
                     {RATIOS.map((ratio) => {
                       const metric = trend[ratio.key];
                       const flagged = metric.status === 'breached' || metric.status === 'warning';
