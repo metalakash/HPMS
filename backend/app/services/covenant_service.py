@@ -241,7 +241,7 @@ class CovenantService:
                 db.add(history)
             end = calc.quarter.end
             end_bs = bs_string(end)
-            history.quarter_bs = f"{end_bs[:4]}-Q{calc.quarter.number}" if end_bs else None
+            history.quarter_bs = calc.quarter.label
             history.covenant_date_ad, history.covenant_date_bs = end, end_bs
             for name in ("dscr", "ltv", "icr"):
                 metric = getattr(calc, name)

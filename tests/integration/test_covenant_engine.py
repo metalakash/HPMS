@@ -1,6 +1,6 @@
 """Covenant testing: the arithmetic on a hand-worked example, then the same example through the API.
 
-The worked example (NPR millions), tested at 2026-Q2 over 2025-07-01 .. 2026-06-30:
+The worked example (NPR millions), tested at 2082-83-Q4 (FY 2082/83) over 2025-07-17 .. 2026-07-16:
 
     four quarters, each: revenue 100, operating expenses 15, royalty 2.5, tax 2, depreciation 12.5
     EBITDA = 400 - 60 - 10 = 330      CFADS = 330 - 8 = 322      EBIT = 330 - 50 = 280
@@ -32,8 +32,8 @@ from backend.app.services.covenant_engine import PeriodFinancials, Quarter, Term
 from backend.app.services.covenant_service import CovenantService
 
 M = Decimal("1000000")
-Q2 = Quarter(2026, 2)
-WINDOW = [Quarter(2025, 3), Quarter(2025, 4), Quarter(2026, 1), Q2]
+Q2 = Quarter(2082, 4)  # the test date: the last quarter of FY 2082/83
+WINDOW = [Quarter(2082, 1), Quarter(2082, 2), Quarter(2082, 3), Q2]
 
 
 def period(quarter: Quarter, **overrides) -> PeriodFinancials:
@@ -51,15 +51,17 @@ def worked_example(**kwargs):
 # ------------------------------------------------------------------ arithmetic (no database)
 
 def test_quarters_know_their_bounds_and_neighbours():
-    assert (Q2.start, Q2.end, Q2.label) == (date(2026, 4, 1), date(2026, 6, 30), "2026-Q2")
-    assert Quarter(2025, 4).end == date(2025, 12, 31)
-    assert Quarter(2026, 1).shift(-1) == Quarter(2025, 4) and Quarter(2025, 4).shift(1) == Quarter(2026, 1)
-    assert Quarter.of(date(2026, 10, 6)) == Quarter(2026, 4)
-    assert Quarter.parse("2026-Q2") == Q2
-    assert engine.window_of(Q2) == (date(2025, 7, 1), date(2026, 6, 30))
+    # Baisakh to Ashad 2083, the last quarter of FY 2082/83
+    assert (Q2.start, Q2.end, Q2.label) == (date(2026, 4, 14), date(2026, 7, 16), "2082-83-Q4")
+    assert Quarter(2082, 2).end == date(2026, 1, 14)  # the last day of Poush
+    assert Quarter(2083, 1).shift(-1) == Q2 and Q2.shift(1) == Quarter(2083, 1)
+    assert Quarter.of(date(2026, 10, 6)) == Quarter(2083, 1)
+    assert Quarter.of(date(2026, 7, 16)) == Q2 and Quarter.of(date(2026, 7, 17)) == Quarter(2083, 1)
+    assert Quarter.parse("2082-83-Q4") == Q2
+    assert engine.window_of(Q2) == (date(2025, 7, 17), date(2026, 7, 16))
 
 
-@pytest.mark.parametrize("label", ["2026Q2", "2026-Q5", "2026-Q0", "Q2-2026", "", "2026-Q", "x-Q1"])
+@pytest.mark.parametrize("label", ["2082-83Q4", "2082-83-Q5", "2082-83-Q0", "Q4-2082-83", "", "2082-83-Q", "x-Q1", "2026-Q2", "2082-84-Q1", "2082/83-Q4"])
 def test_malformed_quarters_are_rejected(label):
     with pytest.raises(ValueError, match="not a quarter"):
         Quarter.parse(label)
@@ -69,7 +71,7 @@ def test_the_worked_example():
     calc = worked_example()
 
     assert (calc.revenue, calc.ebitda, calc.cfads, calc.ebit) == (400 * M, 330 * M, 322 * M, 280 * M)
-    assert calc.quarters_used == ["2025-Q3", "2025-Q4", "2026-Q1", "2026-Q2"]
+    assert calc.quarters_used == ["2082-83-Q1", "2082-83-Q2", "2082-83-Q3", "2082-83-Q4"]
     assert (calc.dscr.value, calc.dscr.status) == (Decimal("1.6304"), "compliant")
     assert (calc.icr.value, calc.icr.status) == (Decimal("2.8718"), "compliant")
     assert (calc.ltv.value, calc.ltv.status) == (Decimal("65.5172"), "warning")  # within 8% of the 70 ceiling
@@ -77,13 +79,13 @@ def test_the_worked_example():
 
 
 def test_a_missing_quarter_leaves_the_income_ratios_untested_and_says_which():
-    periods = [period(q) for q in WINDOW if q != Quarter(2025, 4)] + [
-        PeriodFinancials(Quarter(2025, 4), security_value=1450 * M)]  # a valuation, but no income reported
+    periods = [period(q) for q in WINDOW if q != Quarter(2082, 2)] + [
+        PeriodFinancials(Quarter(2082, 2), security_value=1450 * M)]  # a valuation, but no income reported
     calc = engine.calculate(Q2, periods, 100 * M, 97 * M, 900 * M)
 
     assert calc.dscr.value is None and calc.dscr.status == "not_tested"
     assert calc.icr.status == "not_tested"
-    assert "2025-Q4" in calc.dscr.note and "2026-Q1" not in calc.dscr.note
+    assert "2082-83-Q2" in calc.dscr.note and "2082-83-Q3" not in calc.dscr.note
     assert calc.ltv.value == Decimal("62.0690") and calc.overall_status == "compliant"
 
 
@@ -107,9 +109,9 @@ def test_icr_needs_depreciation_for_every_quarter():
 
 
 def test_ltv_uses_the_latest_valuation_on_or_before_the_test_date():
-    periods = [period(Quarter(2025, 3), security_value=2000 * M), period(Quarter(2025, 4)),
-               period(Quarter(2026, 1), security_value=1800 * M), period(Q2),
-               period(Quarter(2026, 3), security_value=1 * M)]  # later than the test date: ignored
+    periods = [period(Quarter(2082, 1), security_value=2000 * M), period(Quarter(2082, 2)),
+               period(Quarter(2082, 3), security_value=1800 * M), period(Q2),
+               period(Quarter(2083, 1), security_value=1 * M)]  # later than the test date: ignored
     calc = engine.calculate(Q2, periods, 100 * M, 97 * M, 900 * M)
     assert calc.security_value == 1800 * M and calc.ltv.value == Decimal("50.0000")
 
@@ -205,25 +207,25 @@ async def test_reporting_a_year_of_figures_tests_the_covenants_and_updates_the_l
     admin = await login(api, "admin")
     audit_before = (await db_session.execute(select(func.count()).select_from(AuditLog))).scalar()
 
-    first = await api.put(f"/api/v1/compliance/covenants/{project.id}/financials/2025-Q3", json=FIGURES, headers=admin)
+    first = await api.put(f"/api/v1/compliance/covenants/{project.id}/financials/2082-83-Q1", json=FIGURES, headers=admin)
     assert first.json()["data"]["calculation"]["dscr"]["status"] == "not_tested"  # one quarter is not a year
 
     calc = (await report_year(api, project.id, admin))["calculation"]
     assert (calc["dscr"]["value"], calc["icr"]["value"], calc["ltv"]["value"]) == ("1.6304", "2.8718", "65.5172")
     assert calc["overall_status"] == "warning"
     assert calc["inputs"]["debt_service"] == "197500000.0000" and calc["inputs"]["cfads"] == "322000000.00"
-    assert calc["window"] == {"from": "2025-07-01", "to": "2026-06-30",
-                              "quarters_used": ["2025-Q3", "2025-Q4", "2026-Q1", "2026-Q2"]}
+    assert calc["window"] == {"from": "2025-07-17", "to": "2026-07-16",
+                              "quarters_used": ["2082-83-Q1", "2082-83-Q2", "2082-83-Q3", "2082-83-Q4"]}
 
     history = (await db_session.execute(
         select(CovenantHistory).where(CovenantHistory.project_id == project.id)
         .order_by(CovenantHistory.quarter_ad))).scalars().all()
     assert [h.quarter_ad for h in history] == [q.label for q in WINDOW]
     assert [h.dscr_status for h in history] == ["not_tested"] * 3 + ["compliant"]
-    assert history[-1].data_provenance == "CALCULATED" and history[-1].quarter_bs == "2083-Q2"
+    assert history[-1].data_provenance == "CALCULATED" and history[-1].quarter_bs == "2082-83-Q4"
 
     metrics = (await api.get(f"/api/v1/loan-accounts/{loan.id}/covenant-metrics", headers=admin)).json()["data"]
-    assert (metrics["dscr"], metrics["ltv"], metrics["metric_as_of_date"]) == ("1.6304", "65.5172", "2026-06-30")
+    assert (metrics["dscr"], metrics["ltv"], metrics["metric_as_of_date"]) == ("1.6304", "65.5172", "2026-07-16")
     assert metrics["dscr_pass"] and metrics["ltv_pass"] and metrics["icr_pass"]
     assert metrics["dscr_threshold"] == "1.25"
 
@@ -239,9 +241,9 @@ async def test_reporting_a_year_of_figures_tests_the_covenants_and_updates_the_l
     assert explained.json()["data"]["dscr"]["value"] == "1.6304"
     assert explained.json()["data"]["terms_source"] == "bank defaults"
     older = await api.get(f"/api/v1/compliance/covenants/{project.id}/calculation",
-                          params={"quarter": "2026-Q1"}, headers=admin)
-    assert older.json()["data"]["dscr"]["note"] == "No income figures for 2025-Q2"
-    for quarter, code in (("2024-Q1", 404), ("nonsense", 422)):
+                          params={"quarter": "2082-83-Q3"}, headers=admin)
+    assert older.json()["data"]["dscr"]["note"] == "No income figures for 2081-82-Q4"
+    for quarter, code in (("2080-81-Q3", 404), ("nonsense", 422)):
         r = await api.get(f"/api/v1/compliance/covenants/{project.id}/calculation",
                           params={"quarter": quarter}, headers=admin)
         assert r.status_code == code
@@ -253,7 +255,7 @@ async def test_a_correction_replaces_the_quarter_and_its_result(api, db_session,
     await report_year(api, project.id, admin)
 
     # Only the corrected field is sent; the rest of the quarter is kept
-    r = await api.put(f"/api/v1/compliance/covenants/{project.id}/financials/2026-Q2", headers=admin,
+    r = await api.put(f"/api/v1/compliance/covenants/{project.id}/financials/2082-83-Q4", headers=admin,
                       json={"operating_expenses_npr": "150000000", "source_reference": "Audited accounts", "is_audited": True})
     data = r.json()["data"]
     assert data["period"]["revenue_npr"] == "100000000.00" and data["period"]["is_audited"] is True
@@ -287,7 +289,7 @@ async def test_sanction_terms_are_admin_only_and_retest_the_history(api, facilit
     r = await api.put(f"/api/v1/compliance/covenants/{project.id}/terms", json=terms, headers=admin)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["terms"]["source"] == "sanction terms"
-    assert len(r.json()["data"]["periods"]) == 4 and r.json()["data"]["periods"][0]["quarter"] == "2026-Q2"
+    assert len(r.json()["data"]["periods"]) == 4 and r.json()["data"]["periods"][0]["quarter"] == "2082-83-Q4"
 
     calc = (await api.get(f"/api/v1/compliance/covenants/{project.id}/calculation", headers=admin)).json()["data"]
     assert calc["dscr"]["status"] == "breached" and calc["dscr"]["threshold"] == "1.7000"
@@ -303,13 +305,13 @@ async def test_figures_are_validated(api, facility):
     for quarter, body, problem in (
         (future.label, FIGURES, "has not ended"),
         (future.shift(4).label, FIGURES, "has not ended"),
-        ("2026-Q7", FIGURES, "not a quarter"),
-        ("2026-Q2", {**FIGURES, "revenue_npr": "-1"}, "cannot be negative"),
-        ("2026-Q2", {**FIGURES, "security_value_npr": "0"}, "greater than zero"),
+        ("2082-83-Q7", FIGURES, "not a quarter"),
+        ("2082-83-Q4", {**FIGURES, "revenue_npr": "-1"}, "cannot be negative"),
+        ("2082-83-Q4", {**FIGURES, "security_value_npr": "0"}, "greater than zero"),
     ):
         r = await api.put(f"{url}/{quarter}", json=body, headers=admin)
         assert r.status_code == 422 and problem in r.json()["detail"], r.text
-    r = await api.put(f"{url}/2026-Q2", json={"revenue_npr": "1"}, headers=admin)  # no source given
+    r = await api.put(f"{url}/2082-83-Q4", json={"revenue_npr": "1"}, headers=admin)  # no source given
     assert r.status_code == 422
     assert (await api.get(url, headers=admin)).json()["data"]["periods"] == []
 
@@ -320,17 +322,17 @@ async def test_only_the_owning_maker_or_an_admin_may_record_figures(api, db_sess
     url = f"/api/v1/compliance/covenants/{project.id}"
 
     # A maker who does not own the project cannot even see it
-    assert (await api.put(f"{url}/financials/2026-Q2", json=FIGURES, headers=maker)).status_code == 404
+    assert (await api.put(f"{url}/financials/2082-83-Q4", json=FIGURES, headers=maker)).status_code == 404
     assert (await api.get(f"{url}/financials", headers=guest)).status_code == 404
     # An auditor sees everything and changes nothing
     assert (await api.get(f"{url}/financials", headers=auditor)).status_code == 200
-    assert (await api.put(f"{url}/financials/2026-Q2", json=FIGURES, headers=auditor)).status_code == 403
+    assert (await api.put(f"{url}/financials/2082-83-Q4", json=FIGURES, headers=auditor)).status_code == 403
     assert (await api.post(f"{url}/recalculate", headers=auditor)).status_code == 403
 
     owner = (await db_session.execute(select(User).where(User.username == "maker"))).scalar_one()
     db_session.add(ProjectOwner(project_id=project.id, user_id=owner.id))
     await db_session.flush()
-    assert (await api.put(f"{url}/financials/2026-Q2", json=FIGURES, headers=maker)).status_code == 200
+    assert (await api.put(f"{url}/financials/2082-83-Q4", json=FIGURES, headers=maker)).status_code == 200
     r = await api.post(f"{url}/recalculate", headers=maker)
     assert r.status_code == 200 and r.json()["data"]["quarters_tested"] == 1
 
@@ -358,6 +360,6 @@ async def test_portfolio_lists_the_latest_result_per_visible_project_worst_first
     rows = [x for x in (await api.get("/api/v1/compliance/covenants", headers=admin)).json()["data"]
             if x["project_code"].startswith("COV-")]
     assert [(x["project_code"], x["quarter"], x["overall_status"]) for x in rows] == [
-        ("COV-001", "2026-Q2", "warning"), ("COV-002", latest_done.label, "compliant")]
+        ("COV-001", "2082-83-Q4", "warning"), ("COV-002", latest_done.label, "compliant")]
     assert rows[0]["ltv"] == {"value": "65.5172", "threshold": "70.0000", "status": "warning"}
     assert (await api.get("/api/v1/compliance/covenants", headers=guest)).json()["data"] == []

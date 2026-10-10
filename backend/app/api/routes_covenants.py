@@ -119,7 +119,7 @@ async def put_financial_period(
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> ApiResponse[dict]:
-    """Record or correct the figures for a completed quarter (e.g. 2026-Q2), then re-run the project's tests.
+    """Record or correct the figures for a completed fiscal quarter (e.g. 2082-83-Q4), then re-run the project's tests.
 
     Admins, and makers on projects they own. Fields left out of a correction keep their value.
     """
@@ -168,7 +168,7 @@ async def put_terms(
 @router.get("/{project_id}/calculation", response_model=ApiResponse[dict])
 async def get_calculation(
     project_id: str,
-    quarter: Optional[str] = Query(None, description="Quarter like 2026-Q2; the latest tested quarter if omitted"),
+    quarter: Optional[str] = Query(None, description="Fiscal quarter like 2082-83-Q4; the latest tested quarter if omitted"),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> ApiResponse[dict]:

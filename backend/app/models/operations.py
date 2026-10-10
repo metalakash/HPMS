@@ -454,8 +454,8 @@ class CovenantHistory(Base, TimestampedMixin):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), nullable=False, index=True)
 
-    quarter_ad = Column(String(10), nullable=False)  # e.g., "2026-Q3"
-    quarter_bs = Column(String(10))  # e.g., "2083-Q3"
+    quarter_ad = Column(String(10), nullable=False)  # fiscal quarter, e.g. "2082-83-Q4" (the name predates fiscal quarters)
+    quarter_bs = Column(String(10))  # the same label
     covenant_date_ad = Column(Date)
     covenant_date_bs = Column(String(10))
 
@@ -494,7 +494,7 @@ class FinancialPeriod(Base, TimestampedMixin):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey('projects.id'), nullable=False, index=True)
 
-    quarter_ad = Column(String(10), nullable=False)  # e.g., "2026-Q3" (calendar quarter)
+    quarter_ad = Column(String(10), nullable=False)  # fiscal quarter, e.g. "2082-83-Q4" (the name predates fiscal quarters)
     period_end_ad = Column(Date, nullable=False)
     period_end_bs = Column(String(10))
 

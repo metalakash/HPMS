@@ -724,22 +724,26 @@ async def test_covenant_metrics_are_plausible_for_a_seeded_operating_loan(api, s
     data = r.json()["data"]
     assert 20 <= Decimal(data["ltv"]) <= 100
     assert Decimal("0.5") <= Decimal(data["dscr"]) <= 5 and Decimal("0.5") <= Decimal(data["icr"]) <= 6
-    assert data["metric_as_of_date"] == "2026-09-30"  # the last completed quarter before TODAY
+    assert data["metric_as_of_date"] == "2026-07-16"  # the last completed fiscal quarter before TODAY (Ashad end 2083)
 
     explained = (await api.get(f"/api/v1/compliance/covenants/{loan.project_id}/calculation")).json()["data"]
     assert explained["dscr"]["value"] == data["dscr"] and len(explained["window"]["quarters_used"]) == 4
 
 
 async def test_seeded_statement_revenue_is_the_generation_revenue(seeded):
-    """The last four quarters of a project's reported revenue add up to its twelve months of generation."""
+    """A fiscal quarter's reported revenue is the generation revenue of the three months that begin in it."""
     from backend.app.models.operations import EnergyGenerationData, FinancialPeriod
+    from backend.app.services.covenant_engine import Quarter
     project_id = (await seeded.execute(select(EnergyGenerationData.project_id))).scalars().first()
-    generated = (await seeded.execute(select(func.sum(EnergyGenerationData.revenue_npr))
-                                      .where(EnergyGenerationData.project_id == project_id))).scalar()
+    latest = Quarter.of(TODAY).shift(-1)  # Baisakh to Ashad 2083: the months starting 1 May, 1 June, 1 July 2026
+    generated = (await seeded.execute(
+        select(func.count(), func.sum(EnergyGenerationData.revenue_npr))
+        .where(EnergyGenerationData.project_id == project_id,
+               EnergyGenerationData.month_ad.between(latest.start, latest.end)))).one()
     reported = (await seeded.execute(
-        select(FinancialPeriod.revenue_npr).where(FinancialPeriod.project_id == project_id)
-        .order_by(FinancialPeriod.period_end_ad.desc()).limit(4))).scalars().all()
-    assert sum(reported) == generated > 0
+        select(FinancialPeriod.revenue_npr).where(FinancialPeriod.project_id == project_id,
+                                                  FinancialPeriod.quarter_ad == latest.label))).scalar()
+    assert generated[0] == 3 and reported == generated[1] > 0
 
 
 # ------------------------------------------------------------------ portfolio views (analytics, maintenance, users)

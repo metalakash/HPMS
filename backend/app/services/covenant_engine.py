@@ -3,6 +3,10 @@
 No database access here, so every rule can be read and tested on its own. ``CovenantService``
 gathers the inputs and stores the results.
 
+Quarters are those of the Nepali fiscal year, which starts on 1 Shrawan: they end with Ashoj,
+Poush, Chaitra and Ashad. That is how lenders and borrowers here close their books, so a test
+date is always a fiscal quarter end. A quarter is written ``2082-83-Q4`` (fiscal year, quarter).
+
 Definitions (trailing twelve months = the four quarters ending at the test date):
 
     EBITDA = revenue - operating expenses - royalty
@@ -18,10 +22,13 @@ instalment must not look better covered for it. A ratio whose inputs are missing
 ``not_tested`` with the reason, never as a guessed number.
 """
 
+import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import List, Optional, Sequence, Tuple
+
+import nepali_datetime
 
 RATIO = Decimal("0.0001")
 ZERO = Decimal("0")
@@ -46,33 +53,38 @@ class Terms:
 DEFAULT_TERMS = Terms()
 
 
+_LABEL = re.compile(r"(\d{4})-(\d{2})-Q([1-4])")
+_FIRST_BS_MONTH = {1: 4, 2: 7, 3: 10, 4: 1}  # Shrawan, Kartik, Magh, Baisakh
+
+
 @dataclass(frozen=True)
 class Quarter:
-    year: int
-    number: int  # 1-4, calendar quarters
+    """A quarter of the Nepali fiscal year."""
+
+    year: int    # BS year in which the fiscal year starts: 2082 for FY 2082/83
+    number: int  # 1-4: ending with Ashoj, Poush, Chaitra, Ashad
 
     @classmethod
     def of(cls, day: date) -> "Quarter":
-        return cls(day.year, (day.month - 1) // 3 + 1)
+        bs = nepali_datetime.date.from_datetime_date(day)
+        return cls(bs.year if bs.month >= 4 else bs.year - 1, (bs.month - 4) % 12 // 3 + 1)
 
     @classmethod
     def parse(cls, label: str) -> "Quarter":
-        try:
-            year, number = label.split("-Q")
-            quarter = cls(int(year), int(number))
-        except ValueError:
-            raise ValueError(f"{label!r} is not a quarter like 2026-Q3") from None
-        if not (1 <= quarter.number <= 4 and 1900 <= quarter.year <= 2200):
-            raise ValueError(f"{label!r} is not a quarter like 2026-Q3")
-        return quarter
+        match = _LABEL.fullmatch(label)
+        # The BS calendar tables run from 1975 to 2100
+        if not match or not 2000 <= int(match.group(1)) <= 2098 or int(match.group(2)) != (int(match.group(1)) + 1) % 100:
+            raise ValueError(f"{label!r} is not a quarter like 2082-83-Q4")
+        return cls(int(match.group(1)), int(match.group(3)))
 
     @property
     def label(self) -> str:
-        return f"{self.year}-Q{self.number}"
+        return f"{self.year}-{(self.year + 1) % 100:02d}-Q{self.number}"
 
     @property
     def start(self) -> date:
-        return date(self.year, self.number * 3 - 2, 1)
+        bs_year = self.year + 1 if self.number == 4 else self.year
+        return nepali_datetime.date(bs_year, _FIRST_BS_MONTH[self.number], 1).to_datetime_date()
 
     @property
     def end(self) -> date:

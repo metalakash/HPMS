@@ -92,7 +92,7 @@ BONDS = [
     ("Green Energy Debenture 7.5%", Decimal("0.020"), 2, 10, Decimal("7.5")),
     ("Hydropower Development Bond 4%", Decimal("0.015"), 4, 6, Decimal("4")),
 ]
-NEW_LIMIT_SHARES = [Decimal("0.15"), Decimal("0.18"), Decimal("0.20")]  # of the opening book, one per fiscal year
+NEW_LIMIT_SHARES = [Decimal("0.22"), Decimal("0.25"), Decimal("0.28")]  # of the opening book, one per fiscal year
 NEW_LIMIT_DRAWDOWN = [Decimal("10"), Decimal("30"), Decimal("40"), Decimal("20")]  # per cent drawn in each year
 CRORE = Decimal("10000000")
 
@@ -389,17 +389,18 @@ def build_financial_periods(rng: random.Random, project_id, stage: str, capacity
             id=uuid.uuid4(), project_id=project_id, quarter_ad=quarter.label, period_end_ad=quarter.end,
             period_end_bs=_bs(quarter.end), is_audited=back >= 4, data_provenance="MANUAL_ENTRY",
             source_reference="Audited accounts" if back >= 4 else "Management accounts")
-        if quarter.number == 2 or back == FINANCIAL_QUARTERS - 1:  # revalued once a year
+        if quarter.number == 4 or back == FINANCIAL_QUARTERS - 1:  # revalued at each fiscal year end
             row.security_value_npr = valuation
             valuation = money(valuation * _num(rng, 0.98, 1.03, 4))
         if stage == "operation":
             revenue = Decimal("0")
-            for offset in range(3):
-                month = date(quarter.year, quarter.start.month + offset, 1)
+            for offset in range(1, 4):  # the three months that begin inside the fiscal quarter
+                index = quarter.start.year * 12 + quarter.start.month - 1 + offset
+                month = date(index // 12, index % 12 + 1, 1)
                 if month not in monthly_revenue:
                     monthly_revenue[month] = monthly_energy(rng, capacity, month)["revenue"]
                 revenue += monthly_revenue[month]
-            share = cost_share + (Decimal("0.07") * max(0, 6 - back) if stressed else Decimal("0"))
+            share = cost_share + (Decimal("0.09") * max(0, 8 - back) if stressed else Decimal("0"))
             row.revenue_npr = revenue
             row.operating_expenses_npr = money(revenue * share)
             row.royalty_npr = money(revenue * Decimal("0.025"))
