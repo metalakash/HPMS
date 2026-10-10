@@ -24,7 +24,8 @@ export default function ProjectionPage() {
   const opening = quarters[0];
   const closing = quarters[quarters.length - 1];
   const today = new Date().toISOString().slice(0, 10);
-  const peak = Math.max(0, ...quarters.map((q) => toNumber(q.outstanding) ?? 0));
+  const hasNewLoans = quarters.some((q) => (toNumber(q.new_loan_disbursement) ?? 0) > 0);
+  const peak = Math.max(0, ...quarters.map((q) => toNumber(q.outstanding_with_new_loans ?? q.outstanding) ?? 0));
 
   const quarterColumns: Column<ProjectionQuarter>[] = [
     {
@@ -86,6 +87,27 @@ export default function ProjectionPage() {
       },
     },
   ];
+  if (hasNewLoans) {
+    quarterColumns.push({
+      key: 'new-loans',
+      header: 'With planned new loans',
+      align: 'right',
+      hideOnMobile: true,
+      render: (q) =>
+        q.is_opening || q.outstanding_with_new_loans === null ? (
+          '—'
+        ) : (
+          <>
+            {formatNPR(q.outstanding_with_new_loans, language)}
+            <span className="block text-xs text-muted">
+              {(toNumber(q.new_loan_disbursement) ?? 0) > 0
+                ? `+${formatNPR(q.new_loan_disbursement, language)} this quarter`
+                : 'none this quarter'}
+            </span>
+          </>
+        ),
+    });
+  }
 
   const borrowerColumns: Column<ProjectionBorrower>[] = [
     {
@@ -180,7 +202,7 @@ export default function ProjectionPage() {
             <Card>
               <CardHeader
                 title="By quarter"
-                description="The plan as it was prepared from the opening position. Quarters whose date has passed are not compared with what happened."
+                description={`The plan as it was prepared from the opening position. Quarters whose date has passed are not compared with what happened.${hasNewLoans ? ' The last column adds lending the bank plans but has not yet approved.' : ''}`}
               />
               {projection.isLoading ? (
                 <Skeleton className="h-48 w-full" />
