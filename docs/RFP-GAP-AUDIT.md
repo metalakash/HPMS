@@ -253,3 +253,37 @@ Test baseline: **661 passed, 55 skipped** (the skips are database-backed tests).
 Migration chain: the hosted/production database is unmigrated and untested; items above marked ❌/🟡; the open findings in the security record (roles that should use MFA are flagged
 but not blocked; the Finacle source for the loan sync is not implemented). Migrations `012`-`018` and the database-backed
 tests have since been run against the development PostgreSQL (see the security record).
+
+---
+
+## Re-audit 2026-10-03 (pre-outreach, `master` @ `8068414`)
+
+Purpose: confirm the Phase 11 closure table against the code and the **live deployment** before showing HPMS to external leads.
+Method: read code and routes, ran the test suite, fetched the live OpenAPI document. No endpoint behind a login was called on the live system.
+
+### Verified
+
+| Check | Result |
+|---|---|
+| Test suite (`pytest tests --ignore=tests/performance`) | **731 passed, 59 skipped, 0 failed** (closure section said 661/55; MFA work added tests) |
+| Migrations | Chain runs `001` to `018` (`012` risk domain, `013` report definitions, `014` regulatory calendar, `015` audit immutability, `016` loan sync, `017`-`018` MFA) |
+| Routers mounted in `main.py` | auth, projects, loans, reports, mfa, graphql, ws, i18n, compliance, analytics, cbs, report builder, report schedules, regulatory, audit admin, mutations (maker-checker), admin, risk |
+| Models present | `Milestone`, `RiskRegisterEntry`, `InsurancePolicy`, `CommunityEngagement` (`models/risk.py`) |
+| Closure rows spot-checked | C.5/F.15, E.9/E.11/E.18, A.7, D.7, F.1 all hold at the "built" level. Nothing was verified against a real database by this audit |
+
+### New findings (these block outreach)
+
+1. **The live API is older than `master`.** `hpms-api.onrender.com/openapi.json` lists 52 paths and **none** of: `/api/v1/mutations` (maker-checker), risk, milestones, report builder and schedules, regulatory calendar, audit chain admin (`/api/v1/admin/audit/verify`), or CBS sync. It has MFA, loan sync and compliance routes. A lead who logs in today cannot see most of what the emails describe. Action: redeploy `master` and apply migrations `012`-`018`.
+2. **Hosted database is unmigrated/untested** (Phase 11 closure, "Still open"). The Render service must be migrated before a redeploy is trusted.
+3. **Demo login is unconfirmed.** Built-in accounts (`admin`, `maker`, `approver`, `auditor`, `guest`) work only with `DEBUG=true` or `ALLOW_DEV_AUTH=true`; production reports `debug:false`. Public passwords are in the repo: use only a separate demo instance with synthetic data.
+4. **Cold start.** First request to the free Render plan took about 31 s.
+5. **Web UI gaps for built backends.** `ApprovalQueuePage.tsx` exists but is not imported by the router (no web route), so maker-checker is reachable only through the API. Risk register and milestones appear on the project detail page; there is no UI for the report builder, schedules, regulatory calendar or reminders. The audit-chain verify has no UI (admin API only).
+
+### Corrections to earlier statements
+
+- The 2026-10-02 closure table is accurate; my earlier read of the top of this file (before the closure section) wrongly listed milestones, risk, insurance, grievance, IP allow-list, CSP and manuals as missing. They are built.
+- Draft outreach emails that said "no risk, insurance or grievance registers" and "no milestone backend" were wrong and have been corrected.
+
+### Still open (for honest disclosure to leads)
+
+No independent VAPT (A.2); CBS integration mock-backed (B.5); RLS is application-layer only (A.6); no field-level read rights (A.1); Office 365 and digital signature absent (B.3); CSR tracker, hierarchy propagation, prior-year budget linking and peer comparison not built (E.25, G.6, G.8, G.9); PowerPoint export not built (F.11); XML/HDF import absent (B.8); filing calendar ships empty (E.7); LDAP untested against a live directory.
