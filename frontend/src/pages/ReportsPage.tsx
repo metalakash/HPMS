@@ -23,6 +23,7 @@ import {
 } from '@/services/reporting';
 import { useAuthStore } from '@/store/useAuthStore';
 import { humanize } from '@/utils/format';
+import { ScheduledDelivery } from '@/components/reports/ScheduledDelivery';
 
 const PROVINCES = ['Koshi', 'Madhesh', 'Bagmati', 'Gandaki', 'Lumbini', 'Karnali', 'Sudurpashchim'];
 const FORMATS: { value: ReportFileFormat; label: string }[] = [
@@ -272,6 +273,8 @@ export default function ReportsPage() {
           )}
         </Card>
       </div>
+
+      <ScheduledDelivery />
 
       {preview && (
         <Card className="mt-6">

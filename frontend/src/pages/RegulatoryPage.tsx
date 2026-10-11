@@ -28,6 +28,7 @@ import {
 } from '@/services/reporting';
 import { useAuthStore } from '@/store/useAuthStore';
 import { formatDate, humanize } from '@/utils/format';
+import { StakeholderContacts } from '@/components/regulatory/StakeholderContacts';
 
 const STATUS_TONE: Record<FilingStatus, BadgeTone> = {
   pending: 'neutral',
@@ -317,6 +318,8 @@ export default function RegulatoryPage() {
         )}
         <Reminders />
       </div>
+
+      <StakeholderContacts />
 
       {recording && <RecordFilingModal filing={recording} onClose={() => setRecording(null)} />}
       {adding && <RequirementModal onClose={() => setAdding(false)} />}

@@ -6,7 +6,9 @@ import { Badge } from '@/components/common/Badge';
 import { Button } from '@/components/common/Button';
 import { CBSSyncButton } from '@/components/CBSSyncButton';
 import { ProposeChangeModal } from '@/components/ProposeChangeModal';
-import { ESGTab, GenerationPPATab, HydrologyTab, LandGovernanceTab } from '@/components/tabs';
+import {
+  CommunityTab, ESGTab, EsiaTab, GenerationPPATab, HydrologyTab, InsuranceTab, LandGovernanceTab, MilestonesTab, RisksTab,
+} from '@/components/tabs';
 import { MilestoneGantt } from '@/components/MilestoneGantt';
 import { Card, CardBody, CardHeader } from '@/components/common/Card';
 import { DataTable, type Column } from '@/components/common/DataTable';
@@ -39,6 +41,11 @@ const TABS = [
   { id: 'hydrology', label: 'Hydrology' },
   { id: 'land', label: 'Land & governance' },
   { id: 'esg', label: 'ESG' },
+  { id: 'insurance', label: 'Insurance' },
+  { id: 'esia', label: 'ESIA monitoring' },
+  { id: 'community', label: 'Community & grievances' },
+  { id: 'milestones', label: 'Milestones' },
+  { id: 'risks', label: 'Risk register' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
 
@@ -288,6 +295,11 @@ export default function ProjectDetailPage() {
         {tab === 'hydrology' && <HydrologyTab projectId={id} />}
         {tab === 'land' && <LandGovernanceTab projectId={id} />}
         {tab === 'esg' && <ESGTab projectId={id} />}
+        {tab === 'insurance' && <InsuranceTab projectId={id} />}
+        {tab === 'esia' && <EsiaTab projectId={id} />}
+        {tab === 'community' && <CommunityTab projectId={id} />}
+        {tab === 'milestones' && <MilestonesTab projectId={id} />}
+        {tab === 'risks' && <RisksTab projectId={id} />}
 
         {tab === 'overview' && (
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
