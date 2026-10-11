@@ -116,7 +116,7 @@ not in the original Week-4 scope and needs a decision (see kickoff doc, open que
 | ID | Status | Evidence / gap |
 |---|---|---|
 | F.1 / G.7 | 🟡 | `export_service` (CSV, Excel via openpyxl, JSON), `pdf_service` (reportlab; portfolio, covenant, capex). **No Word.** BS-date rendering in reports ❓. |
-| F.2 / F.3 / F.4 / F.16 | ✅ | `routes/dashboards.py` (12 endpoints), `dashboard_service`, `consortium_exposure_v`. |
+| F.2 / F.3 / F.4 / F.16 | 🟡 | `routes/dashboards.py` (12 endpoints), `dashboard_service`. Consortium exposure was listed here as a view that was never created; the mapping was removed in Phase 14.5. |
 | F.5 / F.6 | ❌ | No report builder / saved reports / multi-source consolidation. |
 | F.7 / F.8 | ✅ | `DashboardPage`, `AnalyticsPage`; drill-downs from Phase 9.2. |
 | F.10 | 🟡 | Compliance reports exist; shortfall report and filter-driven custom reports not evidenced. |

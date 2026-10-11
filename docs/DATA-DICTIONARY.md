@@ -2,13 +2,13 @@
 
 > Generated from the SQLAlchemy models by `backend/scripts/generate_data_dictionary.py`. Do not edit by hand; run `python -m backend.scripts.generate_data_dictionary` and commit the result.
 
-**77 tables and views, 1140 columns.** Dates are stored as AD `DATE` columns with a paired `*_bs` text column (`YYYY-MM-DD` Bikram Sambat) where the business needs both calendars. Descriptions come from the model docstrings.
+**76 tables and views, 1130 columns.** Dates are stored as AD `DATE` columns with a paired `*_bs` text column (`YYYY-MM-DD` Bikram Sambat) where the business needs both calendars. Descriptions come from the model docstrings.
 
 ## Contents
 
 - **Projects**: `hydrology_records`, `land_records`, `project_capacity_history`, `project_technical_specs`, `projects`, `rcod_events`, `water_licenses`
 - **Loans and financing**: `budget_lines`, `cbs_sync_logs`, `disbursement_tranches`, `energy_bonds`, `energy_financing_quarters`, `loan_account_rate_history`, `loan_accounts`, `loan_exposure_sync_history`, `loan_exposure_sync_schedules`, `loan_projection_quarters`, `new_loan_disbursement_quarters`, `new_loan_limits`, `repayments`
-- **Consortium**: `consortium_exposure_v`, `consortium_facilities`, `consortium_members`
+- **Consortium**: `consortium_facilities`, `consortium_members`
 - **Operations: PPA, hydrology, land, ESG, maintenance, covenants**: `board_of_directors`, `covenant_history`, `covenant_terms`, `eia_mitigation_checklist`, `energy_generation_data`, `esg_metrics`, `hydrology_detailed`, `land_acquisition_tracking`, `maintenance_logs`, `maintenance_schedules`, `nea_ppa_rates`, `plant_performance`, `ppa_agreements`, `project_financial_periods`, `shareholding_hierarchy`, `tariff_structures`
 - **Risk register, milestones, insurance, permits, ESIA, community**: `community_engagements`, `esia_monitoring_records`, `insurance_policies`, `milestones`, `project_permits`, `risk_register`
 - **Regulatory filing calendar, reminders, stakeholder contacts**: `filing_calendar`, `regulatory_requirements`, `stakeholder_contacts`, `user_reminders`
@@ -505,23 +505,6 @@ Repayment schedule and tracking.
 | `updated_by` | VARCHAR(255) | yes |  |  |
 
 ## Consortium
-
-### `consortium_exposure_v`
-
-Materialized view for consortium exposure (read-only reference). (Database view, read-only.)
-
-| Column | Type | Null | Default | Notes |
-|---|---|---|---|---|
-| `id` | UUID | no |  | PK |
-| `project_id` | UUID | yes |  |  |
-| `project_code` | VARCHAR(50) | yes |  |  |
-| `facility_id` | UUID | yes |  |  |
-| `institution_name` | VARCHAR(255) | yes |  |  |
-| `sbl_role` | VARCHAR(50) | yes |  |  |
-| `committed_amount` | NUMERIC(20, 4) | yes |  |  |
-| `share_pct` | NUMERIC(9, 6) | yes |  |  |
-| `disbursed_to_date` | NUMERIC(20, 4) | yes |  |  |
-| `outstanding` | NUMERIC(20, 4) | yes |  |  |
 
 ### `consortium_facilities`
 

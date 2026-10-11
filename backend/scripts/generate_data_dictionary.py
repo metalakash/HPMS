@@ -21,7 +21,8 @@ from sqlalchemy.schema import CheckConstraint, ForeignKeyConstraint, UniqueConst
 TABLE_AREAS = {"role_permissions": "Workflow and approvals"}
 
 # Mapped read-only models whose relation is a database view, not a table
-VIEWS = {"consortium_exposure_v"}
+# Names of database views mapped as read-only models. None are mapped at present.
+VIEWS: set = set()
 
 OUTPUT = Path(__file__).resolve().parents[2] / "docs" / "DATA-DICTIONARY.md"
 

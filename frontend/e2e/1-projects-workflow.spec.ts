@@ -105,9 +105,9 @@ test.describe('1. Projects workflow', () => {
     await expect(pagination).toContainText(`of ${all.total}`);
   });
 
-  // Known defect: ProjectsPage.update() starts from the search params of its last render, so a second
-  // filter chosen before the first has re-rendered overwrites it. Seen under load; un-fixme once fixed.
-  test.fixme('keeps both filters when they are changed in quick succession', async ({
+  // ProjectsPage.update() builds from the latest search params, so a second filter chosen before the
+  // first has re-rendered no longer overwrites it.
+  test('keeps both filters when they are changed in quick succession', async ({
     authenticatedPage: page,
   }) => {
     await page.goto('/projects');

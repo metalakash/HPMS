@@ -211,7 +211,7 @@ async def startup_event():
     """Initialize on startup."""
     logger.info("SBL HPMS Starting up")
     # Schema is owned by Alembic (`alembic upgrade head`); never create_all here,
-    # which would bypass migrations and turn views like consortium_exposure_v into tables.
+    # which would bypass migrations and turn database views into tables.
     # A DB outage should not stop the process: /ready reports it and requests fail with 503.
     try:
         async with engine.connect() as conn:

@@ -63,21 +63,3 @@ class ConsortiumMember(Base, TimestampedMixin):
         Index('ix_consortium_current', 'consortium_facility_id', 'is_current'),
         Index('ix_consortium_effective', 'valid_from_ad', 'valid_to_ad'),
     )
-
-class ConsortiumExposureView(Base):
-    """Materialized view for consortium exposure (read-only reference)."""
-    
-    __tablename__ = 'consortium_exposure_v'
-    
-    id = Column(UUID(as_uuid=True), primary_key=True)
-    project_id = Column(UUID(as_uuid=True))
-    project_code = Column(String(50))
-    facility_id = Column(UUID(as_uuid=True))
-    
-    institution_name = Column(String(255))
-    sbl_role = Column(String(50))
-    
-    committed_amount = Column(Numeric(20, 4))
-    share_pct = Column(Numeric(9, 6))
-    disbursed_to_date = Column(Numeric(20, 4))
-    outstanding = Column(Numeric(20, 4))

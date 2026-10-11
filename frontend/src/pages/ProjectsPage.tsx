@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { Badge } from '@/components/common/Badge';
 import { Card } from '@/components/common/Card';
@@ -27,11 +28,19 @@ export default function ProjectsPage() {
 
   const query = useProjects({ page, page_size: PAGE_SIZE, stage, status, province });
 
+  // Two filters can change before the page re-renders, and the router builds each update from the params of
+  // its last render. Keep the latest params here so the second change builds on the first.
+  const latest = useRef(params);
+  useEffect(() => {
+    latest.current = params;
+  }, [params]);
+
   const update = (key: string, value: string) => {
-    const next = new URLSearchParams(params);
+    const next = new URLSearchParams(latest.current);
     if (value) next.set(key, value);
     else next.delete(key);
     if (key !== 'page') next.delete('page');
+    latest.current = next;
     setParams(next);
   };
 

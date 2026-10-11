@@ -8,7 +8,6 @@ export * from './modals/index';
 // Drawer Components
 export { DetailDrawer } from './drawers/DetailDrawer';
 export { CovenantDetailDrawer } from './drawers/CovenantDetailDrawer';
-export { AlertRemediationDrawer } from './drawers/AlertRemediationDrawer';
 export * from './drawers/index';
 
 // Tab Components

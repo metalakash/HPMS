@@ -19,8 +19,7 @@ def test_every_model_column_exists_in_the_migrated_database(migrated_database_ur
         tables = set(inspector.get_table_names())
         problems = []
         for table in Base.metadata.tables.values():
-            # Views are not checked. consortium_exposure_v is mapped but no migration creates it yet;
-            # nothing queries it.
+            # Views are not checked (none are mapped at present; see VIEWS in generate_data_dictionary).
             if table.name in VIEWS:
                 continue
             if table.name not in tables:
