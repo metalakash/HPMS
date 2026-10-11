@@ -42,6 +42,18 @@ POLICY: Dict[str, Dict[str, FieldRule]] = {
         **{name: FieldRule(AUTHORS, "project master data: maker or admin only")
            for name in ("project_code", "installed_capacity_mw", "pipeline_status", "project_stage")},
     },
+    # Covenant inputs, keyed by project. Names mirror covenant_service (kept literal to avoid an import cycle).
+    "FINANCIAL_PERIOD": {
+        **_AUDIT_COLUMNS,
+        **{name: FieldRule(AUTHORS, "reported financials: maker or admin only")
+           for name in ("quarter_ad", "revenue_npr", "operating_expenses_npr", "royalty_npr", "tax_paid_npr",
+                        "depreciation_npr", "security_value_npr", "is_audited", "source_reference")},
+    },
+    "COVENANT_TERMS": {
+        **_AUDIT_COLUMNS,
+        **{name: FieldRule(frozenset({UserRole.ADMIN.value}), "sanction terms: admin only")
+           for name in ("dscr_min", "ltv_max", "icr_min", "warning_margin_pct", "source_reference")},
+    },
 }
 
 

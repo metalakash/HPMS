@@ -34,6 +34,34 @@ def _uuid(value: Any) -> UUID:
     return value if isinstance(value, UUID) else UUID(str(value))
 
 
+def check_period(quarter_label: str, values: Dict[str, Any], today: Optional[date] = None) -> Quarter:
+    """Rules for one quarter's figures. Returns the parsed quarter.
+
+    ValueError when the quarter is malformed, has not ended, or an amount is negative.
+    """
+    quarter = Quarter.parse(quarter_label)
+    if quarter.end >= (today or date.today()):
+        raise ValueError(f"{quarter.label} has not ended yet")
+    for name in PERIOD_AMOUNTS:
+        amount = values.get(name)
+        if amount is not None and amount < 0:
+            raise ValueError(f"{name} cannot be negative")
+    if values.get("security_value_npr") == 0:
+        raise ValueError("security_value_npr must be greater than zero when given")
+    return quarter
+
+
+def check_terms(values: Dict[str, Any]) -> None:
+    """Rules for a project's covenant thresholds. ValueError when one is missing or out of range."""
+    for name in TERM_FIELDS:
+        if values.get(name) is None or values[name] <= 0:
+            raise ValueError(f"{name} must be greater than zero")
+    if values["ltv_max"] > 100:
+        raise ValueError("ltv_max is a percentage and cannot exceed 100")
+    if values["warning_margin_pct"] >= 100:
+        raise ValueError("warning_margin_pct must be below 100")
+
+
 def _period_inputs(row: FinancialPeriod) -> PeriodFinancials:
     return PeriodFinancials(
         quarter=Quarter.parse(row.quarter_ad), revenue=row.revenue_npr,
@@ -154,16 +182,7 @@ class CovenantService:
 
         ValueError when the quarter is malformed, has not ended, or an amount is negative.
         """
-        quarter = Quarter.parse(quarter_label)
-        if quarter.end >= (today or date.today()):
-            raise ValueError(f"{quarter.label} has not ended yet")
-        for name in PERIOD_AMOUNTS:
-            amount = values.get(name)
-            if amount is not None and amount < 0:
-                raise ValueError(f"{name} cannot be negative")
-        if values.get("security_value_npr") == 0:
-            raise ValueError("security_value_npr must be greater than zero when given")
-
+        quarter = check_period(quarter_label, values, today)
         pid = _uuid(project_id)
         row = (await db.execute(select(FinancialPeriod).where(
             FinancialPeriod.project_id == pid, FinancialPeriod.quarter_ad == quarter.label))).scalar_one_or_none()
@@ -185,14 +204,7 @@ class CovenantService:
     async def save_terms(db: AsyncSession, project_id: Any, values: Dict[str, Any], actor: str
                          ) -> Tuple[CovenantTerms, Dict[str, Any]]:
         """Record the project's thresholds. Returns the row and the thresholds that applied before."""
-        for name in TERM_FIELDS:
-            if values[name] is None or values[name] <= 0:
-                raise ValueError(f"{name} must be greater than zero")
-        if values["ltv_max"] > 100:
-            raise ValueError("ltv_max is a percentage and cannot exceed 100")
-        if values["warning_margin_pct"] >= 100:
-            raise ValueError("warning_margin_pct must be below 100")
-
+        check_terms(values)
         previous, row = await CovenantService.terms_for(db, project_id)
         before = {name: getattr(previous, name) for name in TERM_FIELDS}
         if row is None:

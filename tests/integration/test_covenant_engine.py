@@ -22,10 +22,15 @@ from sqlalchemy import func, select
 from backend.app.database import get_db
 from backend.app.main import app
 from backend.app.models.audit import AuditLog
+from backend.app.models.governance import ApprovalRequest
 from backend.app.models.auth import ProjectOwner, User
 from backend.app.models.financial import DisbursementTranche, LoanAccount, Repayment
 from backend.app.models.operations import CovenantHistory
 from backend.app.models.project import Project
+from backend.app.security import field_policy
+from backend.app.security.auth_middleware import TokenManager
+from backend.app.security.ldap_provider import ADUser, UserRole
+from backend.app.services import covenant_change
 from backend.app.services import covenant_engine as engine
 from backend.app.services.audit_chain import verify_stored_chain
 from backend.app.services.covenant_engine import PeriodFinancials, Quarter, Terms
@@ -188,29 +193,73 @@ async def facility(db_session):
 
 FIGURES = {"revenue_npr": "100000000", "operating_expenses_npr": "15000000", "royalty_npr": "2500000",
            "tax_paid_npr": "2000000", "depreciation_npr": "12500000", "source_reference": "Management accounts"}
+TERMS = {"dscr_min": "1.70", "ltv_max": "75", "icr_min": "2.0", "source_reference": "SL/2024/118"}
+JUSTIFICATION = "Figures per the borrower's submission, checked against the audited accounts"
+SUBMIT = "/api/v1/mutations/submit-with-justification"
+MUTATIONS = "/api/v1/mutations"
 
 
-async def report_year(api, project_id, headers) -> dict:
-    """Report the four quarters of the worked example; returns the last response's data."""
-    data = None
+@pytest.fixture
+async def owned_facility(api, db_session, facility):
+    """The worked example, owned by the demo maker so the maker can propose its figures."""
+    project, loan = facility
+    await login(api, "maker")  # the maker's user row is created on first sign-in
+    owner = (await db_session.execute(select(User).where(User.username == "maker"))).scalar_one()
+    db_session.add(ProjectOwner(project_id=project.id, user_id=owner.id))
+    await db_session.flush()
+    return project, loan
+
+
+def second_admin() -> dict:
+    """A second admin: the final check on sanction terms cannot come from the admin who submitted them."""
+    token = TokenManager.create_token(
+        ADUser(username="admin2", email="admin2@sbl.local", full_name="Second Admin", roles=[UserRole.ADMIN]),
+        uuid.uuid4())
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def propose(api, headers, project_id, entity: str, changes: dict):
+    """Submit a change request as ``headers``. Returns the response, not yet approved."""
+    return await api.post(SUBMIT, headers=headers, json={
+        "entity_type": entity, "entity_id": str(project_id), "action": "UPDATE", "changes": changes,
+        "justification": JUSTIFICATION})
+
+
+async def approve(api, headers, request_id: str, verb: str = "approve"):
+    return await api.post(f"{MUTATIONS}/{verb}", headers=headers,
+                          json={"approval_request_id": request_id, "remarks": "Checked against the file"})
+
+
+async def record_period(api, project_id, quarter: str, body: dict, maker=None) -> None:
+    """Propose a quarter's figures as the maker; the approver recommends, the admin gives the final approval."""
+    maker = maker or await login(api, "maker")
+    r = await propose(api, maker, project_id, "FINANCIAL_PERIOD", {"quarter_ad": quarter, **body})
+    assert r.status_code == 200, r.text
+    request_id = r.json()["data"]["approval_request_id"]
+    assert (await approve(api, await login(api, "approver"), request_id)).status_code == 200
+    final = await approve(api, await login(api, "admin"), request_id)
+    assert final.status_code == 200 and final.json()["data"]["changes_applied"] is True, final.text
+
+
+async def report_year(api, project_id) -> dict:
+    """Report the four quarters of the worked example; returns the latest quarter's calculation."""
     for quarter in WINDOW:
         body = {**FIGURES, "security_value_npr": "1450000000"} if quarter == Q2 else FIGURES
-        r = await api.put(f"/api/v1/compliance/covenants/{project_id}/financials/{quarter.label}",
-                          json=body, headers=headers)
-        assert r.status_code == 200, r.text
-        data = r.json()["data"]
-    return data
+        await record_period(api, project_id, quarter.label, body)
+    return (await api.get(f"/api/v1/compliance/covenants/{project_id}/calculation",
+                          headers=await login(api, "admin"))).json()["data"]
 
 
-async def test_reporting_a_year_of_figures_tests_the_covenants_and_updates_the_loan(api, db_session, facility):
-    project, loan = facility
+async def test_reporting_a_year_of_figures_tests_the_covenants_and_updates_the_loan(api, db_session, owned_facility):
+    project, loan = owned_facility
     admin = await login(api, "admin")
     audit_before = (await db_session.execute(select(func.count()).select_from(AuditLog))).scalar()
 
-    first = await api.put(f"/api/v1/compliance/covenants/{project.id}/financials/2082-83-Q1", json=FIGURES, headers=admin)
-    assert first.json()["data"]["calculation"]["dscr"]["status"] == "not_tested"  # one quarter is not a year
+    await record_period(api, project.id, "2082-83-Q1", FIGURES)
+    first = (await api.get(f"/api/v1/compliance/covenants/{project.id}/calculation", headers=admin)).json()["data"]
+    assert first["dscr"]["status"] == "not_tested"  # one quarter is not a year
 
-    calc = (await report_year(api, project.id, admin))["calculation"]
+    calc = await report_year(api, project.id)
     assert (calc["dscr"]["value"], calc["icr"]["value"], calc["ltv"]["value"]) == ("1.6304", "2.8718", "65.5172")
     assert calc["overall_status"] == "warning"
     assert calc["inputs"]["debt_service"] == "197500000.0000" and calc["inputs"]["cfads"] == "322000000.00"
@@ -229,11 +278,12 @@ async def test_reporting_a_year_of_figures_tests_the_covenants_and_updates_the_l
     assert metrics["dscr_pass"] and metrics["ltv_pass"] and metrics["icr_pass"]
     assert metrics["dscr_threshold"] == "1.25"
 
-    # Five writes (the first quarter twice), each audited, and the chain still verifies
-    audits = (await db_session.execute(
+    # Five applied writes (the first quarter twice), each audited, and the chain still verifies
+    applied = [a for a in (await db_session.execute(
         select(AuditLog).where(AuditLog.entity_type == "FINANCIAL_PERIOD").order_by(AuditLog.id))).scalars().all()
-    assert [a.action_performed for a in audits] == ["create", "update", "create", "create", "create"]
-    assert "100000000.00" in str(audits[1].pre_state)
+        if a.reason_for_action.startswith("Applied approved change request")]
+    assert [a.action_performed for a in applied] == ["create", "update", "create", "create", "create"]
+    assert "100000000.00" in str(applied[1].pre_state)
     if audit_before == 0:  # a reused test database may hold a chain this test cannot vouch for
         assert (await verify_stored_chain(db_session)).ok
 
@@ -249,17 +299,24 @@ async def test_reporting_a_year_of_figures_tests_the_covenants_and_updates_the_l
         assert r.status_code == code
 
 
-async def test_a_correction_replaces_the_quarter_and_its_result(api, db_session, facility):
-    project, loan = facility
-    admin = await login(api, "admin")
-    await report_year(api, project.id, admin)
+async def test_a_correction_replaces_the_quarter_and_its_result(api, db_session, owned_facility):
+    project, loan = owned_facility
+    await report_year(api, project.id)
 
-    # Only the corrected field is sent; the rest of the quarter is kept
-    r = await api.put(f"/api/v1/compliance/covenants/{project.id}/financials/2082-83-Q4", headers=admin,
-                      json={"operating_expenses_npr": "150000000", "source_reference": "Audited accounts", "is_audited": True})
-    data = r.json()["data"]
-    assert data["period"]["revenue_npr"] == "100000000.00" and data["period"]["is_audited"] is True
-    assert data["calculation"]["dscr"] == {"value": "0.9468", "threshold": "1.25", "status": "breached", "note": None}
+    # Only the corrected field is proposed; the rest of the quarter is kept
+    correction = {"quarter_ad": "2082-83-Q4", "operating_expenses_npr": "150000000",
+                  "source_reference": "Audited accounts", "is_audited": True}
+    maker = await login(api, "maker")
+    request_id = (await propose(api, maker, project.id, "FINANCIAL_PERIOD", correction)).json()["data"]["approval_request_id"]
+    assert (await approve(api, await login(api, "approver"), request_id)).status_code == 200
+    assert (await approve(api, await login(api, "admin"), request_id)).status_code == 200
+
+    admin = await login(api, "admin")
+    calc = (await api.get(f"/api/v1/compliance/covenants/{project.id}/calculation", headers=admin)).json()["data"]
+    assert calc["dscr"] == {"value": "0.9468", "threshold": "1.25", "status": "breached", "note": None}
+    periods = (await api.get(f"/api/v1/compliance/covenants/{project.id}/financials", headers=admin)).json()["data"]["periods"]
+    latest = next(p for p in periods if p["quarter"] == "2082-83-Q4")
+    assert latest["revenue_npr"] == "100000000.00" and latest["is_audited"] is True
 
     rows = (await db_session.execute(select(func.count()).select_from(CovenantHistory)
                                      .where(CovenantHistory.project_id == project.id))).scalar()
@@ -274,33 +331,37 @@ async def test_a_correction_replaces_the_quarter_and_its_result(api, db_session,
     assert await CovenantService.detect_covenant_breaches(db_session, str(project.id))
 
 
-async def test_sanction_terms_are_admin_only_and_retest_the_history(api, facility):
-    project, _ = facility
-    admin, approver = await login(api, "admin"), await login(api, "approver")
-    await report_year(api, project.id, admin)
-    terms = {"dscr_min": "1.70", "ltv_max": "75", "icr_min": "2.0", "source_reference": "SL/2024/118"}
+async def test_sanction_terms_are_admin_only_and_retest_the_history(api, owned_facility):
+    project, _ = owned_facility
+    await report_year(api, project.id)
+    maker, approver, admin = [await login(api, n) for n in ("maker", "approver", "admin")]
 
-    assert (await api.put(f"/api/v1/compliance/covenants/{project.id}/terms", json=terms, headers=approver)
-            ).status_code in (403, 404)
-    for bad in ({**terms, "ltv_max": "140"}, {**terms, "dscr_min": "0"}, {**terms, "warning_margin_pct": "100"}):
-        r = await api.put(f"/api/v1/compliance/covenants/{project.id}/terms", json=bad, headers=admin)
-        assert r.status_code == 422, r.text
+    assert (await propose(api, maker, project.id, "COVENANT_TERMS", TERMS)).status_code == 403
+    assert (await propose(api, approver, project.id, "COVENANT_TERMS", TERMS)).status_code == 403
+    for bad in ({**TERMS, "ltv_max": "140"}, {**TERMS, "dscr_min": "0"}, {**TERMS, "warning_margin_pct": "100"}):
+        r = await propose(api, admin, project.id, "COVENANT_TERMS", bad)
+        assert r.status_code == 400, r.text
 
-    r = await api.put(f"/api/v1/compliance/covenants/{project.id}/terms", json=terms, headers=admin)
+    r = await propose(api, admin, project.id, "COVENANT_TERMS", TERMS)
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["terms"]["source"] == "sanction terms"
-    assert len(r.json()["data"]["periods"]) == 4 and r.json()["data"]["periods"][0]["quarter"] == "2082-83-Q4"
+    request_id = r.json()["data"]["approval_request_id"]
+    assert (await approve(api, approver, request_id)).status_code == 200
+    # The admin who submitted cannot give the final approval; a second admin does
+    assert (await approve(api, admin, request_id)).status_code == 403
+    assert (await approve(api, second_admin(), request_id)).status_code == 200
+
+    financials = (await api.get(f"/api/v1/compliance/covenants/{project.id}/financials", headers=admin)).json()["data"]
+    assert financials["terms"]["source"] == "sanction terms"
+    assert len(financials["periods"]) == 4 and financials["periods"][0]["quarter"] == "2082-83-Q4"
 
     calc = (await api.get(f"/api/v1/compliance/covenants/{project.id}/calculation", headers=admin)).json()["data"]
     assert calc["dscr"]["status"] == "breached" and calc["dscr"]["threshold"] == "1.7000"
     assert calc["ltv"]["status"] == "compliant"  # 65.52 against 75
 
 
-async def test_figures_are_validated(api, facility):
+async def test_figures_are_validated_when_proposed(api, db_session, facility):
     project, _ = facility
     admin = await login(api, "admin")
-    url = f"/api/v1/compliance/covenants/{project.id}/financials"
-
     future = Quarter.of(date.today())
     for quarter, body, problem in (
         (future.label, FIGURES, "has not ended"),
@@ -308,38 +369,93 @@ async def test_figures_are_validated(api, facility):
         ("2082-83-Q7", FIGURES, "not a quarter"),
         ("2082-83-Q4", {**FIGURES, "revenue_npr": "-1"}, "cannot be negative"),
         ("2082-83-Q4", {**FIGURES, "security_value_npr": "0"}, "greater than zero"),
+        ("2082-83-Q4", {"revenue_npr": "1"}, "source_reference"),  # no source given
+        ("2082-83-Q4", {**FIGURES, "data_provenance": "CBS"}, "not a field"),
     ):
-        r = await api.put(f"{url}/{quarter}", json=body, headers=admin)
-        assert r.status_code == 422 and problem in r.json()["detail"], r.text
-    r = await api.put(f"{url}/2082-83-Q4", json={"revenue_npr": "1"}, headers=admin)  # no source given
-    assert r.status_code == 422
+        r = await propose(api, admin, project.id, "FINANCIAL_PERIOD", {"quarter_ad": quarter, **body})
+        assert r.status_code == 400 and problem in r.json()["detail"], r.text
+    assert (await propose(api, admin, project.id, "FINANCIAL_PERIOD", FIGURES)).status_code == 400  # no quarter named
+
+    # Nothing was proposed, so nothing is pending or recorded
+    assert (await db_session.execute(select(func.count()).select_from(ApprovalRequest))).scalar() == 0
+    url = f"/api/v1/compliance/covenants/{project.id}/financials"
     assert (await api.get(url, headers=admin)).json()["data"]["periods"] == []
 
 
-async def test_only_the_owning_maker_or_an_admin_may_record_figures(api, db_session, facility):
+async def test_only_the_owning_maker_or_an_admin_may_propose_figures(api, db_session, facility):
     project, _ = facility
     maker, auditor, guest = await login(api, "maker"), await login(api, "auditor"), await login(api, "guest")
     url = f"/api/v1/compliance/covenants/{project.id}"
 
-    # A maker who does not own the project cannot even see it
-    assert (await api.put(f"{url}/financials/2082-83-Q4", json=FIGURES, headers=maker)).status_code == 404
+    # A maker who does not own the project cannot even see it; a guest cannot propose anything
+    assert (await propose(api, maker, project.id, "FINANCIAL_PERIOD", {"quarter_ad": "2082-83-Q4", **FIGURES})).status_code == 404
+    assert (await propose(api, guest, project.id, "FINANCIAL_PERIOD", {"quarter_ad": "2082-83-Q4", **FIGURES})).status_code == 403
     assert (await api.get(f"{url}/financials", headers=guest)).status_code == 404
-    # An auditor sees everything and changes nothing
+    # An auditor sees everything and proposes nothing
     assert (await api.get(f"{url}/financials", headers=auditor)).status_code == 200
-    assert (await api.put(f"{url}/financials/2082-83-Q4", json=FIGURES, headers=auditor)).status_code == 403
+    assert (await propose(api, auditor, project.id, "FINANCIAL_PERIOD", {"quarter_ad": "2082-83-Q4", **FIGURES})).status_code == 403
     assert (await api.post(f"{url}/recalculate", headers=auditor)).status_code == 403
 
     owner = (await db_session.execute(select(User).where(User.username == "maker"))).scalar_one()
     db_session.add(ProjectOwner(project_id=project.id, user_id=owner.id))
     await db_session.flush()
-    assert (await api.put(f"{url}/financials/2082-83-Q4", json=FIGURES, headers=maker)).status_code == 200
+    await record_period(api, project.id, "2082-83-Q4", FIGURES, maker=maker)
     r = await api.post(f"{url}/recalculate", headers=maker)
     assert r.status_code == 200 and r.json()["data"]["quarters_tested"] == 1
+
+
+async def test_direct_writes_to_covenant_inputs_are_closed(api, facility):
+    project, _ = facility
+    admin = await login(api, "admin")
+    url = f"/api/v1/compliance/covenants/{project.id}"
+    r = await api.put(f"{url}/financials/2082-83-Q4", json=FIGURES, headers=admin)
+    assert r.status_code == 409 and "change request" in r.json()["detail"] and "FINANCIAL_PERIOD" in r.json()["detail"]
+    r = await api.put(f"{url}/terms", json=TERMS, headers=admin)
+    assert r.status_code == 409 and "COVENANT_TERMS" in r.json()["detail"]
+    assert (await api.get(f"{url}/financials", headers=admin)).json()["data"]["periods"] == []
+
+
+async def test_a_proposal_changes_nothing_until_two_checkers_approve(api, db_session, facility):
+    project, _ = facility
+    maker, approver, admin = [await login(api, n) for n in ("maker", "approver", "admin")]
+    owner = (await db_session.execute(select(User).where(User.username == "maker"))).scalar_one()
+    db_session.add(ProjectOwner(project_id=project.id, user_id=owner.id))
+    await db_session.flush()
+    url = f"/api/v1/compliance/covenants/{project.id}/financials"
+
+    r = await propose(api, maker, project.id, "FINANCIAL_PERIOD", {"quarter_ad": "2082-83-Q4", **FIGURES})
+    assert r.status_code == 200, r.text
+    request_id = r.json()["data"]["approval_request_id"]
+    assert (await api.get(url, headers=admin)).json()["data"]["periods"] == []
+
+    # The maker cannot check their own work; the approver's recommendation alone applies nothing
+    assert (await approve(api, maker, request_id)).status_code == 403
+    first = await approve(api, approver, request_id)
+    assert first.status_code == 200 and first.json()["data"]["changes_applied"] is False
+    assert (await api.get(url, headers=admin)).json()["data"]["periods"] == []
+    assert (await approve(api, approver, request_id)).status_code == 403  # the recommender cannot also approve
+
+    final = await approve(api, admin, request_id)
+    assert final.status_code == 200 and final.json()["data"]["changes_applied"] is True
+    assert [p["quarter"] for p in (await api.get(url, headers=admin)).json()["data"]["periods"]] == ["2082-83-Q4"]
+
+
+async def test_a_rejected_proposal_leaves_no_trace(api, facility):
+    project, _ = facility
+    approver, admin = await login(api, "approver"), await login(api, "admin")
+    r = await propose(api, admin, project.id, "FINANCIAL_PERIOD", {"quarter_ad": "2082-83-Q4", **FIGURES})
+    request_id = r.json()["data"]["approval_request_id"]
+    rejected = await api.post(f"{MUTATIONS}/reject", headers=approver,
+                              json={"approval_request_id": request_id, "remarks": "Figures do not match the accounts"})
+    assert rejected.status_code == 200, rejected.text
+    assert (await approve(api, admin, request_id)).status_code == 400  # a rejected request cannot be approved
+    assert (await api.get(f"/api/v1/compliance/covenants/{project.id}/financials", headers=admin)).json()["data"]["periods"] == []
 
 
 async def test_portfolio_lists_the_latest_result_per_visible_project_worst_first(api, db_session, facility):
     project, _ = facility
     admin, guest = await login(api, "admin"), await login(api, "guest")
+    maker = await login(api, "maker")
     healthy = Project(project_code="COV-002", name_en="Aaramdayak Khola", name_np="Aaramdayak Khola",
                       province="Koshi", installed_capacity_mw=5, project_stage="construction",
                       pipeline_status="under_construction")
@@ -347,15 +463,20 @@ async def test_portfolio_lists_the_latest_result_per_visible_project_worst_first
     await db_session.flush()
     db_session.add(LoanAccount(project_id=healthy.id, finacle_account_id="FIN-COV-2", sanctioned_amount=500 * M,
                                outstanding_principal=300 * M))
+    owner = (await db_session.execute(select(User).where(User.username == "maker"))).scalar_one()
+    db_session.add_all([ProjectOwner(project_id=healthy.id, user_id=owner.id),
+                        ProjectOwner(project_id=project.id, user_id=owner.id)])
     await db_session.flush()
 
-    await report_year(api, project.id, admin)
+    await report_year(api, project.id)
     latest_done = Quarter.of(date.today()).shift(-1)
-    r = await api.put(f"/api/v1/compliance/covenants/{healthy.id}/financials/{latest_done.label}", headers=admin,
-                      json={"security_value_npr": "1000000000", "source_reference": "Valuation report"})
+    await record_period(api, healthy.id, latest_done.label,
+                        {"security_value_npr": "1000000000", "source_reference": "Valuation report"}, maker=maker)
     # No drawdown records: today's balance stands in for the latest quarter only
-    assert r.json()["data"]["calculation"]["ltv"]["value"] == "30.0000", r.text
-    assert r.json()["data"]["calculation"]["dscr"]["status"] == "not_tested"
+    healthy_calc = (await api.get(f"/api/v1/compliance/covenants/{healthy.id}/calculation",
+                                  headers=admin)).json()["data"]
+    assert healthy_calc["ltv"]["value"] == "30.0000", healthy_calc
+    assert healthy_calc["dscr"]["status"] == "not_tested"
 
     rows = [x for x in (await api.get("/api/v1/compliance/covenants", headers=admin)).json()["data"]
             if x["project_code"].startswith("COV-")]
@@ -363,3 +484,36 @@ async def test_portfolio_lists_the_latest_result_per_visible_project_worst_first
         ("COV-001", "2082-83-Q4", "warning"), ("COV-002", latest_done.label, "compliant")]
     assert rows[0]["ltv"] == {"value": "65.5172", "threshold": "70.0000", "status": "warning"}
     assert (await api.get("/api/v1/compliance/covenants", headers=guest)).json()["data"] == []
+
+
+# ------------------------------------------------------------------ change request rules (no database)
+
+def test_a_covenant_proposal_names_its_quarter_and_no_unknown_fields():
+    with pytest.raises(ValueError, match="quarter_ad is required"):
+        covenant_change._typed("FINANCIAL_PERIOD", FIGURES)
+    with pytest.raises(ValueError, match="data_provenance is not a field of FINANCIAL_PERIOD"):
+        covenant_change._typed("FINANCIAL_PERIOD", {"quarter_ad": "2082-83-Q4", **FIGURES, "data_provenance": "CBS"})
+    quarter, values = covenant_change._typed("FINANCIAL_PERIOD", {"quarter_ad": "2082-83-Q4", "revenue_npr": "1",
+                                                                  "source_reference": "Accounts"})
+    assert quarter == "2082-83-Q4" and values == {"revenue_npr": Decimal("1"), "source_reference": "Accounts"}
+
+
+def test_terms_always_carry_all_four_thresholds_and_the_default_margin():
+    _, values = covenant_change._typed("COVENANT_TERMS", TERMS)
+    assert values == {"dscr_min": Decimal("1.70"), "ltv_max": Decimal("75"), "icr_min": Decimal("2.0"),
+                      "warning_margin_pct": Decimal("8"), "source_reference": "SL/2024/118"}
+
+
+def test_calculated_fields_are_never_proposable():
+    with pytest.raises(ValueError, match="dscr is not a field of FINANCIAL_PERIOD"):
+        covenant_change._typed("FINANCIAL_PERIOD", {"quarter_ad": "2082-83-Q4", **FIGURES, "dscr": "1"})
+
+
+@pytest.mark.parametrize("entity,changes,role,allowed", [
+    ("COVENANT_TERMS", {"dscr_min": "1.7"}, UserRole.MAKER, False),
+    ("COVENANT_TERMS", {"dscr_min": "1.7"}, UserRole.ADMIN, True),
+    ("FINANCIAL_PERIOD", {"revenue_npr": "1"}, UserRole.MAKER, True),
+    ("FINANCIAL_PERIOD", {"revenue_npr": "1"}, UserRole.APPROVER, False),
+])
+def test_who_may_propose_covenant_inputs(entity, changes, role, allowed):
+    assert (field_policy.violations(entity, changes, [role]) == []) is allowed

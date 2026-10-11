@@ -25,7 +25,7 @@ from backend.app.models.audit import AuditAction, AuditLog
 from backend.app.security.auth_middleware import CurrentUser
 from backend.app.security import field_policy
 from backend.app.security.ldap_provider import UserRole
-from backend.app.services import change_applier
+from backend.app.services import change_applier, covenant_change
 from backend.app.services.audit_chain import append_audit_log
 from backend.app.schemas.common import AuditMetadata
 
@@ -35,7 +35,7 @@ def _has_any_role(user: CurrentUser, roles) -> bool:
 
 
 async def _authorize_target(db: AsyncSession, user: CurrentUser, entity_type: str, entity_id: str) -> None:
-    """Row-level security for the entity a change request targets (PROJECT and LOAN; other types pass).
+    """Row-level security for the entity a change request targets (PROJECT, LOAN and covenant inputs; other types pass).
 
     Raises LookupError when the caller cannot see it (reported as not found) and PermissionError when
     they can see it but may not modify it.
@@ -45,7 +45,7 @@ async def _authorize_target(db: AsyncSession, user: CurrentUser, entity_type: st
     from backend.app.security.rls_service import RLSService
 
     kind = entity_type.upper()
-    if kind not in ("PROJECT", "LOAN"):
+    if kind not in ("PROJECT", "LOAN") and not covenant_change.is_covenant_kind(kind):
         return
     try:
         target = UUID(str(entity_id))
@@ -104,7 +104,9 @@ async def _open_request(db: AsyncSession, approval_request_id: str) -> ApprovalR
 
 async def _apply_approved_changes(db: AsyncSession, approval: ApprovalRequest, approver: CurrentUser,
                                   source_ip: Optional[str], timestamp: str) -> bool:
-    """On final approval, make the recorded change to the project or loan. False if nothing applies."""
+    """On final approval, make the recorded change to the project, loan or covenant inputs. False if nothing applies."""
+    if covenant_change.is_covenant_kind(approval.entity_type):
+        return await covenant_change.apply(db, approval, approver, source_ip, timestamp)
     if not change_applier.is_applicable(approval.entity_type):
         return False
     submission = None
@@ -166,8 +168,12 @@ async def _entity_labels(db: AsyncSession, approvals) -> Dict[tuple, str]:
     from backend.app.models.project import Project
 
     wanted: Dict[str, list] = {"PROJECT": [], "LOAN": []}
+    covenant = set()
     for a in approvals:
         kind = a.entity_type.upper()
+        if covenant_change.is_covenant_kind(kind):
+            kind = "PROJECT"
+            covenant.add(a)
         if kind in wanted:
             try:
                 wanted[kind].append(UUID(str(a.entity_id)))
@@ -178,6 +184,10 @@ async def _entity_labels(db: AsyncSession, approvals) -> Dict[tuple, str]:
         rows = (await db.execute(
             select(Project.id, Project.project_code, Project.name_en).where(Project.id.in_(wanted["PROJECT"])))).all()
         labels.update({("PROJECT", str(pid)): f"{name} ({code})" for pid, code, name in rows})
+        for a in covenant:
+            label = labels.get(("PROJECT", str(a.entity_id)))
+            if label:
+                labels[(a.entity_type.upper(), a.entity_id)] = f"Covenant inputs for {label}"
     if wanted["LOAN"]:
         rows = (await db.execute(
             select(LoanAccount.id, LoanAccount.facility_type, Project.project_code, Project.name_en)
@@ -267,7 +277,10 @@ class MutationService:
         await _authorize_target(db, current_user, entity_type, entity_id)
 
         pre_state: Dict[str, Any] = {}
-        if change_applier.is_applicable(entity_type):
+        if covenant_change.is_covenant_kind(entity_type):
+            # Refuse now what could not be applied later, and record the values being replaced
+            pre_state = await covenant_change.prepare(db, entity_type, entity_id, changes)
+        elif change_applier.is_applicable(entity_type):
             # Refuse now what could not be applied later, and record the values being replaced
             typed = change_applier.normalise(entity_type, action, changes)
             record = await change_applier.load(db, entity_type, entity_id)
