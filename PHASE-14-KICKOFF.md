@@ -36,38 +36,78 @@ bank or hosting access stay in Phase 12.
       against a private PostgreSQL 18 test cluster, UTF8); frontend typecheck clean, 182 passed,
       2 expected failures. CI not yet re-run on the new head
 
-### 14.2 Maker-checker for covenant inputs — not started
-- [ ] Route creation and changes of `project_financial_periods` through the change-request flow
-      (today they are written directly by admin and owning maker, audited)
-- [ ] Route changes to `covenant_terms` through the same flow
-- [ ] Approver cannot approve their own request (existing maker-checker rule applies)
-- [ ] Tests: direct write refused for maker and admin; approved change reaches the table; rejected
-      change does not
+### 14.2 Maker-checker for covenant inputs — ✅ done locally 2026-10-10 (not committed)
+- [x] Financial periods change through change requests: entity `FINANCIAL_PERIOD`, keyed by project,
+      quarter named in `quarter_ad`. Approval saves through `CovenantService` and re-tests the project
+- [x] Sanction terms change through change requests: entity `COVENANT_TERMS`, admin-only in the field
+      policy (`backend/app/security/field_policy.py`)
+- [x] The approver cannot approve their own request (existing rule, now tested for covenant inputs)
+- [x] Direct `PUT .../financials/{quarter}` and `PUT .../terms` answer 409 and name the change request
+      to use instead (same approach as project PATCH)
+- [x] Tests: `tests/integration/test_covenant_engine.py` (44 pass) covers direct writes closed, two
+      checkers required, rejection leaves no trace, validation at proposal time, pre-state recorded,
+      admin-only terms with a second admin as final check
+- [x] Backend suite on the private test cluster: 1043 passed, 0 failed
+- Note: the demo logins include one admin only. A sanction-terms change needs two different admins
+  (the submitter cannot give the final approval), so the demo needs a second admin account
+- Note: the web app has no screen to propose financial figures, so nothing in the UI can enter them
+  today; the seed script still writes them directly (it is seeding, not a user write)
 
-### 14.3 Screens for existing backends — not started
-- [ ] Scheduled report delivery (F.11): screen on the Reports page for the existing schedule API
-- [ ] Stakeholder contacts (C.9) and their use in alert routing: list, add, edit
-- [ ] Insurance policies (E.11): list and add, with expiry alerts through the existing alert service
-- [ ] Community grievances (E.18): record, status, and close with a resolution note
-- [ ] ESIA monitoring records (E.17): list and add against the existing `eia_mitigation_checklist`
-- [ ] Filing calendar still ships empty; requirement names and due dates come from the bank's
-      compliance team, not from this phase
+### 14.3 Screens for existing backends — ✅ done locally 2026-10-11 (not committed)
+- [x] Scheduled report delivery (F.11): Reports page section. Admins add, pause/resume, run now and
+      delete; everyone who can see reports sees the schedules and their run history
+- [x] Stakeholder contacts (C.9): Regulatory page section. Admins add, edit and remove; alert types
+      and urgency are set per contact (the alert routing itself was already in the backend)
+- [x] Insurance policies (E.11): new Insurance tab on project detail. Add, set status; policies that
+      expire within 90 days are flagged
+- [x] Community engagement and grievances (E.18): new tab. Record a consultation or grievance, mark
+      a grievance resolved with how it was resolved
+- [x] ESIA monitoring (E.17): new tab. Record a monitoring result and its compliance status
+- [x] Filing calendar still ships empty; nothing was invented for it
+- Correction: the earlier note said insurance, grievances and ESIA were "on the API only". The
+  generic endpoints existed under each project, but no screen did, and nothing called them.
+- Not built: insurance expiry alerts through the alert service (the flag on the tab is the only
+  warning for now). Edit of the other fields of a record (only status and resolution are editable)
+- Not checked in a browser: the screens are covered by unit tests with mocked endpoints. The real
+  backend responses were checked by reading the routes, not by running them together
+- Frontend: typecheck clean, 188 tests pass, 2 expected failures. ESLint on the changed files is
+  clean; 12 lint errors remain in files this phase did not touch
 
-### 14.4 Backend models that are missing — not started
-- [ ] Milestones (C.5): model, migration, CRUD routes; feed the existing Gantt view from the backend
-- [ ] Risk register (E.9, E.19, E.20): table for type, severity, mitigation and tracking status;
-      connect to the existing `analytics/risk.py` scores
-- [ ] CSR tracker (E.25): decide with the project owner whether it is in the proof of concept
-      before building it
+### 14.4 Missing models and the risk register — 🟡 partly done 2026-10-11 (not committed)
+The kickoff said these were missing. They were not: migration `012_phase_11_risk_domain` created
+the tables, `routes_risk.py` has their CRUD and the auto-scan, and the Gantt already reads milestones
+from the backend. What was actually missing was screens and one connection.
+- [x] Milestones (C.5): backend existed; added a Milestones tab (list, add). The Gantt was already fed
+      from `/projects/{id}/milestones`
+- [x] Risk register (E.9, E.19, E.20): added a Risk register tab (list, add with likelihood and impact,
+      severity shown from the server, update mitigation status, scan for risks). Auto-scan results are
+      shown after each scan
+- [ ] Connecting the register to `analytics/risk.py` (`RiskScorer`): **not done, needs a decision.**
+      `RiskScorer` has no caller outside its own tests. Its categories (compliance, operational,
+      financial, equipment, environmental) do not match the register's (financial, technical, legal,
+      environmental, social, climate), so wiring them together needs a mapping the bank has not given
+- [ ] Milestone edit (status, forecast date, percent complete) on the screen: only add exists. The
+      Gantt is read-only
+- [x] Frontend: typecheck clean, 190 tests pass, 2 expected failures; ESLint clean on changed files
+- Not checked in a browser; the screens are covered by mocked unit tests, as in 14.3
 
-### 14.5 Defects and cleanup — not started
-- [ ] `AlertRemediationDrawer` still uses hard-coded data and is linked from no page. Delete it, or
-      wire it to the renewals endpoint if a page needs it
-- [ ] `ProjectsPage` rapid double-filter race (`test.fixme` in `frontend/e2e`): fix and un-fixme
-- [ ] `consortium_exposure_v` is mapped in the models but never created; create the view in a
-      migration or remove the mapping
-- [ ] Admin page lists three `e2e.*` accounts; confirm they are only used by `seed_test_workflows`
-      and document that
+### 14.5 Defects and cleanup — 🟡 mostly done 2026-10-11 (not committed)
+- [x] `AlertRemediationDrawer`: deleted (no page rendered it; only its own re-exports referenced it)
+- [x] `ProjectsPage` filter race: fixed. The page built each filter change from the params of its last
+      render, so a second change in the same render cycle overwrote the first. It now tracks the latest
+      params itself. Un-fixmed the Playwright test (`frontend/e2e/1-projects-workflow.spec.ts`) and added
+      `frontend/src/pages/projectsFilters.test.tsx`, which fails on the old code with the same assertion
+      and passes on the fix. **The Playwright test itself has not been run**
+- [x] `consortium_exposure_v`: nothing queried it and no migration created it. The model mapping was
+      removed, and the data dictionary regenerated. The gap audit row that cited it is now 🟡.
+      Consortium exposure reporting is not built; if the bank needs it, it must be designed first
+- [ ] Admin page `e2e.*` accounts: **not verifiable from the repo.** No script or test in the repo
+      creates them; `seed_test_workflows.py` does not. They probably came from earlier local runs. Not
+      checked against the dev database, which holds bank data. Confirm there, then delete them or
+      document their source
+- Verification: backend 1043 passed, 0 failed, 0 skipped (private test cluster). Frontend 191 passed,
+  2 expected failures. ESLint on the touched files: clean, except one pre-existing warning in
+  `CovenantDetailDrawer.tsx`
 
 ### 14.6 Load test on production-like settings — not started
 - [ ] Run `backend/scripts/load_test.py` with `DEBUG=false`, several workers and a sized connection
