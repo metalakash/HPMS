@@ -62,3 +62,24 @@ stops at the preview).
 | `2-project-tabs.spec.ts` | Generation & PPA, Hydrology, Land & governance and ESG tabs with and without data; CBS comparison |
 | `3-approvals.spec.ts` | queue and state filter; propose → recommend → approve and apply with three accounts; rejection; who is offered what |
 | `4-loan-import.spec.ts` | CSV preview and validation in the import dialog; admin only |
+
+## Running against a separate, throwaway stack
+
+The suite assumes the synthetic seed and writes to the database, so never point it at a database
+that holds anything else. To run it beside a development database you want left alone:
+
+1. Start a throwaway Postgres, create a database, and with `DATABASE_URL` set to it run
+   `alembic upgrade head`, then `python -m backend.scripts.seed_realistic_data` and
+   `python -m backend.scripts.seed_test_workflows`.
+2. Start a backend on that database and a frontend in front of it on other ports. The
+   `backend-e2e` (port 8002) and `frontend-e2e` (port 5174) entries in `.claude/launch.json` do
+   this for a database at `127.0.0.1:5544/hpms_e2e`; `HPMS_BACKEND_URL` tells Vite where to proxy.
+3. Run the suite at that frontend:
+
+```bash
+E2E_BASE_URL=http://localhost:5174 npx playwright test
+```
+
+`8-project-records.spec.ts` and `7-reports-regulatory.spec.ts` reload the page before checking
+what they saved, because two defects (routes that never committed, a screen calling the wrong
+address) passed every mocked test and only showed against the real backend.

@@ -26,7 +26,9 @@ test.describe('5. Compliance', () => {
     await page.getByRole('button', { name: new RegExp(worst.project_code) }).click();
     const drawer = page.getByRole('dialog');
     await expect(drawer.getByRole('heading', { name: `Covenants: ${worst.project_name}` })).toBeVisible();
-    await expect(drawer.getByText(`How ${working.quarter} was calculated`)).toBeVisible();
+    // The API labels a fiscal quarter "2082-83-Q4"; the screen shows it as "FY 2082/83 Q4"
+    const [, from, to, quarter] = working.quarter.match(/^(\d{4})-(\d{2})-Q(\d)$/);
+    await expect(drawer.getByText(`How FY ${from}/${to} Q${quarter} was calculated`)).toBeVisible();
     await expect(drawer.getByText(`${Number(working.ltv.value).toFixed(2)}%`).first()).toBeVisible();
 
     await page.keyboard.press('Escape');

@@ -20,6 +20,24 @@
         "set DATABASE_URL=postgresql://hpms:hpms_dev_pass@localhost:5432/sbl_hpms_dev&& set DEBUG=true&& .venv\\Scripts\\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8001 --reload"
       ],
       "port": 8001
+    },
+    {
+      "name": "backend-e2e",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set DATABASE_URL=postgresql://hpms_test@127.0.0.1:5544/hpms_e2e&& set DEBUG=true&& .venv\\Scripts\\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8002"
+      ],
+      "port": 8002
+    },
+    {
+      "name": "frontend-e2e",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set HPMS_BACKEND_URL=http://localhost:8002&& npm --prefix frontend run dev -- --port 5174 --strictPort"
+      ],
+      "port": 5174
     }
   ]
 }

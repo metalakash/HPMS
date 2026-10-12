@@ -99,8 +99,8 @@ describe('stakeholder contacts', () => {
     serveRegulatoryEmpties();
     const patched: Record<string, unknown>[] = [];
     server.use(
-      http.get('*/api/v1/regulatory/stakeholders', () => HttpResponse.json({ contacts: [CONTACT] })),
-      http.patch('*/api/v1/regulatory/stakeholders/:id', async ({ request }) => {
+      http.get('*/api/v1/stakeholders', () => HttpResponse.json({ contacts: [CONTACT] })),
+      http.patch('*/api/v1/stakeholders/:id', async ({ request }) => {
         patched.push((await request.json()) as Record<string, unknown>);
         return HttpResponse.json({ ...CONTACT, organization: 'NEA Head Office' });
       }),
@@ -124,7 +124,7 @@ describe('stakeholder contacts', () => {
 
   it('shows an auditor the contacts without any way to change them', async () => {
     serveRegulatoryEmpties();
-    server.use(http.get('*/api/v1/regulatory/stakeholders', () => HttpResponse.json({ contacts: [CONTACT] })));
+    server.use(http.get('*/api/v1/stakeholders', () => HttpResponse.json({ contacts: [CONTACT] })));
     signIn({ roles: ['auditor'] });
     renderRoute('/regulatory');
 

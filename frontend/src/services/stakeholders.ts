@@ -32,12 +32,12 @@ export interface StakeholderInput {
 
 export const stakeholdersApi = {
   list: () =>
-    api.get<{ contacts: StakeholderContact[] }>('/api/v1/regulatory/stakeholders').then((r) => r.data.contacts),
+    api.get<{ contacts: StakeholderContact[] }>('/api/v1/stakeholders').then((r) => r.data.contacts),
   create: (body: StakeholderInput) =>
-    api.post<StakeholderContact>('/api/v1/regulatory/stakeholders', body).then((r) => r.data),
+    api.post<StakeholderContact>('/api/v1/stakeholders', body).then((r) => r.data),
   update: (id: string, body: Partial<StakeholderInput>) =>
-    api.patch<StakeholderContact>(`/api/v1/regulatory/stakeholders/${id}`, body).then((r) => r.data),
-  remove: (id: string) => api.delete(`/api/v1/regulatory/stakeholders/${id}`),
+    api.patch<StakeholderContact>(`/api/v1/stakeholders/${id}`, body).then((r) => r.data),
+  remove: (id: string) => api.delete(`/api/v1/stakeholders/${id}`),
 };
 
 export function useStakeholders(enabled: boolean) {
