@@ -87,15 +87,23 @@ Variables the code actually reads (some older documents list names that the code
 
 ### 4.1 Roles
 
-| Role | AD group | Sees | Can do |
+| Role | AD group (default name) | Sees | Can do |
 |---|---|---|---|
 | `admin` | `SBL_HPMS_ADMIN` | every project | everything, including admin consoles, regulatory requirements, stakeholder contacts, audit retention |
 | `maker` | `SBL_HPMS_MAKER` | projects they own | propose changes (maker-checker), record regulatory filings, run CBS sync on owned projects |
 | `approver` | `SBL_HPMS_APPROVER` | projects they own, plus projects with approvals pending for them | recommend / approve / reject proposed changes |
 | `auditor` | `SBL_HPMS_AUDITOR` | every project, read-only | read everything, run portfolio reports, view report schedules; cannot change data or create schedules |
-| `guest` | (no group) | nothing | log in only |
+| `guest` | (map a group to `guest` if wanted) | nothing | log in only |
 
-A user in several AD groups holds several roles. `admin` passes every role check.
+A user in several AD groups holds several roles; the most privileged is their default. `admin` passes every role check.
+
+The group names above are defaults, not the bank's. Set the bank's own groups in `AD_GROUP_ROLE_MAP` as
+comma-separated `group=role` pairs, for example
+`AD_GROUP_ROLE_MAP=HPMS-Credit-Admins=admin,HPMS-RM=maker,HPMS-Checkers=approver,Internal-Audit=auditor`.
+Several groups may give the same role, and names are matched without case. A value with an unknown role, a pair
+without `=`, or one group mapped to two roles stops the server at startup, so a typo cannot quietly lock
+everyone out. A directory user in none of the groups is refused at sign-in. An admin can still override one
+user's role on the Admin page.
 
 ### 4.2 Row-level security
 

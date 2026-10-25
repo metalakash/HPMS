@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     AD_BASE_DN: str = os.getenv("AD_BASE_DN", "dc=sbl,dc=local")
     AD_SERVICE_ACCOUNT_USERNAME: str = os.getenv("AD_SERVICE_ACCOUNT_USERNAME", "")
     AD_SERVICE_ACCOUNT_PASSWORD: str = os.getenv("AD_SERVICE_ACCOUNT_PASSWORD", "")
+    # Directory group -> HPMS role, comma-separated group=role pairs (admin, maker, approver, auditor, guest).
+    # The default names are placeholders: set the bank's own groups. A wrong value stops the server at startup.
+    AD_GROUP_ROLE_MAP: str = os.getenv(
+        "AD_GROUP_ROLE_MAP", "SBL_HPMS_ADMIN=admin,SBL_HPMS_MAKER=maker,SBL_HPMS_APPROVER=approver,SBL_HPMS_AUDITOR=auditor")
     
     # Roles that should have MFA; users in them without it get `mfa_enrollment_required` at login (comma separated)
     MFA_REQUIRED_ROLES: str = os.getenv("MFA_REQUIRED_ROLES", "")

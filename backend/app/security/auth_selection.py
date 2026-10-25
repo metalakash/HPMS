@@ -37,6 +37,7 @@ def build_auth_provider(settings) -> Optional[AuthProvider]:
             ad_base_dn=settings.AD_BASE_DN,
             service_account_username=settings.AD_SERVICE_ACCOUNT_USERNAME,
             service_account_password=settings.AD_SERVICE_ACCOUNT_PASSWORD,
+            group_role_map=getattr(settings, "AD_GROUP_ROLE_MAP", None),  # None: the default groups
         )
     if dev_auth_allowed(settings.USE_LDAP, settings.ALLOW_DEV_AUTH, settings.DEBUG):
         if not settings.DEBUG:

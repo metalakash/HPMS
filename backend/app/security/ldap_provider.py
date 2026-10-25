@@ -58,16 +58,40 @@ class ADUser:
         }
 
 
-class LDAPAuthProvider:
-    """Authenticate users via Active Directory."""
+DEFAULT_GROUP_ROLE_MAP = "SBL_HPMS_ADMIN=admin,SBL_HPMS_MAKER=maker,SBL_HPMS_APPROVER=approver,SBL_HPMS_AUDITOR=auditor"
 
-    # AD group name to role mapping
-    AD_GROUP_ROLE_MAP = {
-        "SBL_HPMS_ADMIN": UserRole.ADMIN,
-        "SBL_HPMS_MAKER": UserRole.MAKER,
-        "SBL_HPMS_APPROVER": UserRole.APPROVER,
-        "SBL_HPMS_AUDITOR": UserRole.AUDITOR,
-    }
+
+def parse_group_role_map(text: str) -> Dict[str, UserRole]:
+    """``AD_GROUP_ROLE_MAP`` as {group name in lower case: role}.
+
+    The setting is comma-separated ``group=role`` pairs, e.g. ``HPMS-Credit-Admins=admin, HPMS-RM=maker``.
+    Several groups may give the same role. Group names are compared without case, as AD compares them.
+    Refuses an empty map, a pair without ``=``, an unknown role or one group mapped to two roles, so a
+    mistyped setting stops the server at startup instead of quietly locking everyone out.
+    """
+    roles = {role.value: role for role in UserRole}
+    mapping: Dict[str, UserRole] = {}
+    for pair in (text or "").split(","):
+        if not pair.strip():
+            continue
+        if "=" not in pair:
+            raise ValueError(f"AD_GROUP_ROLE_MAP: {pair.strip()!r} is not group=role")
+        group, role = (part.strip() for part in pair.rsplit("=", 1))
+        if not group:
+            raise ValueError(f"AD_GROUP_ROLE_MAP: no group name before ={role}")
+        if role.lower() not in roles:
+            raise ValueError(f"AD_GROUP_ROLE_MAP: unknown role {role!r} for {group!r}; one of {', '.join(sorted(roles))}")
+        key = group.lower()
+        if key in mapping and mapping[key] != roles[role.lower()]:
+            raise ValueError(f"AD_GROUP_ROLE_MAP: group {group!r} is mapped to two roles")
+        mapping[key] = roles[role.lower()]
+    if not mapping:
+        raise ValueError("AD_GROUP_ROLE_MAP is empty: no directory group would give any role")
+    return mapping
+
+
+class LDAPAuthProvider:
+    """Authenticate users via Active Directory. Roles come from group membership (``AD_GROUP_ROLE_MAP``)."""
 
     def __init__(
         self,
@@ -76,6 +100,7 @@ class LDAPAuthProvider:
         ad_base_dn: str,
         service_account_username: Optional[str] = None,
         service_account_password: Optional[str] = None,
+        group_role_map: Optional[str] = None,
     ):
         """Initialize LDAP provider.
 
@@ -91,6 +116,7 @@ class LDAPAuthProvider:
         self.ad_base_dn = ad_base_dn
         self.service_account_username = service_account_username
         self.service_account_password = service_account_password
+        self.group_role_map = parse_group_role_map(group_role_map or DEFAULT_GROUP_ROLE_MAP)
 
     async def authenticate(
         self,
@@ -143,7 +169,10 @@ class LDAPAuthProvider:
 
             roles = await self._fetch_user_roles(conn, username)
             if not roles:
-                roles = [UserRole.GUEST]  # Default to guest if no roles
+                # Not in any group AD_GROUP_ROLE_MAP names: a valid directory account, but not an HPMS user
+                logger.warning(f"{username} authenticated but is in no HPMS group; sign-in refused")
+                conn.unbind()
+                return None
 
             conn.unbind()
 
@@ -199,6 +228,12 @@ class LDAPAuthProvider:
             logger.error(f"Failed to fetch user info for {username}: {e}")
             return None
 
+    def roles_for_groups(self, group_names) -> List[UserRole]:
+        """The roles a user's groups give, each once, most privileged first (the first is the default role)."""
+        order = [UserRole.ADMIN, UserRole.APPROVER, UserRole.MAKER, UserRole.AUDITOR, UserRole.GUEST]
+        found = {self.group_role_map[name.lower()] for name in group_names if name and name.lower() in self.group_role_map}
+        return [role for role in order if role in found]
+
     async def _fetch_user_roles(
         self,
         conn: Connection,
@@ -225,12 +260,7 @@ class LDAPAuthProvider:
                 attributes=["cn"],
             )
 
-            for entry in conn.entries:
-                group_cn = entry.cn.value if entry.cn else None
-                if group_cn and group_cn in self.AD_GROUP_ROLE_MAP:
-                    roles.append(self.AD_GROUP_ROLE_MAP[group_cn])
-
-            return roles
+            return self.roles_for_groups(entry.cn.value for entry in conn.entries if entry.cn)
 
         except Exception as e:
             logger.error(f"Failed to fetch user roles for {username}: {e}")

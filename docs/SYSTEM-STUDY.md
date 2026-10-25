@@ -30,7 +30,8 @@ storage, DR site), bid-response documents, and vendor support obligations (see t
 | Auditor | Internal audit | Read everything, including the audit log and its integrity check; change nothing |
 | Guest | Observer | See the screens that are open to them, with confidential figures withheld |
 
-Roles come from the bank's directory at sign-in (group-to-role mapping, `USE_LDAP=true`). An admin can set a
+Roles come from the bank's directory at sign-in: `AD_GROUP_ROLE_MAP` names which of the bank's groups gives
+which role (`USE_LDAP=true`). An admin can set a
 role in HPMS that overrides the directory's until cleared (Admin page; audited). An admin can block an
 account: its open sessions end at once. Users in the roles named in `MFA_REQUIRED_ROLES` are told at sign-in
 that they must enrol in MFA; blocking them until they do is planned (Phase 15, sprint 3).

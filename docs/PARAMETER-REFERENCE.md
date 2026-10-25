@@ -175,6 +175,7 @@ Set on the server, outside the application; a change needs a restart. Secrets ar
 | `AD_BASE_DN` | Directory sign-in | `dc=sbl,dc=local` | `auth_selection` |  |
 | `AD_SERVICE_ACCOUNT_USERNAME` | Directory sign-in | (empty) | `auth_selection` |  |
 | `AD_SERVICE_ACCOUNT_PASSWORD` | Directory sign-in | (secret) | `auth_selection` |  |
+| `AD_GROUP_ROLE_MAP` | Directory sign-in | `SBL_HPMS_ADMIN=admin,SBL_HPMS_MAKER=maker,SBL_HPMS_APPROVER=approver,SBL_HPMS_AUDITOR=auditor` | `auth_selection`, `ldap_provider` | Directory group -> HPMS role, comma-separated group=role pairs (admin, maker, approver, auditor, guest). The default names are placeholders: set the bank's own groups. A wrong value stops the server at startup. |
 | `MFA_REQUIRED_ROLES` | Multi-factor authentication | (empty) | `routes_auth` | Roles that should have MFA; users in them without it get `mfa_enrollment_required` at login (comma separated) |
 | `MFA_ENCRYPTION_KEY` | Multi-factor authentication | (secret) | `secret_box` | Encrypts TOTP seeds at rest (security/secret_box.py). Falls back to SECRET_KEY when unset. |
 | `MFA_ENCRYPTION_KEY_OLD` | Multi-factor authentication | (secret) | `secret_box` | previous key(s), comma separated |
