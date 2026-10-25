@@ -187,15 +187,84 @@ function AddMilestoneModal({ projectId, onClose }: { projectId: string; onClose:
   );
 }
 
+/** Days a milestone runs past its plan: by its actual date once done, otherwise by its forecast. */
+function daysLate(m: MilestoneRecord): number {
+  const against = m.actual_date_ad ?? m.forecast_date_ad;
+  if (!against) return 0;
+  return Math.round((new Date(against).getTime() - new Date(m.planned_date_ad).getTime()) / 86_400_000);
+}
+
+function UpdateMilestoneModal({ projectId, milestone, onClose }: { projectId: string; milestone: MilestoneRecord; onClose: () => void }) {
+  const [form, setForm] = useState({
+    status: milestone.status as string,
+    forecast_date_ad: milestone.forecast_date_ad ?? '',
+    actual_date_ad: milestone.actual_date_ad ?? '',
+    percent_complete: String(Number(milestone.percent_complete)),
+    remarks: milestone.remarks ?? '',
+  });
+  const set = (key: keyof typeof form, value: string) => setForm((current) => ({ ...current, [key]: value }));
+  const completed = form.status === 'completed';
+  const save = useRecordMutation(projectId, 'milestones', () =>
+    recordsApi.update(projectId, 'milestones', milestone.id, {
+      status: form.status,
+      forecast_date_ad: form.forecast_date_ad || null,
+      actual_date_ad: form.actual_date_ad || null,
+      percent_complete: completed ? 100 : Number(form.percent_complete),
+      remarks: form.remarks.trim() || null,
+    }),
+  );
+  const pct = Number(form.percent_complete);
+  const problem = completed && !form.actual_date_ad
+    ? 'A completed milestone needs its actual date'
+    : form.actual_date_ad > today() ? 'The actual date cannot be in the future'
+      : !completed && (Number.isNaN(pct) || pct < 0 || pct > 100) ? 'Percent complete is 0 to 100' : null;
+  return (
+    <BaseModal
+      isOpen
+      onClose={onClose}
+      title={`Update ${milestone.name}`}
+      description={`Planned for ${formatDate(milestone.planned_date_ad)}`}
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button disabled={Boolean(problem)} loading={save.isPending} onClick={() => save.mutate(undefined, { onSuccess: onClose })}>Save milestone</Button>
+        </div>
+      }
+    >
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Select label="Status" value={form.status} onChange={(e) => set('status', e.target.value)} options={MILESTONE_STATUS.map((s) => ({ value: s, label: humanize(s) }))} />
+        <Input label="Percent complete" type="number" min={0} max={100} disabled={completed} value={completed ? '100' : form.percent_complete} onChange={(e) => set('percent_complete', e.target.value)} />
+        <Input label="Forecast date" type="date" value={form.forecast_date_ad} onChange={(e) => set('forecast_date_ad', e.target.value)} />
+        <Input label="Actual date" type="date" max={today()} value={form.actual_date_ad} onChange={(e) => set('actual_date_ad', e.target.value)} />
+        <Input label="Remarks" className="sm:col-span-2" value={form.remarks} onChange={(e) => set('remarks', e.target.value)} />
+      </div>
+      {problem && <p className="mt-3 text-sm text-danger">{problem}</p>}
+      <FormError error={save.error} />
+    </BaseModal>
+  );
+}
+
 export function MilestonesTab({ projectId }: { projectId: string }) {
   const query = useProjectRecords<MilestoneRecord>(projectId, 'milestones');
   const [adding, setAdding] = useState(false);
+  const [updating, setUpdating] = useState<MilestoneRecord | null>(null);
   const columns: Column<MilestoneRecord>[] = [
     { key: 'name', header: 'Milestone', render: (m) => <span>{m.name}<span className="block text-xs text-muted">{m.category ? humanize(m.category) : ''}</span></span> },
     { key: 'planned', header: 'Planned', render: (m) => formatDate(m.planned_date_ad) },
     { key: 'forecast', header: 'Forecast', hideOnMobile: true, render: (m) => formatDate(m.forecast_date_ad) },
-    { key: 'status', header: 'Status', render: (m) => <Badge tone={MILESTONE_TONE[m.status]}>{humanize(m.status)}</Badge> },
+    { key: 'actual', header: 'Actual', hideOnMobile: true, render: (m) => formatDate(m.actual_date_ad) },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (m) => (
+        <span className="flex flex-wrap items-center gap-1">
+          <Badge tone={MILESTONE_TONE[m.status]}>{humanize(m.status)}</Badge>
+          {daysLate(m) > 0 && <Badge tone="warning">{daysLate(m)} days late</Badge>}
+        </span>
+      ),
+    },
     { key: 'pct', header: 'Complete', align: 'right', render: (m) => `${Number(m.percent_complete).toFixed(0)}%` },
+    { key: 'actions', header: '', align: 'right', render: (m) => <Button variant="ghost" size="sm" onClick={() => setUpdating(m)}>Update</Button> },
   ];
   return (
     <TabState query={query}>
@@ -206,6 +275,7 @@ export function MilestonesTab({ projectId }: { projectId: string }) {
             <DataTable caption="Milestones" columns={columns} rows={milestones} rowKey={(m) => m.id} empty={<EmptyState title="No milestones recorded" />} />
           </CardBody>
           {adding && <AddMilestoneModal projectId={projectId} onClose={() => setAdding(false)} />}
+          {updating && <UpdateMilestoneModal projectId={projectId} milestone={updating} onClose={() => setUpdating(null)} />}
         </Card>
       )}
     </TabState>

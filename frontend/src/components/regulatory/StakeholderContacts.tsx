@@ -11,13 +11,16 @@ import { getErrorMessage } from '@/services/api';
 import { useRegulatoryMutation } from '@/services/reporting';
 import {
   ALERT_TYPES,
+  INTERACTION_KINDS,
+  interactionsApi,
   type StakeholderContact,
   type StakeholderInput,
   stakeholdersApi,
+  useInteractions,
   useStakeholders,
 } from '@/services/stakeholders';
 import { useAuthStore } from '@/store/useAuthStore';
-import { humanize } from '@/utils/format';
+import { formatDate, humanize } from '@/utils/format';
 
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
@@ -116,6 +119,67 @@ function ContactModal({ contact, onClose }: { contact?: StakeholderContact; onCl
   );
 }
 
+const today = () => new Date().toISOString().slice(0, 10);
+
+/** A contact's performance history: dated interactions, rated 1 to 5. Admins and makers add to it. */
+function HistoryModal({ contact, canRecord, onClose }: { contact: StakeholderContact; canRecord: boolean; onClose: () => void }) {
+  const history = useInteractions(contact.id);
+  const [form, setForm] = useState({ interaction_date_ad: today(), kind: 'meeting', rating: '', summary: '' });
+  const set = (key: keyof typeof form, value: string) => setForm((current) => ({ ...current, [key]: value }));
+  const record = useRegulatoryMutation(() =>
+    interactionsApi.record(contact.id, {
+      interaction_date_ad: form.interaction_date_ad,
+      kind: form.kind,
+      rating: form.rating ? Number(form.rating) : null,
+      summary: form.summary.trim(),
+    }),
+  );
+  const valid = form.summary.trim().length >= 3 && form.interaction_date_ad && form.interaction_date_ad <= today();
+  return (
+    <BaseModal isOpen onClose={onClose} title={`History: ${contact.name}`} description={contact.organization ?? undefined} size="lg">
+      <ol className="divide-y divide-line" aria-label="Interactions">
+        {(history.data ?? []).map((i) => (
+          <li key={i.id} className="py-3">
+            <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+              {formatDate(i.interaction_date_ad)}
+              {i.interaction_date_bs && <span className="text-xs font-normal text-muted">{i.interaction_date_bs} BS</span>}
+              <Badge tone="neutral">{humanize(i.kind)}</Badge>
+              {i.rating !== null && <span aria-label={`Rated ${i.rating} of 5`}>{'★'.repeat(i.rating)}{'☆'.repeat(5 - i.rating)}</span>}
+            </p>
+            <p className="text-sm">{i.summary}</p>
+            <p className="text-xs text-muted">Recorded by {i.recorded_by ?? 'unknown'}</p>
+          </li>
+        ))}
+        {history.data?.length === 0 && <li className="py-3 text-sm text-muted">Nothing recorded yet.</li>}
+      </ol>
+      {canRecord && (
+        <div className="mt-4 grid grid-cols-1 gap-3 border-t border-line pt-4 sm:grid-cols-3">
+          <h3 className="font-semibold sm:col-span-3">Record an interaction</h3>
+          <Input label="Date" type="date" max={today()} value={form.interaction_date_ad} onChange={(e) => set('interaction_date_ad', e.target.value)} />
+          <Select label="Kind" value={form.kind} onChange={(e) => set('kind', e.target.value)} options={INTERACTION_KINDS.map((k) => ({ value: k, label: humanize(k) }))} />
+          <Select
+            label="How it went"
+            value={form.rating}
+            onChange={(e) => set('rating', e.target.value)}
+            options={[{ value: '', label: 'Not rated' }, ...[5, 4, 3, 2, 1].map((n) => ({ value: String(n), label: `${n} of 5` }))]}
+          />
+          <Input label="What happened" className="sm:col-span-3" value={form.summary} onChange={(e) => set('summary', e.target.value)} />
+          <div className="sm:col-span-3">
+            <Button
+              disabled={!valid}
+              loading={record.isPending}
+              onClick={() => record.mutate(undefined, { onSuccess: () => setForm({ interaction_date_ad: today(), kind: 'meeting', rating: '', summary: '' }) })}
+            >
+              Record interaction
+            </Button>
+          </div>
+          {record.isError && <p className="text-sm text-danger sm:col-span-3">{getErrorMessage(record.error)}</p>}
+        </div>
+      )}
+    </BaseModal>
+  );
+}
+
 /** Who receives alerts, by type and urgency. Admins maintain the list; others see it. */
 export function StakeholderContacts() {
   const roles = useAuthStore((state) => state.user?.roles ?? []);
@@ -123,6 +187,8 @@ export function StakeholderContacts() {
   const contacts = useStakeholders(true);
   const [editing, setEditing] = useState<StakeholderContact | 'new' | null>(null);
   const [deleting, setDeleting] = useState<StakeholderContact | null>(null);
+  const [viewing, setViewing] = useState<StakeholderContact | null>(null);
+  const canRecord = isAdmin || roles.includes('maker');
   const remove = useRegulatoryMutation((id: string) => stakeholdersApi.remove(id));
 
   const columns: Column<StakeholderContact>[] = [
@@ -131,6 +197,15 @@ export function StakeholderContacts() {
     { key: 'types', header: 'Alerts', render: (c) => (c.alert_types ?? []).map(humanize).join(', ') || 'None' },
     { key: 'urgency', header: 'From', hideOnMobile: true, render: (c) => (c.min_urgency === 'critical' ? 'Critical' : 'Warning') },
     { key: 'active', header: 'Status', render: (c) => <Badge tone={c.is_active ? 'success' : 'neutral'}>{c.is_active ? 'Active' : 'Inactive'}</Badge> },
+    {
+      key: 'history',
+      header: 'History',
+      render: (c) => (
+        <Button variant="ghost" size="sm" onClick={() => setViewing(c)} aria-label={`History of ${c.name}`}>
+          {c.interaction_count ? `${c.interaction_count} · ${c.average_rating ?? '—'} of 5` : 'None yet'}
+        </Button>
+      ),
+    },
     ...(isAdmin
       ? [{
           key: 'actions',
@@ -169,6 +244,7 @@ export function StakeholderContacts() {
         </CardBody>
       </Card>
       {editing && <ContactModal contact={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />}
+      {viewing && <HistoryModal contact={viewing} canRecord={canRecord} onClose={() => setViewing(null)} />}
       {deleting && (
         <ConfirmationModal
           isOpen

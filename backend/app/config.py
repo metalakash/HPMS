@@ -37,15 +37,21 @@ class Settings(BaseSettings):
     USE_LDAP: bool = os.getenv("USE_LDAP", "false").lower() == "true"
     # Built-in demo accounts (public passwords). Unset = allowed only while DEBUG=true; see security/auth_selection.py
     ALLOW_DEV_AUTH: Optional[bool] = None
+    # Admin button that replaces all project data with the synthetic demo portfolio. Hosted demo only;
+    # also needs the demo accounts allowed, and refuses a database holding bank data (services/demo_reset.py)
+    DEMO_RESET_ENABLED: bool = os.getenv("DEMO_RESET_ENABLED", "false").lower() == "true"
+    # PostgreSQL row policies on project data, behind the application's own checks (security/db_row_security.py,
+    # migration 033). Needs the application to connect as a non-superuser, which row security never applies to.
+    DB_ROW_SECURITY: bool = os.getenv("DB_ROW_SECURITY", "false").lower() == "true"
     AD_SERVER: str = os.getenv("AD_SERVER", "ldap.sbl.local")
     AD_DOMAIN: str = os.getenv("AD_DOMAIN", "sbl.local")
     AD_BASE_DN: str = os.getenv("AD_BASE_DN", "dc=sbl,dc=local")
     AD_SERVICE_ACCOUNT_USERNAME: str = os.getenv("AD_SERVICE_ACCOUNT_USERNAME", "")
     AD_SERVICE_ACCOUNT_PASSWORD: str = os.getenv("AD_SERVICE_ACCOUNT_PASSWORD", "")
     
-    # Encrypts TOTP seeds at rest (security/secret_box.py). Falls back to SECRET_KEY when unset.
     # Roles that should have MFA; users in them without it get `mfa_enrollment_required` at login (comma separated)
     MFA_REQUIRED_ROLES: str = os.getenv("MFA_REQUIRED_ROLES", "")
+    # Encrypts TOTP seeds at rest (security/secret_box.py). Falls back to SECRET_KEY when unset.
     MFA_ENCRYPTION_KEY: str = os.getenv("MFA_ENCRYPTION_KEY", "")
     MFA_ENCRYPTION_KEY_OLD: str = os.getenv("MFA_ENCRYPTION_KEY_OLD", "")  # previous key(s), comma separated
 
@@ -74,6 +80,13 @@ class Settings(BaseSettings):
     CBS_HTTP_CLIENT_CERT: str = os.getenv("CBS_HTTP_CLIENT_CERT", "")  # mutual TLS, if the bank requires it
     CBS_HTTP_CLIENT_KEY: str = os.getenv("CBS_HTTP_CLIENT_KEY", "")
     CBS_MAX_CALLS_PER_DAY: int = int(os.getenv("CBS_MAX_CALLS_PER_DAY", "1000"))
+
+    # Project documents (services/document_service.py). database = in PostgreSQL (survives redeploys on
+    # hosting without a disk); local = DOCUMENT_STORAGE_PATH on disk. Files are encrypted with the MFA key.
+    DOCUMENT_STORAGE: str = os.getenv("DOCUMENT_STORAGE", "database")
+    DOCUMENT_STORAGE_PATH: str = os.getenv("DOCUMENT_STORAGE_PATH", "/var/hpms/documents")
+    DOCUMENT_MAX_MB: int = int(os.getenv("DOCUMENT_MAX_MB", "10"))
+    DOCUMENT_ENCRYPTION: bool = os.getenv("DOCUMENT_ENCRYPTION", "true").lower() == "true"
 
     # Audit
     # Not a confirmed NRB figure: set from the bank's records-retention policy. Purging is manual and off by default.

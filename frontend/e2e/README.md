@@ -32,6 +32,33 @@ npx playwright test 3-approvals.spec.ts
 npm run test:e2e:report
 ```
 
+`10-demo-reset.spec.ts` is skipped unless `E2E_DEMO_RESET=1`. It replaces every project, so run
+it on its own (`E2E_DEMO_RESET=1 npx playwright test 10-demo-reset.spec.ts`), against a backend
+started with `DEMO_RESET_ENABLED=true`. It leaves a fresh seed behind, which is also a quick way to
+reseed the synthetic stack.
+
+## Other browsers
+
+`E2E_ALL_BROWSERS=1` adds Firefox and the installed Microsoft Edge to Chromium (RFP TECH B.2, B.4):
+
+```bash
+E2E_ALL_BROWSERS=1 npx playwright test --project=firefox --project=msedge
+```
+
+The suites that change shared records (approvals, covenant inputs, demo reset, user admin) run on
+Chromium only, because three browsers at once would race each other over the same records.
+
+## Other browsers
+
+`E2E_ALL_BROWSERS=1` adds Firefox and the installed Microsoft Edge to Chromium (RFP TECH B.2, B.4):
+
+```bash
+E2E_ALL_BROWSERS=1 npx playwright test --project=firefox --project=msedge
+```
+
+The suites that change shared records (approvals, covenant inputs, demo reset, user admin) run on
+Chromium only, because three browsers at once would race each other over the same records.
+
 ## What the suites write
 
 `3-approvals.spec.ts` submits, approves and rejects real change requests. Every run adds two
@@ -68,7 +95,8 @@ stops at the preview).
 The suite assumes the synthetic seed and writes to the database, so never point it at a database
 that holds anything else. To run it beside a development database you want left alone:
 
-1. Start a throwaway Postgres, create a database, and with `DATABASE_URL` set to it run
+1. Start a throwaway Postgres (this repository uses a private cluster in `.e2e-pg/`, ignored by
+   git, on port 5544), create a database, and with `DATABASE_URL` set to it run
    `alembic upgrade head`, then `python -m backend.scripts.seed_realistic_data` and
    `python -m backend.scripts.seed_test_workflows`.
 2. Start a backend on that database and a frontend in front of it on other ports. The

@@ -6,14 +6,15 @@ from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.api.routes_projects import _get_visible_project
 from backend.app.database import get_db
 from backend.app.models.regulatory import (
-    AUTHORITIES, FilingCalendarEntry, RegulatoryRequirement, StakeholderContact, UserReminder,
+    AUTHORITIES, INTERACTION_KINDS, FilingCalendarEntry, RegulatoryRequirement, StakeholderContact,
+    StakeholderInteraction, UserReminder,
 )
 from backend.app.security.auth_middleware import CurrentUser, get_current_user, require_role
 from backend.app.security.ldap_provider import UserRole
@@ -375,7 +376,60 @@ async def _get_contact(db: AsyncSession, contact_id: str) -> StakeholderContact:
 @router.get("/stakeholders")
 async def list_contacts(db: AsyncSession = Depends(get_db), user: CurrentUser = Depends(require_portfolio_access)):
     rows = (await db.execute(select(StakeholderContact).order_by(StakeholderContact.name))).scalars().all()
-    return {"contacts": [_contact_view(c) for c in rows]}
+    # Performance history in brief: how many interactions, the average rating, the latest date
+    summary = {contact_id: (count, average, latest) for contact_id, count, average, latest in (await db.execute(
+        select(StakeholderInteraction.contact_id, func.count(), func.avg(StakeholderInteraction.rating),
+               func.max(StakeholderInteraction.interaction_date_ad))
+        .group_by(StakeholderInteraction.contact_id))).all()}
+    contacts = []
+    for c in rows:
+        count, average, latest = summary.get(c.id, (0, None, None))
+        contacts.append(_contact_view(c) | {
+            "interaction_count": count, "average_rating": None if average is None else round(float(average), 1),
+            "last_interaction_ad": latest.isoformat() if latest else None})
+    return {"contacts": contacts}
+
+
+class InteractionBody(BaseModel):
+    interaction_date_ad: date
+    kind: str = "meeting"
+    rating: Optional[int] = Field(None, ge=1, le=5)
+    summary: str = Field(min_length=3, max_length=4000)
+
+
+def _interaction_view(i: StakeholderInteraction) -> Dict[str, Any]:
+    return {"id": str(i.id), "interaction_date_ad": i.interaction_date_ad.isoformat(),
+            "interaction_date_bs": i.interaction_date_bs, "kind": i.kind, "rating": i.rating,
+            "summary": i.summary, "recorded_by": i.created_by}
+
+
+@router.get("/stakeholders/{contact_id}/interactions")
+async def list_interactions(contact_id: str, db: AsyncSession = Depends(get_db),
+                            user: CurrentUser = Depends(require_portfolio_access)):
+    contact = await _get_contact(db, contact_id)
+    rows = (await db.execute(select(StakeholderInteraction).where(StakeholderInteraction.contact_id == contact.id)
+                             .order_by(StakeholderInteraction.interaction_date_ad.desc(),
+                                       StakeholderInteraction.created_at.desc()))).scalars().all()
+    return {"interactions": [_interaction_view(i) for i in rows]}
+
+
+@router.post("/stakeholders/{contact_id}/interactions", status_code=201)
+async def record_interaction(contact_id: str, body: InteractionBody, db: AsyncSession = Depends(get_db),
+                             user: CurrentUser = Depends(require_role(UserRole.ADMIN, UserRole.MAKER))):
+    """Record dealing with a stakeholder. Admins and makers (relationship staff) record; everyone with portfolio access reads."""
+    contact = await _get_contact(db, contact_id)
+    if body.kind not in INTERACTION_KINDS:
+        raise HTTPException(status_code=422, detail=f"kind must be one of {', '.join(INTERACTION_KINDS)}")
+    if body.interaction_date_ad > date.today():
+        raise HTTPException(status_code=422, detail="The date cannot be in the future")
+    interaction = StakeholderInteraction(
+        id=uuid.uuid4(), contact_id=contact.id, interaction_date_ad=body.interaction_date_ad,
+        interaction_date_bs=bs_string(body.interaction_date_ad), kind=body.kind, rating=body.rating,
+        summary=body.summary.strip(), created_by=user.username, updated_by=user.username)
+    db.add(interaction)
+    view = _interaction_view(interaction)
+    await db.commit()
+    return view
 
 
 @router.post("/stakeholders", status_code=201)
@@ -402,6 +456,7 @@ async def update_contact(contact_id: str, body: ContactPatch, db: AsyncSession =
 async def delete_contact(contact_id: str, db: AsyncSession = Depends(get_db),
                          user: CurrentUser = Depends(require_admin)):
     c = await _get_contact(db, contact_id)
+    await db.execute(delete(StakeholderInteraction).where(StakeholderInteraction.contact_id == c.id))
     await db.delete(c)
     await db.commit()
     return Response(status_code=204)

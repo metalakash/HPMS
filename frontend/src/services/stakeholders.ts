@@ -16,6 +16,22 @@ export interface StakeholderContact {
   min_urgency: 'warning' | 'critical';
   is_active: boolean;
   project_id: string | null;
+  /** Performance history in brief (RFP C.9). */
+  interaction_count?: number;
+  average_rating?: number | null;
+  last_interaction_ad?: string | null;
+}
+
+export const INTERACTION_KINDS = ['meeting', 'call', 'letter', 'email', 'site_visit', 'other'] as const;
+
+export interface StakeholderInteraction {
+  id: string;
+  interaction_date_ad: string;
+  interaction_date_bs: string | null;
+  kind: string;
+  rating: number | null;
+  summary: string;
+  recorded_by: string | null;
 }
 
 export interface StakeholderInput {
@@ -42,4 +58,17 @@ export const stakeholdersApi = {
 
 export function useStakeholders(enabled: boolean) {
   return useQuery({ queryKey: ['regulatory', 'stakeholders'], queryFn: stakeholdersApi.list, enabled });
+}
+
+export const interactionsApi = {
+  list: (contactId: string) =>
+    api
+      .get<{ interactions: StakeholderInteraction[] }>(`/api/v1/stakeholders/${contactId}/interactions`)
+      .then((r) => r.data.interactions),
+  record: (contactId: string, body: Omit<StakeholderInteraction, 'id' | 'interaction_date_bs' | 'recorded_by'>) =>
+    api.post<StakeholderInteraction>(`/api/v1/stakeholders/${contactId}/interactions`, body).then((r) => r.data),
+};
+
+export function useInteractions(contactId: string) {
+  return useQuery({ queryKey: ['regulatory', 'stakeholders', contactId, 'interactions'], queryFn: () => interactionsApi.list(contactId) });
 }

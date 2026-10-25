@@ -1,21 +1,21 @@
 """SQLAlchemy models for HPMS."""
 from .base import Base
 from .project import Project, ProjectTechnicalSpecs, HydrologyRecord, WaterLicense, LandRecord, PipelineStatus, ProjectStage
-from .financial import LoanAccount, DisbursementTranche, Repayment, CBSSyncLog, BudgetLine, SyncType
+from .financial import LoanAccount, DisbursementTranche, Repayment, CBSSyncLog, BudgetLine, SyncType, ExchangeRate
 from .consortium import ConsortiumFacility, ConsortiumMember
 from .audit import AuditLog, AuditLogRead, AuditAction
-from .governance import Role, Permission, ApprovalRequest, ApprovalStep, WorkflowDefinition, ApprovalState, role_permissions
+from .governance import Role, Permission, ApprovalRequest, ApprovalStep, WorkflowDefinition, ApprovalState, role_permissions, AppParameter
 from .project import ProjectCapacityHistory, RCODEvent
 from .financial import EnergyBond, EnergyFinancingQuarter, LoanAccountRateHistory, LoanProjectionQuarter
 from .financial import NewLoanDisbursementQuarter, NewLoanLimit
-from .document import Document, DocumentVersion, DocumentApprovalRequest
+from .document import Document, DocumentVersion, DocumentApprovalRequest, DocumentBlob
 from .import_tracking import ImportBatch, ImportRowError
 from .auth import User, UserRoleAssignment, ProjectOwner
 from .mfa import UserMFA, TOTPVerification, SMSVerification, BackupCode, TrustedDevice
 from .scheduler import ExportJob, ExportJobRun
 from .reporting import ReportDefinition
 from .etl import AirflowLoanDAGRun, LoanReconciliationLog, LoanDataProvenance
-from .regulatory import RegulatoryRequirement, FilingCalendarEntry, UserReminder, StakeholderContact
+from .regulatory import RegulatoryRequirement, FilingCalendarEntry, UserReminder, StakeholderContact, StakeholderInteraction
 from .operations import (
     PPAAgreement, EnergyGenerationData, NEAPPARate, TariffStructure,
     HydrologyDetailed, LandAcquisitionTracking, BoardOfDirectors, ShareholdingHierarchy,
@@ -61,6 +61,10 @@ __all__ = [
     "Document",
     "DocumentVersion",
     "DocumentApprovalRequest",
+    "DocumentBlob",
+    "AppParameter",
+    "StakeholderInteraction",
+    "ExchangeRate",
     "ImportBatch",
     "ImportRowError",
     "User",

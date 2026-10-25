@@ -4,7 +4,7 @@ Supports secure document storage with encryption, classification,
 approval workflows, and full version history for compliance.
 """
 
-from sqlalchemy import Column, String, Integer, Date, Text, ForeignKey, Enum, Index, CheckConstraint
+from sqlalchemy import Column, String, Integer, Date, Text, ForeignKey, Enum, Index, CheckConstraint, LargeBinary
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from datetime import datetime
@@ -17,6 +17,8 @@ class DocumentClassification(str, enum.Enum):
     """Document type classifications."""
     PROJECT_CHARTER = "project_charter"
     PPA = "ppa"  # Power Purchase Agreement
+    SANCTION_LETTER = "sanction_letter"
+    FEASIBILITY_STUDY = "feasibility_study"
     ENVIRONMENTAL_CLEARANCE = "environmental_clearance"
     LAND_DEED = "land_deed"
     WATER_LICENSE = "water_license"
@@ -102,7 +104,7 @@ class DocumentVersion(Base, TimestampedMixin):
     # File metadata
     file_name = Column(String(255), nullable=False)
     file_size_bytes = Column(Integer, nullable=False)
-    file_hash = Column(String(64), nullable=False, unique=True)  # SHA-256
+    file_hash = Column(String(64), nullable=False, index=True)  # SHA-256 of the original file; the same file may be filed twice
     mime_type = Column(String(100))  # e.g., "application/pdf"
 
     # Storage reference (abstraction allows local/S3 swap in Phase 3)
@@ -163,3 +165,16 @@ class DocumentApprovalRequest(Base, TimestampedMixin):
         Index('ix_approval_status', 'approval_status', 'approver_role'),
         Index('ix_approval_date', 'approval_date'),
     )
+
+
+class DocumentBlob(Base):
+    """File content kept in the database, for hosting without a persistent disk (DOCUMENT_STORAGE=database).
+
+    Keyed by the version's storage path. Content is encrypted by the document service before it gets here.
+    """
+
+    __tablename__ = 'document_blobs'
+
+    storage_path = Column(String(500), primary_key=True)
+    content = Column(LargeBinary, nullable=False)
+    size_bytes = Column(Integer, nullable=False)

@@ -27,6 +27,10 @@ services:
       # published passwords. Remove it before any real data is loaded here.
       - key: ALLOW_DEV_AUTH
         value: "true"
+      # Admin > "Reset demo data" puts the synthetic portfolio back before a presentation. Anyone with
+      # the published admin password can use it. Remove together with ALLOW_DEV_AUTH.
+      - key: DEMO_RESET_ENABLED
+        value: "true"
       - key: DEBUG
         value: "false"
 

@@ -221,13 +221,16 @@ async def energy_financing_ratio(
     Each quarter also carries ``with_pipeline``: the same test with the disbursement planned from
     new limits (lending not yet approved) added to the projected book.
     """
+    from backend.app.security.db_row_security import bank_wide
+
     inputs = (await db.execute(
         select(EnergyFinancingQuarter).order_by(EnergyFinancingQuarter.period_end_ad))).scalars().all()
     bonds = (await db.execute(select(EnergyBond).order_by(EnergyBond.investment_date_ad))).scalars().all()
-    projected = dict((await db.execute(
-        select(LoanProjectionQuarter.period_end_ad, func.sum(LoanProjectionQuarter.projected_outstanding))
-        .group_by(LoanProjectionQuarter.period_end_ad)
-    )).all())
+    async with bank_wide(db):  # the whole hydropower book, whoever asks (database row security exempted here)
+        projected = dict((await db.execute(
+            select(LoanProjectionQuarter.period_end_ad, func.sum(LoanProjectionQuarter.projected_outstanding))
+            .group_by(LoanProjectionQuarter.period_end_ad)
+        )).all())
 
     limits = (await db.execute(select(NewLoanLimit).order_by(NewLoanLimit.fiscal_year))).scalars().all()
     planned = (await db.execute(
@@ -328,11 +331,13 @@ async def list_users(
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(require_admin),
 ) -> ApiResponse[list]:
-    """Accounts that have signed in or been provisioned, with their default role. Admin only."""
+    """Accounts that have signed in or been provisioned, with the role HPMS uses for each. Admin only."""
     users = (await db.execute(select(User).order_by(User.username))).scalars().all()
     return _respond([{
         "id": str(u.id), "username": u.username, "full_name": u.full_name, "email": u.email,
-        "role": getattr(u.default_role, "value", u.default_role), "is_active": bool(u.is_active),
+        "role": u.role_override or getattr(u.default_role, "value", u.default_role),
+        "directory_role": getattr(u.default_role, "value", u.default_role), "role_override": u.role_override,
+        "status_reason": u.status_reason, "is_active": bool(u.is_active),
         "directory_synced": bool(u.is_ad_synced),
         "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
     } for u in users], current_user, "list_users")

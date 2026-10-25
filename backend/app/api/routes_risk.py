@@ -6,7 +6,8 @@ Plus POST .../risks/auto-scan to raise risks from milestone delays and covenant 
 """
 import logging
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Dict, Optional, Type
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -134,7 +135,20 @@ def _risk_severity(values: Dict[str, Any]) -> Dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(exc))
 
 
-_register("milestones", Milestone, s.MilestoneCreate, s.MilestoneUpdate, Milestone.planned_date_ad)
+def _milestone_rules(values: Dict[str, Any]) -> Dict[str, Any]:
+    """A completed milestone has happened: it needs its actual date, which cannot be in the future."""
+    actual = values.get("actual_date_ad")
+    if actual is not None and actual > date.today():
+        raise HTTPException(status_code=422, detail="The actual date cannot be in the future")
+    if values.get("status") == "completed":
+        if actual is None:
+            raise HTTPException(status_code=422, detail="A completed milestone needs its actual date")
+        return {"percent_complete": Decimal("100")}
+    return {}
+
+
+_register("milestones", Milestone, s.MilestoneCreate, s.MilestoneUpdate, Milestone.planned_date_ad,
+          derive=_milestone_rules)
 _register("risks", RiskRegisterEntry, s.RiskCreate, s.RiskUpdate, RiskRegisterEntry.created_at.desc(),
           derive=_risk_severity)
 _register("insurance", InsurancePolicy, s.InsuranceCreate, s.InsuranceUpdate, InsurancePolicy.valid_to_ad)

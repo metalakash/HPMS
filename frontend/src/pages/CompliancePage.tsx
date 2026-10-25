@@ -10,8 +10,10 @@ import {
   CovenantStatusBadge,
   formatRatio,
 } from '@/components/drawers/CovenantDetailDrawer';
+import { ProposeFiguresModal, ProposeTermsModal } from '@/components/covenants/CovenantInputModals';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useCovenantResults } from '@/hooks/queries';
+import { useAuthStore } from '@/store/useAuthStore';
 import type { CovenantMetric, CovenantResultRow } from '@/types/api';
 import { formatDate, formatFiscalQuarter, humanize } from '@/utils/format';
 
@@ -29,6 +31,12 @@ function Ratio({ metric, unit }: { metric: CovenantMetric; unit: 'x' | '%' }) {
 export default function CompliancePage() {
   const results = useCovenantResults();
   const [selected, setSelected] = useState<CovenantResultRow | null>(null);
+  const [proposing, setProposing] = useState<'figures' | 'terms' | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const roles = useAuthStore((state) => state.user?.roles ?? []);
+  const isAdmin = roles.includes('admin');
+  const canProposeFigures = isAdmin || roles.includes('maker');
+  const ProposeModal = proposing === 'terms' ? ProposeTermsModal : ProposeFiguresModal;
   const rows = results.data ?? [];
   const count = (status: CovenantResultRow['overall_status']) =>
     rows.filter((row) => row.overall_status === status).length;
@@ -121,12 +129,32 @@ export default function CompliancePage() {
         </Card>
       </div>
 
-      {selected && (
+      {notice && (
+        <p role="status" className="mt-4 rounded-md bg-success-soft p-3 text-sm text-success">
+          {notice}
+        </p>
+      )}
+
+      {selected && !proposing && (
         <CovenantDetailDrawer
           isOpen
           onClose={() => setSelected(null)}
           projectId={selected.project_id}
           projectName={selected.project_name}
+          onProposeFigures={canProposeFigures ? () => setProposing('figures') : undefined}
+          onProposeTerms={isAdmin ? () => setProposing('terms') : undefined}
+        />
+      )}
+      {selected && proposing && (
+        <ProposeModal
+          projectId={selected.project_id}
+          projectName={selected.project_name}
+          onClose={() => setProposing(null)}
+          onSubmitted={(message) => {
+            setNotice(message);
+            setProposing(null);
+            setSelected(null);
+          }}
         />
       )}
     </>

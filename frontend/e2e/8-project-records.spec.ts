@@ -14,7 +14,12 @@ const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOS
 /** The last operating project, so these writes stay clear of the projects other specs read. */
 async function openTab(page: Page, projectId: string, tab: string) {
   await page.goto(`/projects/${projectId}`);
-  await page.getByRole('tab', { name: tab }).click();
+  // The tab row reflows as the header loads, so a click can land on a neighbour; retry until this tab is selected
+  const button = page.getByRole('tab', { name: tab, exact: true });
+  await expect(async () => {
+    await button.click();
+    await expect(button).toHaveAttribute('aria-selected', 'true', { timeout: 2_000 });
+  }).toPass();
 }
 
 test.describe('8. Project records', () => {
@@ -95,7 +100,31 @@ test.describe('8. Project records', () => {
     await add.getByRole('button', { name: /^Add/ }).click();
     await expect(add).toHaveCount(0);
     await openTab(page, projectId, 'Milestones');
-    await expect((await loadedRows(tableByCaption(page, 'Milestones'))).filter({ hasText: milestone })).toHaveCount(1);
+    const saved = (await loadedRows(tableByCaption(page, 'Milestones'))).filter({ hasText: milestone });
+    await expect(saved).toHaveCount(1);
+
+    // A forecast past the plan flags the delay; completing needs the actual date
+    await saved.getByRole('button', { name: 'Update' }).click();
+    const update = page.getByRole('dialog');
+    await update.getByLabel('Forecast date').fill(inDays(150));
+    await update.getByRole('button', { name: 'Save milestone' }).click();
+    await expect(update).toHaveCount(0);
+    await openTab(page, projectId, 'Milestones');
+    const late = (await loadedRows(tableByCaption(page, 'Milestones'))).filter({ hasText: milestone });
+    await expect(late).toContainText('30 days late');
+
+    await late.getByRole('button', { name: 'Update' }).click();
+    await update.getByLabel('Status').selectOption('completed');
+    await expect(update.getByText('A completed milestone needs its actual date')).toBeVisible();
+    await expect(update.getByRole('button', { name: 'Save milestone' })).toBeDisabled();
+    await update.getByLabel('Actual date').fill(inDays(0));
+    await update.getByRole('button', { name: 'Save milestone' }).click();
+    await expect(update).toHaveCount(0);
+    await openTab(page, projectId, 'Milestones');
+    const done = (await loadedRows(tableByCaption(page, 'Milestones'))).filter({ hasText: milestone });
+    await expect(done).toContainText('Completed');
+    await expect(done).toContainText('100%');
+    await expect(done).not.toContainText('days late'); // finished ahead of plan
 
     const risk = `Transformer lead time ${stamp}`;
     await openTab(page, projectId, 'Risk register');

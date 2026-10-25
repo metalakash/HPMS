@@ -33,7 +33,10 @@ test.describe('0. Smoke', () => {
   }) => {
     const errors: string[] = [];
     page.on('console', (message) => {
-      if (message.type() === 'error') errors.push(message.text());
+      // Firefox logs the notification socket that the development build opens and closes at once (React mounts
+      // twice in development) and one cut off by navigation; the socket that follows connects. Not app errors.
+      const browserNoise = /ws:\/\/\S+\/ws\/notifications/.test(message.text());
+      if (message.type() === 'error' && !browserNoise) errors.push(message.text());
     });
     page.on('pageerror', (error) => errors.push(error.message));
 

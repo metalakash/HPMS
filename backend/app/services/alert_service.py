@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
+from contextvars import ContextVar
 from typing import List, Dict, Any
 import logging
 
@@ -12,13 +13,22 @@ from backend.app.models.financial import LoanAccount
 
 logger = logging.getLogger(__name__)
 
+# Lead times for the alert run in progress, read from the admin settings at its start (FUNC A.5)
+_limits: ContextVar[tuple] = ContextVar("alert_limits", default=(30, 90))
+
+
+def _critical_days() -> int:
+    return _limits.get()[0]
+
+
+def _warning_days() -> int:
+    return _limits.get()[1]
+
 
 class AlertService:
     """Service for detecting and managing expiry alerts."""
 
-    # Expiry thresholds (in days)
-    CRITICAL_THRESHOLD = 30  # Red alert: expiring within 30 days
-    WARNING_THRESHOLD = 90   # Yellow alert: expiring within 90 days
+    # Expiry lead times in days are admin settings (alert_critical_days, alert_warning_days; defaults 30 and 90)
 
     @staticmethod
     async def get_expiry_alerts(
@@ -34,6 +44,10 @@ class AlertService:
         Returns:
             Dict with grouped alerts (critical, warning, ok) and action buttons
         """
+        from backend.app.services import app_settings
+
+        current = await app_settings.values(db)
+        token = _limits.set((int(current["alert_critical_days"]), int(current["alert_warning_days"])))
         try:
             alerts = []
             today = datetime.utcnow().date()
@@ -78,6 +92,8 @@ class AlertService:
         except Exception as e:
             logger.error(f"Error fetching expiry alerts: {e}")
             raise
+        finally:
+            _limits.reset(token)
 
     @staticmethod
     async def initiate_renewal_workflow(
@@ -152,7 +168,7 @@ class AlertService:
 
             urgency = AlertService._get_urgency(days_remaining)
 
-            if days_remaining <= AlertService.WARNING_THRESHOLD:
+            if days_remaining <= _warning_days():
                 alerts.append({
                     "alert_id": f"PPA:{ppa.id}",
                     "entity_type": "PPA",
@@ -194,7 +210,7 @@ class AlertService:
 
             urgency = AlertService._get_urgency(days_remaining)
 
-            if days_remaining <= AlertService.WARNING_THRESHOLD:
+            if days_remaining <= _warning_days():
                 alerts.append({
                     "alert_id": f"LICENSE:{license.id}",
                     "entity_type": "WATER_LICENSE",
@@ -223,7 +239,7 @@ class AlertService:
         alerts = []
         for pol in result.scalars().all():
             days = (pol.valid_to_ad - today).days
-            if days <= AlertService.WARNING_THRESHOLD:
+            if days <= _warning_days():
                 alerts.append({
                     "alert_id": f"INSURANCE:{pol.id}",
                     "entity_type": "INSURANCE",
@@ -249,7 +265,7 @@ class AlertService:
         alerts = []
         for permit in result.scalars().all():
             days = (permit.valid_to_ad - today).days
-            if days <= AlertService.WARNING_THRESHOLD:
+            if days <= _warning_days():
                 alerts.append({
                     "alert_id": f"PERMIT:{permit.id}",
                     "entity_type": "PERMIT",
@@ -291,7 +307,7 @@ class AlertService:
                     "description": f"Milestone '{m.name}' slipped {slip} days",
                     "expiry_date": m.planned_date_ad.isoformat(),
                     "days_remaining": -slip,
-                    "urgency": "expired" if slip > AlertService.CRITICAL_THRESHOLD else "critical",
+                    "urgency": "expired" if slip > _critical_days() else "critical",
                     "authority": None,
                     "action_available": [{"type": "ESCALATE", "label": "Escalate Delay"}],
                 })
@@ -302,9 +318,9 @@ class AlertService:
         """Determine urgency based on days remaining."""
         if days_remaining < 0:
             return "expired"
-        elif days_remaining <= AlertService.CRITICAL_THRESHOLD:
+        elif days_remaining <= _critical_days():
             return "critical"
-        elif days_remaining <= AlertService.WARNING_THRESHOLD:
+        elif days_remaining <= _warning_days():
             return "warning"
         else:
             return "ok"

@@ -517,3 +517,24 @@ def test_calculated_fields_are_never_proposable():
 ])
 def test_who_may_propose_covenant_inputs(entity, changes, role, allowed):
     assert (field_policy.violations(entity, changes, [role]) == []) is allowed
+
+
+async def test_financials_list_the_fiscal_quarters_figures_can_be_proposed_for(api, facility):
+    """The entry screen offers completed fiscal quarters only, newest first, and marks those on file."""
+    project, _ = facility
+    admin = await login(api, "admin")
+    data = (await api.get(f"/api/v1/compliance/covenants/{project.id}/financials", headers=admin)).json()["data"]
+
+    quarters = data["reportable_quarters"]
+    latest_completed = Quarter.of(date.today()).shift(-1)
+    assert len(quarters) == 8 and quarters[0]["quarter"] == latest_completed.label
+    assert [q["quarter"] for q in quarters] == [latest_completed.shift(-back).label for back in range(8)]
+    assert all(date.fromisoformat(q["period_end_ad"]) < date.today() for q in quarters)
+    on_file = {p["quarter"] for p in data["periods"]}
+    assert all(q["reported"] == (q["quarter"] in on_file) for q in quarters)
+
+
+async def test_the_demo_accounts_include_a_second_administrator(api):
+    """Sanction terms need a final approval from an admin other than the proposer."""
+    me = (await api.get("/api/v1/auth/me", headers=await login(api, "admin2"))).json()
+    assert me["roles"] == ["admin"] and me["username"] == "admin2"

@@ -375,3 +375,20 @@ class LoanExposureSyncHistory(Base, TimestampedMixin):
     __table_args__ = (
         Index('ix_sync_history_status_date', 'status', 'created_at'),
     )
+
+
+class ExchangeRate(Base, TimestampedMixin):
+    """NPR per one unit of a currency, in force from a date until the next rate (RFP FUNC B.3).
+
+    Rates change only through change requests (EXCHANGE_RATE). NPR itself has no row: its rate is 1.
+    """
+
+    __tablename__ = 'exchange_rates'
+    __table_args__ = (UniqueConstraint('currency_code', 'effective_from_ad', name='uq_exchange_rate_day'),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    currency_code = Column(String(3), nullable=False, index=True)
+    rate_to_npr = Column(Numeric(18, 6), nullable=False)
+    effective_from_ad = Column(Date, nullable=False)
+    effective_from_bs = Column(String(10))
+    source_reference = Column(String(255))

@@ -1,4 +1,5 @@
 import { Badge, type BadgeTone } from '@/components/common/Badge';
+import { Button } from '@/components/common/Button';
 import { Skeleton } from '@/components/common/Skeleton';
 import { ErrorState } from '@/components/common/States';
 import { useCovenantCalculation, useCovenantHistory } from '@/hooks/queries';
@@ -73,16 +74,38 @@ interface CovenantDetailDrawerProps {
   onClose: () => void;
   projectId: string;
   projectName: string;
+  /** Offered to the roles that may raise the change request; the page opens the form. */
+  onProposeFigures?: () => void;
+  onProposeTerms?: () => void;
 }
 
 /** A project's covenant results: the latest test, the figures behind it, and the quarterly history. */
-export function CovenantDetailDrawer({ isOpen, onClose, projectId, projectName }: CovenantDetailDrawerProps) {
+export function CovenantDetailDrawer({
+  isOpen,
+  onClose,
+  projectId,
+  projectName,
+  onProposeFigures,
+  onProposeTerms,
+}: CovenantDetailDrawerProps) {
   const history = useCovenantHistory(projectId);
   const calculation = useCovenantCalculation(projectId);
   const latest = history.data?.trends.at(-1);
 
   return (
-    <DetailDrawer isOpen={isOpen} onClose={onClose} title={`Covenants: ${projectName}`}>
+    <DetailDrawer
+      isOpen={isOpen}
+      onClose={onClose}
+      title={`Covenants: ${projectName}`}
+      footer={
+        onProposeFigures || onProposeTerms ? (
+          <div className="flex flex-wrap justify-end gap-2">
+            {onProposeTerms && <Button variant="secondary" onClick={onProposeTerms}>Change sanction terms</Button>}
+            {onProposeFigures && <Button onClick={onProposeFigures}>Record quarterly figures</Button>}
+          </div>
+        ) : undefined
+      }
+    >
       {history.isError ? (
         <ErrorState error={history.error} onRetry={() => void history.refetch()} />
       ) : !history.data ? (

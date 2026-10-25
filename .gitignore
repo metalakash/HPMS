@@ -46,3 +46,6 @@ instance/
 .DS_Store
 
 postgres/
+
+# Throwaway Postgres cluster for the synthetic end-to-end stack (frontend/e2e/README.md)
+.e2e-pg/

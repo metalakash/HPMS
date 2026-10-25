@@ -12,7 +12,7 @@ Handles:
 import hashlib
 import json
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import List, Optional, Dict, Any
 from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +25,7 @@ from backend.app.models.audit import AuditAction, AuditLog
 from backend.app.security.auth_middleware import CurrentUser
 from backend.app.security import field_policy
 from backend.app.security.ldap_provider import UserRole
-from backend.app.services import change_applier, covenant_change
+from backend.app.services import approval_rules, change_applier, change_kinds, covenant_change
 from backend.app.services.audit_chain import append_audit_log
 from backend.app.schemas.common import AuditMetadata
 
@@ -45,7 +45,9 @@ async def _authorize_target(db: AsyncSession, user: CurrentUser, entity_type: st
     from backend.app.security.rls_service import RLSService
 
     kind = entity_type.upper()
-    if kind not in ("PROJECT", "LOAN") and not covenant_change.is_covenant_kind(kind):
+    registered = change_kinds.get(kind)
+    if kind not in ("PROJECT", "LOAN") and not covenant_change.is_covenant_kind(kind) and not (
+            registered and registered.project_scoped):
         return
     try:
         target = UUID(str(entity_id))
@@ -107,6 +109,16 @@ async def _apply_approved_changes(db: AsyncSession, approval: ApprovalRequest, a
     """On final approval, make the recorded change to the project, loan or covenant inputs. False if nothing applies."""
     if covenant_change.is_covenant_kind(approval.entity_type):
         return await covenant_change.apply(db, approval, approver, source_ip, timestamp)
+    registered = change_kinds.get(approval.entity_type)
+    if registered is not None:
+        changes = await change_kinds.submitted_changes(db, approval)
+        before, after = await registered.apply(db, approval.entity_id, changes, approver.username)
+        await append_audit_log(
+            db, user_id=approver.id, user_role=approver.roles[0].value if approver.roles else "guest",
+            source_ip=source_ip, timestamp=timestamp, entity_type=approval.entity_type.upper(),
+            entity_id=approval.entity_id, action=AuditAction.UPDATE.value,
+            reason=f"Applied approved change request {approval.id}", pre_state=before, post_state=after)
+        return True
     if not change_applier.is_applicable(approval.entity_type):
         return False
     submission = None
@@ -129,11 +141,26 @@ async def _apply_approved_changes(db: AsyncSession, approval: ApprovalRequest, a
     return True
 
 
-def _can_decide(user: CurrentUser, approval: ApprovalRequest) -> bool:
+def _next_state(approval: ApprovalRequest, rule: Dict[str, Any]) -> Optional[ApprovalState]:
+    """The state an approval moves the request to under its rule; None when it is already decided."""
+    if approval.current_state == ApprovalState.SUBMITTED.value:
+        return ApprovalState.RECOMMENDED if "recommended" in rule["steps"] else ApprovalState.APPROVED
+    if approval.current_state == ApprovalState.RECOMMENDED.value:
+        return ApprovalState.APPROVED
+    return None
+
+
+def _step_roles(rule: Dict[str, Any], new_state: ApprovalState) -> List[str]:
+    return rule["recommend_roles"] if new_state == ApprovalState.RECOMMENDED else rule["approve_roles"]
+
+
+def _can_decide(user: CurrentUser, approval: ApprovalRequest, rule: Optional[Dict[str, Any]] = None) -> bool:
     """Whether this user may approve or reject the request now (the same rules the actions enforce)."""
-    if not _has_any_role(user, (UserRole.APPROVER, UserRole.ADMIN)):
+    rule = rule or approval_rules.default_rule(approval.entity_type)
+    new_state = _next_state(approval, rule)
+    if new_state is None:
         return False
-    if approval.current_state not in (ApprovalState.SUBMITTED.value, ApprovalState.RECOMMENDED.value):
+    if not any(role.value in _step_roles(rule, new_state) for role in user.roles):
         return False
     actor = str(user.id)
     if actor == str(approval.maker_id):
@@ -169,17 +196,20 @@ async def _entity_labels(db: AsyncSession, approvals) -> Dict[tuple, str]:
 
     wanted: Dict[str, list] = {"PROJECT": [], "LOAN": []}
     covenant = set()
+    labels: Dict[tuple, str] = {}
     for a in approvals:
         kind = a.entity_type.upper()
-        if covenant_change.is_covenant_kind(kind):
+        registered = change_kinds.get(kind)
+        if covenant_change.is_covenant_kind(kind) or (registered and registered.project_scoped):
             kind = "PROJECT"
             covenant.add(a)
+        elif registered:
+            labels[(a.entity_type.upper(), a.entity_id)] = f"{registered.label} {str(a.entity_id).replace('_', ' ').lower()}"
         if kind in wanted:
             try:
                 wanted[kind].append(UUID(str(a.entity_id)))
             except ValueError:
                 continue
-    labels: Dict[tuple, str] = {}
     if wanted["PROJECT"]:
         rows = (await db.execute(
             select(Project.id, Project.project_code, Project.name_en).where(Project.id.in_(wanted["PROJECT"])))).all()
@@ -187,7 +217,9 @@ async def _entity_labels(db: AsyncSession, approvals) -> Dict[tuple, str]:
         for a in covenant:
             label = labels.get(("PROJECT", str(a.entity_id)))
             if label:
-                labels[(a.entity_type.upper(), a.entity_id)] = f"Covenant inputs for {label}"
+                registered = change_kinds.get(a.entity_type)
+                prefix = registered.label if registered else "Covenant inputs for"
+                labels[(a.entity_type.upper(), a.entity_id)] = f"{prefix} {label}"
     if wanted["LOAN"]:
         rows = (await db.execute(
             select(LoanAccount.id, LoanAccount.facility_type, Project.project_code, Project.name_en)
@@ -277,7 +309,12 @@ class MutationService:
         await _authorize_target(db, current_user, entity_type, entity_id)
 
         pre_state: Dict[str, Any] = {}
-        if covenant_change.is_covenant_kind(entity_type):
+        registered = change_kinds.get(entity_type)
+        if registered is not None:
+            if not any(role.value in registered.author_roles for role in current_user.roles):
+                raise PermissionError(f"Only {'/'.join(sorted(registered.author_roles))} can propose this change")
+            pre_state = await registered.prepare(db, entity_id, changes)
+        elif covenant_change.is_covenant_kind(entity_type):
             # Refuse now what could not be applied later, and record the values being replaced
             pre_state = await covenant_change.prepare(db, entity_type, entity_id, changes)
         elif change_applier.is_applicable(entity_type):
@@ -391,6 +428,7 @@ class MutationService:
         submissions = await _submissions(db, approvals)
         makers = await _usernames(db, {a.maker_id for a in approvals})
         labels = await _entity_labels(db, approvals)
+        rules = await approval_rules.rules_for_requests(db, approvals)
 
         items = []
         for a in approvals:
@@ -409,7 +447,10 @@ class MutationService:
                 "justification": submission.reason_for_action if submission else None,
                 "changes": json.loads(submission.post_state or "{}") if submission else None,
                 "previous_values": json.loads(submission.pre_state or "{}") if submission else None,
-                "can_decide": _can_decide(current_user, a),
+                "can_decide": _can_decide(current_user, a, rules.get(str(a.id))),
+                # Whether the next approval applies the change (one-check rules skip the recommendation)
+                "final_step": _next_state(a, rules.get(str(a.id)) or approval_rules.default_rule(a.entity_type))
+                == ApprovalState.APPROVED,
             })
         return {"total": total, "approvals": items}
 
@@ -442,15 +483,16 @@ class MutationService:
 
         approval = await _open_request(db, approval_request_id)
 
-        # Validate state transitions
+        # The request follows the approval rule in force when it was raised
         current_state = ApprovalState(approval.current_state)
-
-        if current_state == ApprovalState.SUBMITTED:
-            new_state = ApprovalState.RECOMMENDED
-        elif current_state == ApprovalState.RECOMMENDED:
-            new_state = ApprovalState.APPROVED
-        else:
+        rule = await approval_rules.rule_for_request(db, getattr(approval, "workflow_definition_id", None), approval.entity_type)
+        new_state = _next_state(approval, rule)
+        if new_state is None:
             raise ValueError(f"Cannot approve from state: {current_state}")
+        allowed = _step_roles(rule, new_state)
+        if not any(role.value in allowed for role in current_user.roles):
+            step = "recommendation" if new_state == ApprovalState.RECOMMENDED else "final approval"
+            raise PermissionError(f"The {step} of this change must come from: {', '.join(allowed)}")
 
         # Dual control: nobody checks their own work, and the two checks come from different people
         actor = str(current_user.id)
@@ -543,6 +585,11 @@ class MutationService:
         approval = await _open_request(db, approval_request_id)
         if approval.current_state not in (ApprovalState.SUBMITTED.value, ApprovalState.RECOMMENDED.value):
             raise ValueError(f"Cannot reject from state: {approval.current_state}")
+        # Whoever may decide the next step under the request's rule may also refuse it
+        rule = await approval_rules.rule_for_request(db, getattr(approval, "workflow_definition_id", None), approval.entity_type)
+        allowed = _step_roles(rule, _next_state(approval, rule))
+        if not any(role.value in allowed for role in current_user.roles):
+            raise PermissionError(f"This change can only be decided by: {', '.join(allowed)}")
 
         # Update state
         timestamp = datetime.utcnow().isoformat()

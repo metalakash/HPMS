@@ -17,6 +17,32 @@ import { formatDate, formatNPR, formatPercent, humanize } from '@/utils/format';
 import { statusTone } from '@/utils/status';
 
 const PAGE_SIZE = 20;
+
+/** Currency fields the list carries beyond the shared type (RFP FUNC B.3). */
+type Loan = LoanAccountListItem & {
+  currency_code?: string;
+  sanctioned_amount_npr?: string | null;
+  outstanding_principal_npr?: string | null;
+  fx_rate_to_npr?: string | null;
+  fx_rate_date?: string | null;
+};
+
+/** An amount in the facility's own currency; a foreign one also shows its NPR equivalent at today's rate. */
+function Amount({ loan, value, npr, language }: { loan: Loan; value: string | null; npr?: string | null; language: 'en' | 'ne' }) {
+  const currency = loan.currency_code ?? 'NPR';
+  if (currency === 'NPR') return <>{formatNPR(value, language)}</>;
+  const own = value === null ? '—' : `${currency} ${Number(value).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+  return (
+    <span>
+      {own}
+      {npr !== undefined && (
+        <span className="block text-xs text-muted" title={loan.fx_rate_to_npr ? `At ${loan.fx_rate_to_npr} NPR per ${currency}, from ${loan.fx_rate_date}` : undefined}>
+          {npr === null ? `No ${currency} rate on file` : `≈ ${formatNPR(npr, language)}`}
+        </span>
+      )}
+    </span>
+  );
+}
 const SYNC_STATUSES = ['pending', 'success', 'failed'];
 
 export default function LoansPage() {
@@ -53,21 +79,21 @@ export default function LoansPage() {
       key: 'sanctioned',
       header: 'Sanctioned',
       align: 'right',
-      render: (l) => formatNPR(l.sanctioned_amount, language),
+      render: (l) => <Amount loan={l} value={l.sanctioned_amount} npr={(l as Loan).sanctioned_amount_npr} language={language} />,
     },
     {
       key: 'disbursed',
       header: 'Disbursed',
       align: 'right',
       hideOnMobile: true,
-      render: (l) => formatNPR(l.disbursed_amount, language),
+      render: (l) => <Amount loan={l} value={l.disbursed_amount} language={language} />,
     },
     {
       key: 'outstanding',
       header: 'Outstanding',
       align: 'right',
       hideOnMobile: true,
-      render: (l) => formatNPR(l.outstanding_principal, language),
+      render: (l) => <Amount loan={l} value={l.outstanding_principal} npr={(l as Loan).outstanding_principal_npr} language={language} />,
     },
     {
       key: 'rate',

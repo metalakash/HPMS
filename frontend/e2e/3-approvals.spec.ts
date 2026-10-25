@@ -29,6 +29,12 @@ async function queue(api: APIRequestContext, params: Record<string, string> = {}
   return (await response.json()).data.approvals;
 }
 
+async function expectBetween(count: Promise<number>, before: number, after: number) {
+  const shown = await count;
+  expect(shown).toBeGreaterThanOrEqual(Math.min(before, after));
+  expect(shown).toBeLessThanOrEqual(Math.max(before, after));
+}
+
 /** A date no earlier run has used, so each run's request is identifiable. */
 function uniqueForecastDate(): string {
   const days = 400 + Math.floor(Math.random() * 3000);
@@ -89,13 +95,25 @@ test.describe('3. Approvals', () => {
     await page.getByRole('link', { name: 'Approvals' }).click();
     await expect(page).toHaveURL(/\/approvals$/);
     await expect(page.getByRole('heading', { name: 'Approvals', level: 1 })).toBeVisible();
-    await expect(await loadedRows(tableByCaption(page, 'Change requests'))).toHaveCount(all.length);
+    // Other suites raise and decide requests at the same time: the page must show a count the queue had
+    // between the moment before it loaded and the moment after
+    // The page shows 50 requests at a time
+    const listed = await loadedRows(tableByCaption(page, 'Change requests'));
+    await expectBetween(listed.count(), Math.min(all.length, 50), Math.min((await queue(api)).length, 50));
+    if (all.length > 50) {
+      // Older requests are on the next page
+      await page.getByRole('navigation', { name: 'Pagination' }).getByRole('button', { name: /Next/ }).click();
+      await expect(page).toHaveURL(/page=2/);
+      await expect(tableByCaption(page, 'Change requests').locator('tbody tr').first()).toBeVisible();
+      await page.goto('/approvals');
+    }
 
     await page.getByLabel('Status').selectOption('recommended');
     await expect(page).toHaveURL(/status=recommended/);
     const rows = tableByCaption(page, 'Change requests').locator('tbody tr');
-    await expect(rows).toHaveCount(recommended.length);
     await expect(rows.first()).toContainText('Awaiting final approval');
+    await expectBetween(rows.count(), Math.min(recommended.length, 50),
+      Math.min((await queue(api, { status: 'recommended' })).length, 50));
   });
 
   test('a proposed change is applied only after two different checkers approve it', async ({ pageAs, apiAs }) => {

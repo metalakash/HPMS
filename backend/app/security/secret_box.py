@@ -65,6 +65,18 @@ def decrypt(value: Optional[str]) -> Optional[str]:
         raise ValueError("Stored secret cannot be decrypted with the configured key(s)")
 
 
+def encrypt_bytes(content: bytes) -> bytes:
+    """Encrypt a file's content (documents). Uses its own derived key, from the same secret as MFA."""
+    return MultiFernet([Fernet(_fernet_key(m, b"document-encrypt")) for m in _material()]).encrypt(content)
+
+
+def decrypt_bytes(content: bytes) -> bytes:
+    try:
+        return MultiFernet([Fernet(_fernet_key(m, b"document-encrypt")) for m in _material()]).decrypt(content)
+    except InvalidToken:
+        raise ValueError("Stored file cannot be decrypted with the configured key(s)")
+
+
 def keyed_hash(value: str) -> str:
     """HMAC-SHA256 hex digest under a key derived from the primary secret."""
     key = _fernet_key(_material()[0], b"mfa-hash")

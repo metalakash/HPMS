@@ -212,6 +212,59 @@ class LocalStorageBackend(StorageBackend):
         )
 
 
+class DatabaseStorageBackend(StorageBackend):
+    """File content in the ``document_blobs`` table, inside the caller's transaction.
+
+    For hosting without a persistent disk: an upload is kept, or rolled back, together with its version row.
+    """
+
+    def __init__(self, db):
+        self.db = db
+        self.backend_name = "database"
+
+    async def upload(self, file_path: str, file_content: BinaryIO, mime_type: str) -> StorageMetadata:
+        from backend.app.models.document import DocumentBlob
+
+        content = file_content.read()
+        await self.db.merge(DocumentBlob(storage_path=file_path, content=content, size_bytes=len(content)))
+        await self.db.flush()
+        return StorageMetadata(path=file_path, size_bytes=len(content), mime_type=mime_type,
+                               hash_sha256=hashlib.sha256(content).hexdigest(), backend=self.backend_name)
+
+    async def download(self, file_path: str) -> BinaryIO:
+        from io import BytesIO
+        from backend.app.models.document import DocumentBlob
+
+        blob = await self.db.get(DocumentBlob, file_path)
+        if blob is None:
+            raise FileNotFoundError(f"File not found: {file_path}")
+        return BytesIO(blob.content)
+
+    async def delete(self, file_path: str) -> bool:
+        from backend.app.models.document import DocumentBlob
+
+        blob = await self.db.get(DocumentBlob, file_path)
+        if blob is None:
+            return False
+        await self.db.delete(blob)
+        await self.db.flush()
+        return True
+
+    async def exists(self, file_path: str) -> bool:
+        from backend.app.models.document import DocumentBlob
+
+        return await self.db.get(DocumentBlob, file_path) is not None
+
+    async def get_metadata(self, file_path: str) -> StorageMetadata:
+        from backend.app.models.document import DocumentBlob
+
+        blob = await self.db.get(DocumentBlob, file_path)
+        if blob is None:
+            raise FileNotFoundError(f"File not found: {file_path}")
+        return StorageMetadata(path=file_path, size_bytes=blob.size_bytes, mime_type='application/octet-stream',
+                               hash_sha256=hashlib.sha256(blob.content).hexdigest(), backend=self.backend_name)
+
+
 class S3StorageBackend(StorageBackend):
     """AWS S3 storage backend (Phase 3+).
 
@@ -249,12 +302,14 @@ def get_storage_backend(backend_type: str = "local", **kwargs) -> StorageBackend
     """Factory to get storage backend implementation.
 
     Args:
-        backend_type: 'local' or 's3'
+        backend_type: 'database', 'local' or 's3'
         **kwargs: backend-specific arguments (base_path for local, bucket_name for s3)
 
     Returns:
         StorageBackend instance
     """
+    if backend_type == "database":
+        return DatabaseStorageBackend(kwargs["db"])
     if backend_type == "local":
         return LocalStorageBackend(base_path=kwargs.get("base_path", "/var/hpms/documents"))
     elif backend_type == "s3":

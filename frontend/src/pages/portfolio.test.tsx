@@ -305,7 +305,7 @@ describe('AdminPage', () => {
     expect(admin).toHaveTextContent('Admin User');
     expect(maker).toHaveTextContent('r.sharma');
     expect(maker).toHaveTextContent('Directory');
-    expect(within(maker as HTMLElement).getByText('Inactive')).toBeInTheDocument();
+    expect(within(maker as HTMLElement).getByText('Blocked')).toBeInTheDocument();
 
     expect(await screen.findByText('loans_20261006.txt')).toBeInTheDocument();
     expect(screen.getByText('Bank nightly extract')).toBeInTheDocument();

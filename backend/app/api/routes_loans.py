@@ -8,7 +8,7 @@ Implements:
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
@@ -129,9 +129,13 @@ async def list_loan_accounts(
     result = await db.execute(query)
     rows = result.all()
 
-    # Convert
+    # Convert, with NPR equivalents for facilities in another currency
+    from backend.app.services import fx
+    rates = await fx.load(db)
+    today = date.today()
     items = []
     for a, project_code in rows:
+        rate = rates.on(a.currency_code, today)
         items.append(
             LoanAccountListResponse(
                 id=str(a.id),
@@ -141,6 +145,11 @@ async def list_loan_accounts(
                 sanctioned_amount=a.sanctioned_amount,
                 disbursed_amount=a.disbursed_amount,
                 outstanding_principal=a.outstanding_principal,
+                currency_code=a.currency_code or "NPR",
+                sanctioned_amount_npr=rates.to_npr(a.sanctioned_amount, a.currency_code, today),
+                outstanding_principal_npr=rates.to_npr(a.outstanding_principal, a.currency_code, today),
+                fx_rate_to_npr=rate.rate_to_npr if rate else None,
+                fx_rate_date=rate.effective_from if rate else None,
                 current_rate_pct=a.interest_rate_pct,
                 maturity_ad=a.maturity_ad,
                 sync_status=a.sync_status,

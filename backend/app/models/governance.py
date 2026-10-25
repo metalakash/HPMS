@@ -131,3 +131,16 @@ class ApprovalStep(Base, TimestampedMixin):
     remarks = Column(Text)  # MANDATORY for REJECTED, SENT_BACK
     
     approval_request = relationship("ApprovalRequest", back_populates="approval_steps")
+
+
+class AppParameter(Base, TimestampedMixin):
+    """An application setting an admin manages (RFP FUNC A.5). Only values that differ from the default are stored.
+
+    The settings, their defaults and limits are defined in ``services/app_settings.py``; changes go through
+    maker-checker (change type SETTING).
+    """
+
+    __tablename__ = 'app_parameters'
+
+    name = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=False)

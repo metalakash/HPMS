@@ -79,7 +79,7 @@ def get_language_from_request(request: Request) -> str:
     Returns:
         Language code (en or ne)
     """
-    return request.state.get("language", DEFAULT_LANGUAGE)
+    return getattr(request.state, "language", DEFAULT_LANGUAGE)
 
 
 async def get_language_dependency(request: Request) -> str:

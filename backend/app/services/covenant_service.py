@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 ZERO = Decimal("0")
 PERIOD_AMOUNTS = ("revenue_npr", "operating_expenses_npr", "royalty_npr", "tax_paid_npr", "depreciation_npr",
                   "security_value_npr")
+REPORTABLE_QUARTERS = 8  # how far back figures can be proposed from the screens
 TERM_FIELDS = ("dscr_min", "ltv_max", "icr_min", "warning_margin_pct")
 
 
@@ -149,12 +150,21 @@ class CovenantService:
     # ------------------------------------------------------------------ inputs
 
     @staticmethod
+    async def default_terms(db: AsyncSession) -> Terms:
+        """The thresholds for a facility with no sanction terms of its own: admin settings (FUNC A.5)."""
+        from backend.app.services import app_settings
+
+        current = await app_settings.values(db)
+        return Terms(dscr_min=current["default_dscr_min"], ltv_max=current["default_ltv_max"],
+                     icr_min=current["default_icr_min"], warning_margin_pct=current["default_warning_margin_pct"])
+
+    @staticmethod
     async def terms_for(db: AsyncSession, project_id: Any) -> Tuple[Terms, Optional[CovenantTerms]]:
         """The project's thresholds, and the stored row they came from (None when the defaults apply)."""
         row = (await db.execute(
             select(CovenantTerms).where(CovenantTerms.project_id == _uuid(project_id)))).scalar_one_or_none()
         if row is None:
-            return engine.DEFAULT_TERMS, None
+            return await CovenantService.default_terms(db), None
         return Terms(dscr_min=row.dscr_min, ltv_max=row.ltv_max, icr_min=row.icr_min,
                      warning_margin_pct=row.warning_margin_pct), row
 
@@ -311,12 +321,19 @@ class CovenantService:
         return {**calculation_to_dict(calc), "terms_source": "sanction terms" if stored else "bank defaults"}
 
     @staticmethod
-    async def get_financials(db: AsyncSession, project_id: Any) -> Dict[str, Any]:
+    async def get_financials(db: AsyncSession, project_id: Any, today: Optional[date] = None) -> Dict[str, Any]:
         pid = _uuid(project_id)
         terms, stored = await CovenantService.terms_for(db, pid)
         periods = await CovenantService._periods(db, pid)
+        reported = {p.quarter_ad for p in periods}
+        latest_completed = Quarter.of(today or date.today()).shift(-1)
         return {
             "project_id": str(pid),
+            # The completed fiscal quarters figures can be proposed for, newest first
+            "reportable_quarters": [
+                {"quarter": q.label, "period_end_ad": q.end.isoformat(), "reported": q.label in reported}
+                for q in (latest_completed.shift(-back) for back in range(REPORTABLE_QUARTERS))
+            ],
             "terms": {**{name: getattr(terms, name) for name in TERM_FIELDS},
                       "source": "sanction terms" if stored else "bank defaults",
                       "source_reference": stored.source_reference if stored else None},

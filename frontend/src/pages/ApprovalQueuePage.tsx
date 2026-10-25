@@ -4,6 +4,7 @@ import { AlertTriangle } from 'lucide-react';
 import { Badge, type BadgeTone } from '@/components/common/Badge';
 import { Button } from '@/components/common/Button';
 import { Card } from '@/components/common/Card';
+import { Pagination } from '@/components/common/Pagination';
 import { DataTable, type Column } from '@/components/common/DataTable';
 import { Select } from '@/components/common/Field';
 import { EmptyState, ErrorState } from '@/components/common/States';
@@ -11,7 +12,7 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { BaseModal } from '@/components/modals/BaseModal';
 import { useApprovalQueue, useDecideApproval } from '@/hooks/queries';
 import { getErrorMessage } from '@/services/api';
-import type { ApprovalItem, ApprovalStateName } from '@/types/api';
+import type { ApprovalItem, ApprovalQueueFilters, ApprovalStateName } from '@/types/api';
 import { formatDate, humanize } from '@/utils/format';
 
 const MIN_REJECTION_REMARKS = 10;
@@ -28,9 +29,31 @@ function StateBadge({ state }: { state: string }) {
   return <Badge tone={known?.tone ?? 'neutral'}>{known?.label ?? humanize(state)}</Badge>;
 }
 
+const PAGE_SIZE = 50;
+
 function display(value: unknown): string {
   if (value === null || value === undefined || value === '') return '—';
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
+}
+
+/** A list of records (budget lines, projection quarters) as a small table rather than raw data. */
+function Value({ value }: { value: unknown }) {
+  if (!Array.isArray(value) || value.length === 0 || typeof value[0] !== 'object') return <>{display(value)}</>;
+  const keys = [...new Set(value.flatMap((row) => Object.keys(row as object)))].filter((k) => k !== 'id');
+  return (
+    <table className="text-xs">
+      <thead>
+        <tr>{keys.map((k) => <th key={k} scope="col" className="pr-2 text-left font-medium text-muted">{humanize(k)}</th>)}</tr>
+      </thead>
+      <tbody>
+        {value.map((row, index) => (
+          <tr key={index}>
+            {keys.map((k) => <td key={k} className="pr-2 tabular-nums">{display((row as Record<string, unknown>)[k])}</td>)}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
 }
 
 function summary(item: ApprovalItem): string {
@@ -42,7 +65,9 @@ function summary(item: ApprovalItem): string {
 export default function ApprovalQueuePage() {
   const [params, setParams] = useSearchParams();
   const status = params.get('status') ?? '';
-  const query = useApprovalQueue({ status });
+  const page = Math.max(1, Number(params.get('page')) || 1);
+  // The queue is paged: it used to show only the newest 50 requests, with no way to reach older ones
+  const query = useApprovalQueue({ status, skip: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE } as ApprovalQueueFilters);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const approvals = query.data?.approvals ?? [];
@@ -123,6 +148,14 @@ export default function ApprovalQueuePage() {
             }
           />
         )}
+        {(query.data?.total ?? 0) > PAGE_SIZE && (
+          <Pagination
+            page={page}
+            pageSize={PAGE_SIZE}
+            totalCount={query.data?.total ?? 0}
+            onPageChange={(next) => setParams({ ...(status ? { status } : {}), page: String(next) })}
+          />
+        )}
       </Card>
 
       {selected && (
@@ -137,7 +170,8 @@ function ReviewModal({ item, onClose }: { item: ApprovalItem; onClose: () => voi
   const [remarks, setRemarks] = useState('');
   const [rejecting, setRejecting] = useState(false);
 
-  const finalStep = item.current_state === 'recommended';
+  // The backend says whether the next approval applies the change (a one-check rule has no recommendation)
+  const finalStep = (item as ApprovalItem & { final_step?: boolean }).final_step ?? item.current_state === 'recommended';
   const fields = Object.keys(item.changes ?? {});
   const remarksOk = remarks.trim().length >= MIN_REJECTION_REMARKS;
 
@@ -225,8 +259,8 @@ function ReviewModal({ item, onClose }: { item: ApprovalItem; onClose: () => voi
                 <th scope="row" className="py-2 pr-3 text-left font-medium">
                   {humanize(field)}
                 </th>
-                <td className="py-2 pr-3 text-muted">{display(item.previous_values?.[field])}</td>
-                <td className="py-2 font-medium">{display(item.changes?.[field])}</td>
+                <td className="py-2 pr-3 align-top text-muted"><Value value={item.previous_values?.[field]} /></td>
+                <td className="py-2 align-top font-medium"><Value value={item.changes?.[field]} /></td>
               </tr>
             ))}
             {fields.length === 0 && (

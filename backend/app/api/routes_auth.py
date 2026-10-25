@@ -167,6 +167,9 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is disabled",
         )
+    if getattr(user, "role_override", None):
+        # An admin set this user's role in HPMS; it wins over the directory's until cleared
+        ad_user.roles = [UserRole(user.role_override)]
 
     user_mfa = (await db.execute(select(UserMFA).where(UserMFA.user_id == user.id))).scalar_one_or_none()
     if user_mfa is not None and user_mfa.is_mfa_enabled:

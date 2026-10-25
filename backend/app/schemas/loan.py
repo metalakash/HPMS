@@ -84,6 +84,12 @@ class LoanAccountListResponse(BaseModel):
     sanctioned_amount: Decimal
     disbursed_amount: Decimal
     outstanding_principal: Decimal
+    # Amounts above are in the facility's currency; the NPR equivalents use the rate in force today (FUNC B.3)
+    currency_code: str = "NPR"
+    sanctioned_amount_npr: Optional[Decimal] = None
+    outstanding_principal_npr: Optional[Decimal] = None
+    fx_rate_to_npr: Optional[Decimal] = None
+    fx_rate_date: Optional[date] = None
 
     current_rate_pct: Optional[Decimal]  # nullable in DB until CBS provides a rate
     maturity_ad: Optional[date]

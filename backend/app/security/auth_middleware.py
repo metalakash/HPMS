@@ -12,6 +12,7 @@ from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from backend.app.config import settings
+from backend.app.database import get_db
 from backend.app.security.ldap_provider import ADUser, UserRole
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ class TokenManager:
     """Manage JWT token generation and validation."""
 
     ALGORITHM = "HS256"
-    TOKEN_EXPIRY_MINUTES = 480  # 8 hours
+    TOKEN_EXPIRY_MINUTES = settings.JWT_EXPIRY_MINUTES  # 480 (8 hours) unless set; it was fixed at 480 before
     CHALLENGE_EXPIRY_MINUTES = 5  # password accepted, second factor still owed
     CHALLENGE_TYPE = "mfa_challenge"
 
@@ -135,7 +136,8 @@ class CurrentUser:
         return any(self.has_role(r) for r in roles)
 
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> CurrentUser:
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security),
+                           db=Depends(get_db)) -> CurrentUser:
     """Dependency to extract and validate current user from JWT token.
 
     Args:
@@ -164,8 +166,27 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not authenticated",
         )
+    if settings.DB_ROW_SECURITY and hasattr(db, "sync_session"):
+        # From the next transaction on, PostgreSQL's row policies see this user (migration 033)
+        from backend.app.security.db_row_security import describe_user
+        describe_user(db, user.uuid, user.roles)
+    if await _is_blocked(db, user.uuid):
+        # A blocked account loses its open sessions at once, not when the token expires
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account is disabled")
 
     return user
+
+
+async def _is_blocked(db, user_id: UUID) -> bool:
+    from sqlalchemy import select
+    from backend.app.models.auth import User
+
+    try:
+        active = (await db.execute(select(User.is_active).where(User.id == user_id))).scalar_one_or_none()
+    except Exception as error:  # the route will fail on the same database anyway; do not mask that with a 401
+        logger.warning("Could not check account status: %s", error)
+        return False
+    return active is False
 
 
 async def get_current_user_optional(request: Request) -> Optional[CurrentUser]:

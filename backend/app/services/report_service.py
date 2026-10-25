@@ -223,6 +223,9 @@ class ReportService:
 
         rows = []
         seen_accounts = set()
+        from backend.app.services import fx
+        rates = await fx.load(db)
+        on_date = (filters.date_range_end if filters and getattr(filters, "date_range_end", None) else None) or date.today()
 
         for account, project, rate_history in rows_data:
             account_key = str(account.id)
@@ -240,6 +243,10 @@ class ReportService:
                 "finacle_account_id": account.finacle_account_id,
                 "facility_type": account.facility_type,
                 "sanctioned_amount": float(account.sanctioned_amount) if account.sanctioned_amount else 0,
+                # The facility's currency, and its limit in NPR at the rate in force on the report date (FUNC B.3)
+                "currency": account.currency_code or "NPR",
+                "sanctioned_amount_npr": (lambda v: float(v) if v is not None else None)(
+                    rates.to_npr(account.sanctioned_amount, account.currency_code, on_date)),
                 "current_rate_percent": float(rate_history.interest_rate_pct) if rate_history else None,
                 "rate_effective_date_ad": rate_history.valid_from_ad.strftime("%Y-%m-%d") if rate_history and rate_history.valid_from_ad else None,
                 "rate_effective_date_bs": rate_history.valid_from_bs if rate_history else None,
@@ -312,6 +319,9 @@ class ReportService:
                 "actual_amount": float(budget.actual_amount) if budget.actual_amount else None,
                 "spent_percent": float(spent_percent) if spent_percent else None,
                 "currency": "NPR",
+                # Over budget when actual exceeds budget (RFP F.9); the variance is actual less budget
+                "variance_amount": float(budget.variance_amount) if budget.variance_amount is not None else None,
+                "overspent": "Yes" if (budget.variance_amount or 0) > 0 else "No",
             }
             rows.append(row_dict)
 

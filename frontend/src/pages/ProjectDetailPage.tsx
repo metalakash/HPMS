@@ -6,8 +6,9 @@ import { Badge } from '@/components/common/Badge';
 import { Button } from '@/components/common/Button';
 import { CBSSyncButton } from '@/components/CBSSyncButton';
 import { ProposeChangeModal } from '@/components/ProposeChangeModal';
+import { ProposeFiguresModal, ProposeTermsModal } from '@/components/covenants/CovenantInputModals';
 import {
-  CommunityTab, ESGTab, EsiaTab, GenerationPPATab, HydrologyTab, InsuranceTab, LandGovernanceTab, MilestonesTab, RisksTab,
+  BudgetTab, CommunityTab, DocumentsTab, ESGTab, EsiaTab, GenerationPPATab, HydrologyTab, InsuranceTab, LandGovernanceTab, MilestonesTab, RisksTab,
 } from '@/components/tabs';
 import { MilestoneGantt } from '@/components/MilestoneGantt';
 import { Card, CardBody, CardHeader } from '@/components/common/Card';
@@ -41,6 +42,8 @@ const TABS = [
   { id: 'hydrology', label: 'Hydrology' },
   { id: 'land', label: 'Land & governance' },
   { id: 'esg', label: 'ESG' },
+  { id: 'budget', label: 'Budget' },
+  { id: 'documents', label: 'Documents' },
   { id: 'insurance', label: 'Insurance' },
   { id: 'esia', label: 'ESIA monitoring' },
   { id: 'community', label: 'Community & grievances' },
@@ -58,6 +61,9 @@ export default function ProjectDetailPage() {
   const [params, setParams] = useSearchParams();
   const tab: TabId = TABS.find((t) => t.id === params.get('tab'))?.id ?? 'overview';
   const [proposing, setProposing] = useState(false);
+  const [covenantInput, setCovenantInput] = useState<'figures' | 'terms' | null>(null);
+  const [covenantNotice, setCovenantNotice] = useState<string | null>(null);
+  const CovenantInputModal = covenantInput === 'terms' ? ProposeTermsModal : ProposeFiguresModal;
   const [submitted, setSubmitted] = useState(false);
   const project = useProject(id);
   const loans = useProjectLoans(id);
@@ -240,6 +246,16 @@ export default function ProjectDetailPage() {
                   Propose change
                 </Button>
               )}
+              {canPropose && (
+                <Button variant="secondary" size="sm" onClick={() => setCovenantInput('figures')}>
+                  Record covenant figures
+                </Button>
+              )}
+              {roles.includes('admin') && (
+                <Button variant="secondary" size="sm" onClick={() => setCovenantInput('terms')}>
+                  Sanction terms
+                </Button>
+              )}
             </>
           }
         />
@@ -254,6 +270,27 @@ export default function ProjectDetailPage() {
             View approvals
           </Link>
         </p>
+      )}
+
+      {covenantNotice && (
+        <p role="status" className="mb-4 rounded-md bg-success-soft p-3 text-sm text-success">
+          {covenantNotice}{' '}
+          <Link to="/approvals" className="font-medium underline">
+            View approvals
+          </Link>
+        </p>
+      )}
+
+      {covenantInput && p && (
+        <CovenantInputModal
+          projectId={p.id}
+          projectName={p.name_en}
+          onClose={() => setCovenantInput(null)}
+          onSubmitted={(message) => {
+            setCovenantNotice(message);
+            setCovenantInput(null);
+          }}
+        />
       )}
 
       {proposing && p && (
@@ -295,6 +332,8 @@ export default function ProjectDetailPage() {
         {tab === 'hydrology' && <HydrologyTab projectId={id} />}
         {tab === 'land' && <LandGovernanceTab projectId={id} />}
         {tab === 'esg' && <ESGTab projectId={id} />}
+        {tab === 'budget' && <BudgetTab projectId={id} />}
+        {tab === 'documents' && <DocumentsTab projectId={id} />}
         {tab === 'insurance' && <InsuranceTab projectId={id} />}
         {tab === 'esia' && <EsiaTab projectId={id} />}
         {tab === 'community' && <CommunityTab projectId={id} />}

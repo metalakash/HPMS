@@ -10,6 +10,7 @@ import {
   LineChart,
   Settings,
   ShieldCheck,
+  SlidersHorizontal,
   TrendingUp,
   Wrench,
   type LucideIcon,
@@ -46,6 +47,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/regulatory', label: 'Regulatory', icon: CalendarClock, available: true },
   { to: '/security', label: 'Security', icon: KeyRound, available: true },
   { to: '/admin', label: 'Admin', icon: Settings, available: true, roles: ['admin'] },
+  { to: '/settings', label: 'Settings', icon: SlidersHorizontal, available: true, roles: ['admin'] },
 ];
 
 export function visibleNavItems(roles: string[] | undefined): NavItem[] {

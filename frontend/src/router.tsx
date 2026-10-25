@@ -15,6 +15,7 @@ const ProjectionPage = lazy(() => import('@/pages/ProjectionPage'));
 const EnergyFinancingPage = lazy(() => import('@/pages/EnergyFinancingPage'));
 const MaintenancePage = lazy(() => import('@/pages/MaintenancePage'));
 const AdminPage = lazy(() => import('@/pages/AdminPage'));
+const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
 const ReportsPage = lazy(() => import('@/pages/ReportsPage'));
 const RegulatoryPage = lazy(() => import('@/pages/RegulatoryPage'));
 const SecurityPage = lazy(() => import('@/pages/SecurityPage'));
@@ -38,6 +39,7 @@ export const routes: RouteObject[] = [
       { path: 'reports', element: <ReportsPage /> },
       { path: 'regulatory', element: <RegulatoryPage /> },
       { path: 'admin', element: <AdminPage /> },
+      { path: 'settings', element: <SettingsPage /> },
       { path: 'security', element: <SecurityPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],

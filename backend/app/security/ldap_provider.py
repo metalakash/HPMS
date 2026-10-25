@@ -251,6 +251,13 @@ class LocalDevAuthProvider:
             "full_name": "Admin User",
             "roles": [UserRole.ADMIN],
         },
+        # A second administrator: sanction terms need a final approval from a different admin
+        "admin2": {
+            "password": "admin2123",
+            "email": "admin2@sbl.local",
+            "full_name": "Second Admin User",
+            "roles": [UserRole.ADMIN],
+        },
         "maker": {
             "password": "maker123",
             "email": "maker@sbl.local",

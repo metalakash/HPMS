@@ -12,6 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.schemas.report_schema import ExportFilter
 from backend.app.services.report_service import ReportService
+from backend.app.services.report_consolidated import COLUMNS as CONSOLIDATED_COLUMNS
+
+async def _consolidated(db, filters, user_id):
+    from backend.app.services.report_consolidated import export_consolidated_report
+    return await export_consolidated_report(db, filters, user_id)
+
 
 Loader = Callable[[AsyncSession, Optional[ExportFilter], str], Awaitable[Tuple[List[Dict[str, Any]], int]]]
 
@@ -37,7 +43,8 @@ SOURCES: Dict[str, ReportSource] = {s.key: s for s in [
     ReportSource(
         "covenant_summary", "Loan rates and sync status", ReportService.export_covenant_report,
         ("project_code", "project_name_en", "province", "district", "local_level", "loan_account_id",
-         "finacle_account_id", "facility_type", "sanctioned_amount", "current_rate_percent",
+         "finacle_account_id", "facility_type", "sanctioned_amount", "currency", "sanctioned_amount_npr",
+         "current_rate_percent",
          "rate_effective_date_ad", "rate_effective_date_bs", "rate_expiry_date_ad", "rate_expiry_date_bs",
          "last_sync_date", "sync_status"),
         ("province", "district", "local_level", "facility_type"),
@@ -45,7 +52,8 @@ SOURCES: Dict[str, ReportSource] = {s.key: s for s in [
     ReportSource(
         "capex_progress", "Capex budget vs actual", ReportService.export_capex_report,
         ("project_code", "project_name_en", "province", "district", "local_level", "capacity_mw",
-         "project_stage", "budget_category", "budgeted_amount", "actual_amount", "spent_percent", "currency"),
+         "project_stage", "budget_category", "budgeted_amount", "actual_amount", "spent_percent", "currency",
+         "variance_amount", "overspent"),
         ("province", "district", "local_level", "status"),
     ),
     ReportSource(
@@ -56,6 +64,11 @@ SOURCES: Dict[str, ReportSource] = {s.key: s for s in [
          "ltv_excess", "icr", "icr_shortfall", "breached_covenants", "shortfall_count",
          "metric_as_of_date_ad", "metric_as_of_date_bs"),
         ("province", "district", "local_level", "facility_type"),
+    ),
+    ReportSource(
+        "consolidated", "Consolidated: lending, covenants and budget by project", _consolidated,
+        CONSOLIDATED_COLUMNS,
+        ("province", "district", "local_level", "status", "date_range_end"),
     ),
 ]}
 

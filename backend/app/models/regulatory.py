@@ -99,3 +99,24 @@ class StakeholderContact(Base, TimestampedMixin):
     alert_types = Column(JSONB)  # list of entity types (PPA, PERMIT, INSURANCE, FILING, ...); null = all
     min_urgency = Column(String(20), nullable=False, default='critical')  # warning | critical
     is_active = Column(Boolean, nullable=False, default=True, index=True)
+
+
+INTERACTION_KINDS = ("meeting", "call", "letter", "email", "site_visit", "other")
+
+
+class StakeholderInteraction(Base, TimestampedMixin):
+    """A dated note of dealing with a stakeholder, with an optional 1-5 rating of how it went (RFP FUNC C.9).
+
+    Together these are the stakeholder's performance history: how responsive and reliable they have been.
+    """
+
+    __tablename__ = 'stakeholder_interactions'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    contact_id = Column(UUID(as_uuid=True), ForeignKey('stakeholder_contacts.id', ondelete='CASCADE'),
+                        nullable=False, index=True)
+    interaction_date_ad = Column(Date, nullable=False)
+    interaction_date_bs = Column(String(10))
+    kind = Column(String(20), nullable=False, default='meeting')
+    rating = Column(Integer)  # 1 (poor) to 5 (excellent); null when not rated
+    summary = Column(Text, nullable=False)

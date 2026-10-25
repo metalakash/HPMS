@@ -38,6 +38,32 @@ async def add_security_headers(request, call_next):
     return response
 
 
+# Middleware - Field-level read rights (RFP FUNC A.1): confidential fields are null for roles without read rights
+@app.middleware("http")
+async def withhold_confidential_fields(request: Request, call_next):
+    from fastapi.responses import Response as PlainResponse
+    from backend.app.security.auth_middleware import TokenManager
+    from backend.app.security.read_policy import EXEMPT_PATHS, redact_body, withheld_for
+
+    response = await call_next(request)
+    if request.url.path.startswith(EXEMPT_PATHS):
+        return response
+    auth = request.headers.get("authorization", "")
+    if not auth.lower().startswith("bearer ") or "application/json" not in response.headers.get("content-type", ""):
+        return response
+    payload = TokenManager.verify_token(auth.split(" ", 1)[1].strip())
+    hidden = withheld_for(payload.get("roles", [])) if payload else frozenset()
+    if not hidden:
+        return response
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    body, found = redact_body(body, hidden)
+    headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
+    if found:
+        headers["X-Fields-Withheld"] = ",".join(sorted(found))
+    return PlainResponse(content=body, status_code=response.status_code, headers=headers,
+                         media_type=response.media_type)
+
+
 # Middleware - Audit read/export operations
 @app.middleware("http")
 async def audit_read_operations(request: Request, call_next):
@@ -69,6 +95,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Read by the web app: which fields were withheld for the user's role, and a download's checksum
+    expose_headers=["X-Fields-Withheld", "X-Content-SHA256"],
 )
 
 # Trusted hosts
@@ -116,6 +144,9 @@ from backend.app.api.routes_portfolio import router as portfolio_router
 from backend.app.api.routes_analytics import router as analytics_router
 from backend.app.api.routes_admin import router as admin_router
 from backend.app.api.routes_risk import router as risk_router
+from backend.app.api.routes_documents import router as documents_router
+import backend.app.security.db_row_security  # noqa: F401  (registers the per-transaction listener)
+from backend.app.api.routes_project_plans import router as project_plans_router
 from backend.app.api.routes_cbs_sync import router as cbs_router
 from backend.app.api.routes_report_builder import router as report_builder_router
 from backend.app.api.routes_report_schedules import router as report_schedules_router
@@ -148,6 +179,8 @@ app.include_router(mutations_router)
 # Admin routes (require ADMIN role)
 app.include_router(admin_router)
 app.include_router(risk_router)
+app.include_router(documents_router)
+app.include_router(project_plans_router)
 
 # Health check
 @app.get("/health", tags=["monitoring"])

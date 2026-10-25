@@ -1,6 +1,9 @@
+import { useState } from 'react';
 import { ArrowDownToLine, ArrowUpFromLine, Landmark, TrendingUp } from 'lucide-react';
 import { Link } from 'react-router';
 import { Badge } from '@/components/common/Badge';
+import { Button } from '@/components/common/Button';
+import { ProjectionPlanModal } from '@/components/ProjectionPlanModal';
 import { Card, CardHeader } from '@/components/common/Card';
 import { DataTable, type Column } from '@/components/common/DataTable';
 import { Skeleton } from '@/components/common/Skeleton';
@@ -8,6 +11,7 @@ import { StatCard } from '@/components/common/StatCard';
 import { EmptyState, ErrorState } from '@/components/common/States';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useLoanProjection } from '@/hooks/queries';
+import { useAuthStore } from '@/store/useAuthStore';
 import { useUIStore } from '@/store/useUIStore';
 import type { ProjectionBorrower, ProjectionQuarter } from '@/types/api';
 import { formatDate, formatNPR, humanize, toNumber } from '@/utils/format';
@@ -26,6 +30,10 @@ export default function ProjectionPage() {
   const today = new Date().toISOString().slice(0, 10);
   const hasNewLoans = quarters.some((q) => (toNumber(q.new_loan_disbursement) ?? 0) > 0);
   const peak = Math.max(0, ...quarters.map((q) => toNumber(q.outstanding_with_new_loans ?? q.outstanding) ?? 0));
+  const roles = useAuthStore((s) => s.user?.roles) ?? [];
+  const canPropose = roles.includes('admin') || roles.includes('maker');
+  const [planning, setPlanning] = useState<ProjectionBorrower | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const quarterColumns: Column<ProjectionQuarter>[] = [
     {
@@ -148,6 +156,14 @@ export default function ProjectionPage() {
       render: (b) => formatNPR(b.total_repayment, language),
     },
     { key: 'closing', header: 'Closing', align: 'right', render: (b) => formatNPR(b.closing_outstanding, language) },
+    ...(canPropose
+      ? [{
+          key: 'plan',
+          header: '',
+          align: 'right' as const,
+          render: (b: ProjectionBorrower) => <Button variant="ghost" size="sm" onClick={() => setPlanning(b)}>Change plan</Button>,
+        }]
+      : []),
   ];
 
   const horizon = closing ? `to ${closing.label} FY ${closing.fiscal_year}` : undefined;
@@ -230,6 +246,7 @@ export default function ProjectionPage() {
                   title="By borrower"
                   description="Totals over the whole projection, largest planned disbursement first."
                 />
+                {notice && <p role="status" className="mx-4 mb-3 rounded-md bg-success-soft p-3 text-sm text-success">{notice} Track it under Approvals.</p>}
                 <DataTable
                   caption="Projection by borrower"
                   columns={borrowerColumns}
@@ -240,6 +257,14 @@ export default function ProjectionPage() {
             </div>
           )}
         </>
+      )}
+      {planning && (
+        <ProjectionPlanModal
+          projectId={planning.project_id}
+          projectName={planning.project_name}
+          onClose={() => setPlanning(null)}
+          onSubmitted={(message) => { setNotice(message); setPlanning(null); }}
+        />
       )}
     </>
   );

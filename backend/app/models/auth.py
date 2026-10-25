@@ -1,6 +1,6 @@
 """Authentication models for user accounts and role management."""
 
-from sqlalchemy import Column, String, Boolean, Date, Index, ForeignKey, Table, Enum as SQLEnum
+from sqlalchemy import Column, String, Boolean, Date, Index, ForeignKey, Table, Enum as SQLEnum, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
@@ -49,6 +49,11 @@ class User(Base, TimestampedMixin):
         SQLEnum(UserRole, native_enum=False, length=50, values_callable=_enum_values),
         default=UserRole.GUEST,
     )
+
+    # Set by an admin in HPMS: used instead of the directory's role at sign-in (FUNC A.2). None = directory role
+    role_override = Column(String(50))
+    # Why the account was last blocked or unblocked, and by whom (also in the audit log)
+    status_reason = Column(Text)
 
     # Language preference (Phase 4 Task 5)
     language_preference = Column(String(10), default="en")  # en, ne

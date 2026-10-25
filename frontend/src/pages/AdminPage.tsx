@@ -1,12 +1,21 @@
+import { useState } from 'react';
 import { Link2, ShieldCheck, Users } from 'lucide-react';
 import { Badge } from '@/components/common/Badge';
+import { Button } from '@/components/common/Button';
 import { Card, CardBody, CardHeader } from '@/components/common/Card';
 import { DataTable, type Column } from '@/components/common/DataTable';
+import { Input, Select } from '@/components/common/Field';
 import { Skeleton } from '@/components/common/Skeleton';
 import { StatCard } from '@/components/common/StatCard';
 import { EmptyState, ErrorState } from '@/components/common/States';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { BaseModal } from '@/components/modals/BaseModal';
+import { ConfirmationModal } from '@/components/modals/ConfirmationModal';
 import { useAuditChain, useCbsStatus, useUsers } from '@/hooks/queries';
+import { getErrorMessage } from '@/services/api';
+import { useDemoResetEnabled, useResetDemoData } from '@/services/demoReset';
+import { type AccountAdminFields, ROLES, useUserChange } from '@/services/userAdmin';
+import { useAuthStore } from '@/store/useAuthStore';
 import type { UserAccount } from '@/types/api';
 import { formatDate, humanize } from '@/utils/format';
 
@@ -16,6 +25,8 @@ const CBS_SOURCES: Record<string, string> = {
   file: 'End-of-day extract',
   http: 'Live inquiry',
 };
+
+type Account = UserAccount & AccountAdminFields;
 
 const USER_COLUMNS: Column<UserAccount>[] = [
   {
@@ -29,7 +40,18 @@ const USER_COLUMNS: Column<UserAccount>[] = [
     ),
   },
   { key: 'email', header: 'Email', hideOnMobile: true, render: (user) => user.email },
-  { key: 'role', header: 'Role', render: (user) => <Badge tone="info">{humanize(user.role)}</Badge> },
+  {
+    key: 'role',
+    header: 'Role',
+    render: (user) => (
+      <>
+        <Badge tone="info">{humanize(user.role)}</Badge>
+        {(user as Account).role_override && (
+          <span className="block text-xs text-muted">Set in HPMS; directory says {humanize((user as Account).directory_role)}</span>
+        )}
+      </>
+    ),
+  },
   {
     key: 'source',
     header: 'Source',
@@ -39,7 +61,14 @@ const USER_COLUMNS: Column<UserAccount>[] = [
   {
     key: 'status',
     header: 'Status',
-    render: (user) => <Badge tone={user.is_active ? 'success' : 'neutral'}>{user.is_active ? 'Active' : 'Inactive'}</Badge>,
+    render: (user) => (
+      <>
+        <Badge tone={user.is_active ? 'success' : 'danger'}>{user.is_active ? 'Active' : 'Blocked'}</Badge>
+        {!user.is_active && (user as Account).status_reason && (
+          <span className="block text-xs text-muted">{(user as Account).status_reason}</span>
+        )}
+      </>
+    ),
   },
   { key: 'login', header: 'Last sign-in', hideOnMobile: true, render: (user) => formatDate(user.last_login_at) },
 ];
@@ -53,11 +82,138 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
+type Editing = { account: Account; kind: 'status' | 'role' };
+
+/** Block or unblock an account, or set the role HPMS uses for it. Every change needs a reason and is audited. */
+function UserChangeModal({ editing, onClose }: { editing: Editing; onClose: () => void }) {
+  const { account, kind } = editing;
+  const change = useUserChange();
+  const [reason, setReason] = useState('');
+  const [role, setRole] = useState(account.role_override ?? '');
+  const blocking = kind === 'status' && account.is_active;
+  const title =
+    kind === 'role' ? `Role of ${account.username}` : `${blocking ? 'Block' : 'Unblock'} ${account.username}`;
+  const submit = () =>
+    change.mutate(
+      kind === 'role'
+        ? { kind: 'role', userId: account.id, role: role || null, reason: reason.trim() }
+        : { kind: blocking ? 'block' : 'unblock', userId: account.id, reason: reason.trim() },
+      { onSuccess: onClose },
+    );
+  return (
+    <BaseModal
+      isOpen
+      onClose={onClose}
+      title={title}
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button variant={blocking ? 'danger' : 'primary'} disabled={reason.trim().length < 3} loading={change.isPending} onClick={submit}>
+            {kind === 'role' ? 'Save role' : blocking ? 'Block account' : 'Unblock account'}
+          </Button>
+        </div>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        {kind === 'role' ? (
+          <>
+            <Select
+              label="Role in HPMS"
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              options={[
+                { value: '', label: `As in the directory (${humanize(account.directory_role ?? account.role)})` },
+                ...ROLES.map((r) => ({ value: r, label: humanize(r) })),
+              ]}
+            />
+            <p className="text-sm text-muted">Takes effect the next time {account.username} signs in.</p>
+          </>
+        ) : (
+          <p className="text-sm">
+            {blocking
+              ? `${account.username} will be signed out at once and cannot sign in until unblocked.`
+              : `${account.username} will be able to sign in again.`}
+          </p>
+        )}
+        <Input label="Reason" value={reason} onChange={(e) => setReason(e.target.value)} />
+        {change.error ? <p role="alert" className="text-sm text-danger">{getErrorMessage(change.error)}</p> : null}
+      </div>
+    </BaseModal>
+  );
+}
+
+/** Hosted demo only: put the portfolio back to the synthetic one before a presentation. */
+function DemoDataCard() {
+  const enabled = useDemoResetEnabled();
+  const reset = useResetDemoData();
+  const [confirming, setConfirming] = useState(false);
+  if (!enabled.data) return null;
+
+  return (
+    <Card>
+      <CardHeader title="Demo data" />
+      <CardBody>
+        <p className="text-sm">
+          Replaces every project, loan, record and change request with the synthetic demo portfolio. User accounts
+          and the audit log are kept.
+        </p>
+        <Button className="mt-3" variant="danger" onClick={() => setConfirming(true)} disabled={reset.isPending}>
+          {reset.isPending ? 'Resetting…' : 'Reset demo data'}
+        </Button>
+        {reset.isSuccess && (
+          <p role="status" className="mt-3 text-sm text-success">
+            Demo data reset: {reset.data.projects} projects and {reset.data.change_requests} change requests, in{' '}
+            {reset.data.duration_seconds} seconds.
+          </p>
+        )}
+        {reset.isError && (
+          <p role="alert" className="mt-3 text-sm text-danger">
+            {getErrorMessage(reset.error)}
+          </p>
+        )}
+      </CardBody>
+      <ConfirmationModal
+        isOpen={confirming}
+        onClose={() => setConfirming(false)}
+        title="Reset demo data?"
+        message="Everything anyone has entered on this demo (projects, figures, records, change requests) is replaced with the synthetic portfolio. This takes up to a minute and cannot be undone."
+        confirmText="Reset demo data"
+        isDangerous
+        onConfirm={() => {
+          setConfirming(false);
+          reset.mutate();
+        }}
+      />
+    </Card>
+  );
+}
+
 export default function AdminPage() {
   const users = useUsers();
   const cbs = useCbsStatus();
   const chain = useAuditChain();
   const accounts = users.data ?? [];
+  const me = useAuthStore((state) => state.user?.username);
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const columns: Column<UserAccount>[] = [
+    ...USER_COLUMNS,
+    {
+      key: 'actions',
+      header: '',
+      align: 'right',
+      render: (user) =>
+        user.username === me ? (
+          <span className="text-xs text-muted">You</span>
+        ) : (
+          <span className="flex justify-end gap-1">
+            <Button variant="ghost" size="sm" onClick={() => setEditing({ account: user, kind: 'role' })}>Role</Button>
+            <Button variant="ghost" size="sm" onClick={() => setEditing({ account: user, kind: 'status' })}>
+              {user.is_active ? 'Block' : 'Unblock'}
+            </Button>
+          </span>
+        ),
+    },
+  ];
 
   return (
     <>
@@ -88,7 +244,7 @@ export default function AdminPage() {
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <CardHeader title="User accounts" description="Everyone who has signed in or been provisioned" />
+          <CardHeader title="User accounts" description="Everyone who has signed in or been provisioned. Changes are audited." />
           {users.isError ? (
             <ErrorState error={users.error} onRetry={() => void users.refetch()} />
           ) : users.isLoading ? (
@@ -96,7 +252,7 @@ export default function AdminPage() {
           ) : (
             <DataTable
               caption="User accounts"
-              columns={USER_COLUMNS}
+              columns={columns}
               rows={accounts}
               rowKey={(user) => user.id}
               empty={<EmptyState title="No users" />}
@@ -140,6 +296,8 @@ export default function AdminPage() {
             </CardBody>
           </Card>
 
+          <DemoDataCard />
+
           <Card>
             <CardHeader title="Audit log integrity" />
             <CardBody>
@@ -164,6 +322,7 @@ export default function AdminPage() {
           </Card>
         </div>
       </div>
+      {editing && <UserChangeModal editing={editing} onClose={() => setEditing(null)} />}
     </>
   );
 }

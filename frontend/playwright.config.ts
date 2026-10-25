@@ -10,6 +10,9 @@ import { defineConfig, devices } from '@playwright/test';
  */
 const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:5173';
 
+/** Specs that change records other runs depend on; three browsers at once would race each other. */
+const WRITES_SHARED_STATE = [/3-approvals/, /9-covenant-inputs/, /10-demo-reset/, /12-user-admin/, /13-plans-and-settings/, /14-sprint-d3/];
+
 export default defineConfig({
   testDir: './e2e',
 
@@ -61,13 +64,19 @@ export default defineConfig({
     timeout: 120 * 1000,
   },
 
-  // Test projects: Chromium only (fast feedback loop)
-  // Firefox + WebKit can be added later for cross-browser testing
+  // Chromium by default, for a fast loop. E2E_ALL_BROWSERS=1 adds Firefox and the installed Microsoft Edge,
+  // the browsers the RFP names (TECH B.2, B.4). Specs that change shared data run once, on Chromium.
   projects: [
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
     },
+    ...(process.env.E2E_ALL_BROWSERS
+      ? [
+          { name: 'firefox', use: { ...devices['Desktop Firefox'] }, testIgnore: WRITES_SHARED_STATE },
+          { name: 'msedge', use: { ...devices['Desktop Edge'], channel: 'msedge' }, testIgnore: WRITES_SHARED_STATE },
+        ]
+      : []),
   ],
 
   // Global setup/teardown (optional, add later if needed)
