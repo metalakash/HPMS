@@ -2,23 +2,23 @@
 
 > Generated from the SQLAlchemy models by `backend/scripts/generate_data_dictionary.py`. Do not edit by hand; run `python -m backend.scripts.generate_data_dictionary` and commit the result.
 
-**76 tables and views, 1130 columns.** Dates are stored as AD `DATE` columns with a paired `*_bs` text column (`YYYY-MM-DD` Bikram Sambat) where the business needs both calendars. Descriptions come from the model docstrings.
+**80 tables and views, 1163 columns.** Dates are stored as AD `DATE` columns with a paired `*_bs` text column (`YYYY-MM-DD` Bikram Sambat) where the business needs both calendars. Descriptions come from the model docstrings.
 
 ## Contents
 
 - **Projects**: `hydrology_records`, `land_records`, `project_capacity_history`, `project_technical_specs`, `projects`, `rcod_events`, `water_licenses`
-- **Loans and financing**: `budget_lines`, `cbs_sync_logs`, `disbursement_tranches`, `energy_bonds`, `energy_financing_quarters`, `loan_account_rate_history`, `loan_accounts`, `loan_exposure_sync_history`, `loan_exposure_sync_schedules`, `loan_projection_quarters`, `new_loan_disbursement_quarters`, `new_loan_limits`, `repayments`
+- **Loans and financing**: `budget_lines`, `cbs_sync_logs`, `disbursement_tranches`, `energy_bonds`, `energy_financing_quarters`, `exchange_rates`, `loan_account_rate_history`, `loan_accounts`, `loan_exposure_sync_history`, `loan_exposure_sync_schedules`, `loan_projection_quarters`, `new_loan_disbursement_quarters`, `new_loan_limits`, `repayments`
 - **Consortium**: `consortium_facilities`, `consortium_members`
 - **Operations: PPA, hydrology, land, ESG, maintenance, covenants**: `board_of_directors`, `covenant_history`, `covenant_terms`, `eia_mitigation_checklist`, `energy_generation_data`, `esg_metrics`, `hydrology_detailed`, `land_acquisition_tracking`, `maintenance_logs`, `maintenance_schedules`, `nea_ppa_rates`, `plant_performance`, `ppa_agreements`, `project_financial_periods`, `shareholding_hierarchy`, `tariff_structures`
 - **Risk register, milestones, insurance, permits, ESIA, community**: `community_engagements`, `esia_monitoring_records`, `insurance_policies`, `milestones`, `project_permits`, `risk_register`
-- **Regulatory filing calendar, reminders, stakeholder contacts**: `filing_calendar`, `regulatory_requirements`, `stakeholder_contacts`, `user_reminders`
+- **Regulatory filing calendar, reminders, stakeholder contacts**: `filing_calendar`, `regulatory_requirements`, `stakeholder_contacts`, `stakeholder_interactions`, `user_reminders`
 - **Report builder**: `report_definitions`
 - **Scheduled exports**: `export_job`, `export_job_run`
 - **Users and access**: `project_owner`, `user`, `user_role_assignment`
 - **Multi-factor authentication**: `backup_code`, `sms_verification`, `totp_verification`, `trusted_device`, `user_mfa`
-- **Workflow and approvals**: `approval_requests`, `approval_steps`, `permissions`, `role_permissions`, `roles`, `workflow_definitions`
+- **Workflow and approvals**: `app_parameters`, `approval_requests`, `approval_steps`, `permissions`, `role_permissions`, `roles`, `workflow_definitions`
 - **Audit trail**: `audit_log_reads`, `audit_logs`, `audit_retention_checkpoints`
-- **Documents**: `document_approval_requests`, `document_versions`, `documents`
+- **Documents**: `document_approval_requests`, `document_blobs`, `document_versions`, `documents`
 - **Import / ETL**: `airflow_loan_dag_runs`, `loan_data_provenance`, `loan_reconciliation_log`
 - **Bulk import tracking**: `import_batches`, `import_row_errors`
 
@@ -123,6 +123,7 @@ Core project master record.
 | `installed_capacity_mw` | NUMERIC(12, 4) | no |  |  |
 | `project_stage` | VARCHAR(50) | no |  |  |
 | `pipeline_status` | VARCHAR(50) | no |  | indexed |
+| `is_bank_financed` | BOOLEAN | no | `false` | indexed |
 | `original_cod_ad` | DATE | yes |  |  |
 | `original_cod_bs` | VARCHAR(10) | yes |  |  |
 | `current_approved_cod_ad` | DATE | yes |  |  |
@@ -296,6 +297,25 @@ Bank-wide inputs to the energy-financing ratio for one fiscal quarter.
 | `updated_at` | DATETIME | yes | `now()` |  |
 | `created_by` | VARCHAR(255) | yes |  |  |
 | `updated_by` | VARCHAR(255) | yes |  |  |
+
+### `exchange_rates`
+
+NPR per one unit of a currency, in force from a date until the next rate (RFP FUNC B.3).
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | UUID | no |  | PK |
+| `currency_code` | VARCHAR(3) | no |  | indexed |
+| `rate_to_npr` | NUMERIC(18, 6) | no |  |  |
+| `effective_from_ad` | DATE | no |  |  |
+| `effective_from_bs` | VARCHAR(10) | yes |  |  |
+| `source_reference` | VARCHAR(255) | yes |  |  |
+| `created_at` | DATETIME | yes | `now()` |  |
+| `updated_at` | DATETIME | yes | `now()` |  |
+| `created_by` | VARCHAR(255) | yes |  |  |
+| `updated_by` | VARCHAR(255) | yes |  |  |
+
+Constraints and composite indexes: unique (currency_code, effective_from_ad).
 
 ### `loan_account_rate_history`
 
@@ -1162,6 +1182,24 @@ Person or organisation that receives alerts, internal or external (RFP E.15, C.9
 | `created_by` | VARCHAR(255) | yes |  |  |
 | `updated_by` | VARCHAR(255) | yes |  |  |
 
+### `stakeholder_interactions`
+
+A dated note of dealing with a stakeholder, with an optional 1-5 rating of how it went (RFP FUNC C.9).
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | UUID | no |  | PK |
+| `contact_id` | UUID | no |  | FK → stakeholder_contacts.id, indexed |
+| `interaction_date_ad` | DATE | no |  |  |
+| `interaction_date_bs` | VARCHAR(10) | yes |  |  |
+| `kind` | VARCHAR(20) | no | `meeting` |  |
+| `rating` | INTEGER | yes |  |  |
+| `summary` | TEXT | no |  |  |
+| `created_at` | DATETIME | yes | `now()` |  |
+| `updated_at` | DATETIME | yes | `now()` |  |
+| `created_by` | VARCHAR(255) | yes |  |  |
+| `updated_by` | VARCHAR(255) | yes |  |  |
+
 ### `user_reminders`
 
 Personal reminder on a date, optionally tied to a project and an entity (RFP E.22).
@@ -1303,6 +1341,8 @@ User account linked to Active Directory.
 | `last_login_at` | DATE | yes |  |  |
 | `last_ad_sync_at` | DATE | yes |  |  |
 | `default_role` | VARCHAR(50) | yes | `UserRole.GUEST` |  |
+| `role_override` | VARCHAR(50) | yes |  |  |
+| `status_reason` | TEXT | yes |  |  |
 | `language_preference` | VARCHAR(10) | yes | `en` |  |
 | `created_at` | DATETIME | yes | `now()` |  |
 | `updated_at` | DATETIME | yes | `now()` |  |
@@ -1452,6 +1492,19 @@ User MFA configuration.
 Constraints and composite indexes: unique index `ix_user_mfa_user_id` (user_id).
 
 ## Workflow and approvals
+
+### `app_parameters`
+
+An application setting an admin manages (RFP FUNC A.5). Only values that differ from the default are stored.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `name` | VARCHAR(100) | no |  | PK |
+| `value` | TEXT | no |  |  |
+| `created_at` | DATETIME | yes | `now()` |  |
+| `updated_at` | DATETIME | yes | `now()` |  |
+| `created_by` | VARCHAR(255) | yes |  |  |
+| `updated_by` | VARCHAR(255) | yes |  |  |
 
 ### `approval_requests`
 
@@ -1639,6 +1692,16 @@ Optional approval workflow for documents.
 
 Constraints and composite indexes: index `ix_approval_status` (approval_status, approver_role).
 
+### `document_blobs`
+
+File content kept in the database, for hosting without a persistent disk (DOCUMENT_STORAGE=database).
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `storage_path` | VARCHAR(500) | no |  | PK |
+| `content` | BLOB | no |  |  |
+| `size_bytes` | INTEGER | no |  |  |
+
 ### `document_versions`
 
 Immutable version history of document files.
@@ -1651,7 +1714,7 @@ Immutable version history of document files.
 | `is_current` | VARCHAR(5) | yes | `Y` | indexed |
 | `file_name` | VARCHAR(255) | no |  |  |
 | `file_size_bytes` | INTEGER | no |  |  |
-| `file_hash` | VARCHAR(64) | no |  | unique |
+| `file_hash` | VARCHAR(64) | no |  | indexed |
 | `mime_type` | VARCHAR(100) | yes |  |  |
 | `storage_path` | VARCHAR(500) | no |  |  |
 | `storage_backend` | VARCHAR(50) | yes | `local` |  |
