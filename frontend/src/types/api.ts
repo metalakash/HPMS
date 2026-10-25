@@ -101,10 +101,29 @@ export interface ProjectListItem {
   installed_capacity_mw: DecimalString;
   project_stage: string;
   pipeline_status: string;
+  /** False for a record in the national catalog the bank has not (yet) taken on. */
+  is_bank_financed?: boolean;
   latest_cod_ad: IsoDate | null;
   latest_cod_bs: string | null;
   created_at: string;
   created_by: string;
+}
+
+/** A record in the national hydro directory (backend CatalogProjectResponse). */
+export interface CatalogProject {
+  id: string;
+  project_code: string;
+  name_en: string;
+  name_np: string;
+  province: string | null;
+  district: string | null;
+  local_level: string | null;
+  installed_capacity_mw: DecimalString;
+  project_stage: string;
+  pipeline_status: string;
+  river_basin: string | null;
+  license_number: string | null;
+  license_status: string | null;
 }
 
 export interface CodHistoryEntry {
@@ -137,6 +156,12 @@ export interface ProjectDetail {
 
 export interface ProjectFilters extends PageParams {
   status?: string;
+  stage?: string;
+  province?: string;
+}
+
+export interface CatalogFilters extends PageParams {
+  q?: string;
   stage?: string;
   province?: string;
 }

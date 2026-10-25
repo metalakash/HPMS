@@ -1,5 +1,5 @@
 """Project Information Management models."""
-from sqlalchemy import Column, String, Numeric, Integer, Date, Text, ForeignKey, Enum, Index, UniqueConstraint
+from sqlalchemy import Boolean, Column, String, Numeric, Integer, Date, Text, ForeignKey, Enum, Index, UniqueConstraint, false
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from datetime import date
@@ -43,6 +43,10 @@ class Project(Base, TimestampedMixin):
     installed_capacity_mw = Column(Numeric(12, 4), nullable=False)
     project_stage = Column(String(50), nullable=False)
     pipeline_status = Column(String(50), nullable=False, index=True)
+
+    # False: a verified record in the national hydro catalog the bank may originate from.
+    # True: the bank holds exposure or has an approved proposal; it appears in the bank's portfolio.
+    is_bank_financed = Column(Boolean, nullable=False, default=False, server_default=false(), index=True)
     
     # Dates - effective-dated fields
     original_cod_ad = Column(Date)

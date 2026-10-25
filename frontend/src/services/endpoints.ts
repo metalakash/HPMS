@@ -33,6 +33,8 @@ import type {
   UserAccount,
   ProjectDetail,
   ProjectDisbursements,
+  CatalogFilters,
+  CatalogProject,
   ProjectFilters,
   ProjectListItem,
   RiskItem,
@@ -77,6 +79,16 @@ export const projectsApi = {
   list: (filters: ProjectFilters = {}) =>
     api
       .get<ApiResponse<ProjectListItem[]>>('/api/v1/projects', { params: clean(filters) })
+      .then((r) => r.data),
+  /** The national hydro directory: verified projects the bank does not finance yet. */
+  catalog: (filters: CatalogFilters = {}) =>
+    api
+      .get<ApiResponse<CatalogProject[]>>('/api/v1/projects/catalog', { params: clean(filters) })
+      .then((r) => r.data),
+  /** Proposes a catalog project for the bank's pipeline; it joins the portfolio once approved. */
+  originate: (id: string, justification: string) =>
+    api
+      .post<ApiResponse<ChangeRequestResult>>(`/api/v1/projects/${id}/originate`, { justification })
       .then((r) => r.data),
   get: (id: string) =>
     api.get<ApiResponse<ProjectDetail>>(`/api/v1/projects/${id}`).then((r) => r.data),

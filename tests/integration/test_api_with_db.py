@@ -293,8 +293,14 @@ async def test_analytics_portfolio_metrics_with_rls(api, db_session):
     p2 = Project(
         project_code="ANALYTICS-2", name_en="Other", name_np="अन्य", province="Koshi",
         installed_capacity_mw=Decimal("30"), project_stage="feasibility", pipeline_status="under_review",
+        is_bank_financed=True,
     )
-    db_session.add(p2)
+    # A national catalog record is not part of the bank's portfolio, whoever looks
+    catalog = Project(
+        project_code="ANALYTICS-CATALOG", name_en="Catalog", name_np="Catalog", province="Koshi",
+        installed_capacity_mw=Decimal("500"), project_stage="feasibility", pipeline_status="proposal_under_pipeline",
+    )
+    db_session.add_all([p2, catalog])
     await db_session.flush()
 
     # Add loans to maker's project
@@ -323,7 +329,7 @@ async def test_analytics_portfolio_metrics_with_rls(api, db_session):
     assert r.status_code == 200
     body = r.json()["data"]
     assert body["total_projects"] == 2
-    assert Decimal(body["total_capacity_mw"]) == Decimal("72.5")  # 42.5 + 30
+    assert Decimal(body["total_capacity_mw"]) == Decimal("72.5")  # 42.5 + 30, without the catalog record
 
 
 async def test_analytics_project_detail_with_rls(api, db_session):

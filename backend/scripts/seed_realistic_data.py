@@ -548,7 +548,8 @@ async def seed(session: AsyncSession, today: date | None = None) -> int:
             id=uuid.uuid5(ID_NAMESPACE, data["name_en"]), project_code=data["code"], name_en=data["name_en"],
             name_np=data["name_en"],  # the source has no Nepali names
             province=data["province"], district=data["district"], local_level=data["local_level"],
-            installed_capacity_mw=capacity, project_stage=stage, pipeline_status=data["status"], **dates)
+            installed_capacity_mw=capacity, project_stage=stage, pipeline_status=data["status"],
+            is_bank_financed=True, **dates)
         session.add(project)
         await session.flush()
         session.add(ProjectTechnicalSpecs(

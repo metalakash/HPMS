@@ -43,6 +43,49 @@ export const handlers = [
       envelope(rows.slice(0, pageSize), { page: 1, page_size: pageSize, total_count: total }),
     );
   }),
+  // Declared before the :id route, which would otherwise take "catalog" for an id
+  http.get('*/api/v1/projects/catalog', ({ request }) => {
+    const q = (new URL(request.url).searchParams.get('q') ?? '').toLowerCase();
+    const rows = [
+      {
+        id: 'c-1',
+        project_code: 'HPM-GAN-0101',
+        name_en: 'Seti Catalog Hydro',
+        name_np: 'सेती क्याटलग',
+        province: 'Gandaki',
+        district: 'Kaski',
+        local_level: null,
+        installed_capacity_mw: '30.0000',
+        project_stage: 'feasibility',
+        pipeline_status: 'proposal_under_pipeline',
+        river_basin: 'Gandaki',
+        license_number: 'DoED-GEN-2075-014',
+        license_status: 'active',
+      },
+      {
+        id: 'c-2',
+        project_code: 'HPM-KOS-0102',
+        name_en: 'Tamor Reference Hydro',
+        name_np: 'तमोर',
+        province: 'Koshi',
+        district: 'Taplejung',
+        local_level: null,
+        installed_capacity_mw: '45.0000',
+        project_stage: 'feasibility',
+        pipeline_status: 'proposal_under_pipeline',
+        river_basin: null,
+        license_number: null,
+        license_status: null,
+      },
+    ].filter((r) => !q || r.name_en.toLowerCase().includes(q));
+    return HttpResponse.json(envelope(rows, { page: 1, page_size: 20, total_count: rows.length }));
+  }),
+  http.post('*/api/v1/projects/:id/originate', () =>
+    HttpResponse.json(
+      envelope({ approval_request_id: 'ar-1', current_state: 'submitted' }),
+      { status: 202 },
+    ),
+  ),
   http.get('*/api/v1/projects/:id', ({ params }) =>
     params.id === 'p-1'
       ? HttpResponse.json(envelope(projectDetail))

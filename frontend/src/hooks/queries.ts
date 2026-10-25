@@ -20,6 +20,7 @@ import type {
   ApprovalQueueFilters,
   ChangeRequest,
   LoanFilters,
+  CatalogFilters,
   ProjectFilters,
   ProjectStage,
 } from '@/types/api';
@@ -29,6 +30,7 @@ export const queryKeys = {
   projects: ['projects'] as const,
   projectList: (filters: ProjectFilters) => ['projects', 'list', filters] as const,
   project: (id: string) => ['projects', 'detail', id] as const,
+  catalog: (filters: CatalogFilters) => ['catalog', filters] as const,
   projectLoans: (id: string) => ['projects', 'detail', id, 'loans'] as const,
   projectDisbursements: (id: string) => ['projects', 'detail', id, 'disbursements'] as const,
   projectMilestones: (id: string) => ['projects', 'detail', id, 'milestones'] as const,
@@ -61,6 +63,27 @@ export function useProjects(filters: ProjectFilters) {
     queryKey: queryKeys.projectList(filters),
     queryFn: () => projectsApi.list(filters),
     placeholderData: keepPreviousData,
+  });
+}
+
+export function useCatalog(filters: CatalogFilters) {
+  return useQuery({
+    queryKey: queryKeys.catalog(filters),
+    queryFn: () => projectsApi.catalog(filters),
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** A proposal waits in the approval queue; the catalog entry moves to the portfolio only once approved. */
+export function useOriginateProject() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string; justification: string }) =>
+      projectsApi.originate(input.id, input.justification),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.approvals });
+      void queryClient.invalidateQueries({ queryKey: ['catalog'] });
+    },
   });
 }
 

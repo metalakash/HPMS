@@ -202,6 +202,7 @@ async def seed() -> None:
                 installed_capacity_mw=entry["installed_capacity_mw"],
                 project_stage=entry["project_stage"],
                 pipeline_status=entry["pipeline_status"],
+                is_bank_financed=True,
                 original_cod_ad=entry.get("original_cod_ad"),
                 current_approved_cod_ad=entry.get("current_approved_cod_ad"),
                 forecast_cod_ad=entry.get("forecast_cod_ad"),

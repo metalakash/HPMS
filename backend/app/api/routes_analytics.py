@@ -75,7 +75,8 @@ async def get_portfolio_metrics(
         )
 
     # Query authorized projects
-    project_query = select(Project).where(Project.id.in_(authorized_ids))
+    # The bank's own projects only: catalog records carry no exposure and would swamp the totals
+    project_query = select(Project).where(Project.id.in_(authorized_ids), Project.is_bank_financed.is_(True))
     result = await db.execute(project_query)
     projects = result.scalars().all()
 

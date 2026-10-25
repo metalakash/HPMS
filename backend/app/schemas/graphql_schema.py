@@ -203,7 +203,7 @@ class Query:
         first = max(1, min(first, 100))
         offset = _decode_cursor(after)
 
-        query = select(Project)
+        query = select(Project).where(Project.is_bank_financed.is_(True))
         if pipeline_status:
             query = query.where(Project.pipeline_status == pipeline_status)
         if province:
@@ -267,7 +267,7 @@ class Query:
                 func.count(Project.id),
                 func.count(Project.id).filter(Project.pipeline_status.in_(ACTIVE_STATUSES)),
                 func.coalesce(func.sum(Project.installed_capacity_mw), 0),
-            ),
+            ).where(Project.is_bank_financed.is_(True)),
         )
         total_projects, active_projects, total_capacity = (await db.execute(project_query)).one()
 

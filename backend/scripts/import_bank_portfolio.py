@@ -711,7 +711,8 @@ async def load(portfolio: Dict[str, Any], projection_file: str, generation_file:
                 name_en=b["name"], name_np=b["name"], province=province,
                 district=(licence.get("district") or "").strip().title() or None,
                 local_level=(licence.get("municipality") or "").strip() or None,
-                installed_capacity_mw=b["mw"] or Decimal(0), project_stage=stage, pipeline_status=pipeline_status)
+                installed_capacity_mw=b["mw"] or Decimal(0), project_stage=stage, pipeline_status=pipeline_status,
+                is_bank_financed=True)
             session.add(project)
             await session.flush()
             counts["projects"] += 1

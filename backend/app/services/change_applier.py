@@ -41,6 +41,10 @@ def _coerce(column: sa.Column, value: Any) -> Any:
             raise ValueError(f"{name} cannot be empty")
         return None
     kind = column.type
+    if isinstance(kind, sa.Boolean):
+        if not isinstance(value, bool):
+            raise ValueError(f"{name} must be true or false")
+        return value
     try:
         if isinstance(kind, sa.Date):
             return value if isinstance(value, date) else date.fromisoformat(str(value))

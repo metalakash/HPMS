@@ -49,6 +49,7 @@ export function makeProject(overrides: Partial<ProjectListItem> = {}): ProjectLi
     installed_capacity_mw: '216.0000',
     project_stage: 'construction',
     pipeline_status: 'approved',
+    is_bank_financed: true,
     latest_cod_ad: '2027-07-15',
     latest_cod_bs: '2084-03-31',
     created_at: '2026-01-10T00:00:00',

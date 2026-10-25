@@ -57,6 +57,7 @@ class ProjectDetailResponse(BaseModel):
 
     project_stage: str
     pipeline_status: str
+    is_bank_financed: bool = True
     drop_reason: Optional[str] = Field(None)
 
     # COD tracking
@@ -89,6 +90,7 @@ class ProjectListResponse(BaseModel):
     installed_capacity_mw: Decimal
     project_stage: str
     pipeline_status: str
+    is_bank_financed: bool = True
 
     # Most recent COD
     latest_cod_ad: Optional[date] = Field(None, description="Most recent COD date")
@@ -130,3 +132,34 @@ class ProjectUpdateRequest(BaseModel):
 
     class Config:
         strict = True
+
+
+class CatalogProjectResponse(BaseModel):
+    """A national catalog record: the baseline parameters a loan proposal is pre-filled from."""
+
+    id: str
+    project_code: str
+    name_en: str
+    name_np: str
+
+    province: Optional[str] = None
+    district: Optional[str] = None
+    local_level: Optional[str] = None
+    installed_capacity_mw: Decimal
+    project_stage: str
+    pipeline_status: str
+
+    river_basin: Optional[str] = Field(None, description="From the project's hydrology record, when there is one")
+    license_number: Optional[str] = Field(None, description="DoED licence number, when one is recorded")
+    license_status: Optional[str] = None
+    is_bank_financed: bool = False
+
+    class Config:
+        strict = True
+        json_encoders = {Decimal: lambda v: str(v)}
+
+
+class OriginateProjectRequest(BaseModel):
+    """Propose a catalog project for the bank's pipeline."""
+
+    justification: str = Field(min_length=20, max_length=2000, description="Why the bank should finance this project")

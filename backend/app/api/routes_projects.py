@@ -17,10 +17,14 @@ import uuid
 from fastapi import APIRouter, Depends, Query, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_, true as sa_true
 
 from backend.app.database import get_db
-from backend.app.models.project import Project, RCODEvent, PipelineStatus, ProjectStage
+from backend.app.models.project import (
+    Project, RCODEvent, PipelineStatus, ProjectStage, HydrologyRecord, WaterLicense,
+)
+from backend.app.models.auth import ProjectOwner, UserRole
+from backend.app.services.mutation_service import MutationService
 from backend.app.security.auth_middleware import CurrentUser, get_current_user
 from backend.app.security.rls_service import RLSService
 from backend.app.models.financial import LoanAccount, LoanAccountRateHistory, DisbursementTranche, Repayment
@@ -31,6 +35,8 @@ from backend.app.schemas.project import (
     ProjectListResponse,
     ProjectDetailResponse,
     ProjectUpdateRequest,
+    CatalogProjectResponse,
+    OriginateProjectRequest,
     CODHistoryEntry,
 )
 from backend.app.schemas.loan import (
@@ -45,7 +51,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
 # Lifecycle fields: a direct edit would let one person move a project without a checker
-APPROVAL_ONLY_PROJECT_FIELDS = frozenset({"project_stage", "pipeline_status", "drop_reason"})
+APPROVAL_ONLY_PROJECT_FIELDS = frozenset({"project_stage", "pipeline_status", "drop_reason", "is_bank_financed"})
 
 
 def _get_audit_metadata(user_id: str = "anonymous", action: str = "read") -> AuditMetadata:
@@ -115,19 +121,29 @@ async def list_projects(
     status: Optional[str] = Query(None, description="Filter by pipeline_status"),
     stage: Optional[str] = Query(None, description="Filter by project_stage"),
     province: Optional[str] = Query(None, description="Filter by province"),
+    scope: str = Query("portfolio", pattern="^(portfolio|all)$",
+                       description="portfolio: the bank's exposure and pipeline (default); all: also catalog records"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ) -> ApiResponse[list[ProjectListResponse]]:
     """List projects with filtering and pagination.
 
+    By default only the bank's own projects (``is_bank_financed``) are listed; the rest of the
+    national catalog is searched through GET /projects/catalog.
+
     Query parameters:
     - status: proposal_under_pipeline, under_review, approved, dropped, etc.
     - stage: feasibility, construction, operation
     - province: province name
+    - scope: portfolio (default) or all
     """
 
     # Build query
     query = select(Project)
+    count_query = select(func.count()).select_from(Project)
+    if scope == "portfolio":
+        query = query.where(Project.is_bank_financed.is_(True))
+        count_query = count_query.where(Project.is_bank_financed.is_(True))
 
     if status:
         query = query.where(Project.pipeline_status == status)
@@ -137,7 +153,6 @@ async def list_projects(
         query = query.where(Project.province == province)
 
     # Get total count
-    count_query = select(func.count()).select_from(Project)
     if status:
         count_query = count_query.where(Project.pipeline_status == status)
     if stage:
@@ -171,6 +186,7 @@ async def list_projects(
             installed_capacity_mw=p.installed_capacity_mw,
             project_stage=p.project_stage,
             pipeline_status=p.pipeline_status,
+            is_bank_financed=p.is_bank_financed,
             latest_cod_ad=p.actual_cod_ad or p.forecast_cod_ad or p.current_approved_cod_ad,
             latest_cod_bs=p.actual_cod_bs or p.forecast_cod_bs or p.current_approved_cod_bs,
             created_at=p.created_at.isoformat() if p.created_at else None,
@@ -183,6 +199,151 @@ async def list_projects(
         data=items,
         meta=_get_response_meta(page=page, page_size=page_size, total_count=total_count),
         audit=_get_audit_metadata(user_id=current_user.username, action="list_projects"),
+    )
+
+
+# ============================================================================
+# National catalog and origination
+# ============================================================================
+
+CATALOG_ROLES = [UserRole.MAKER, UserRole.APPROVER, UserRole.ADMIN, UserRole.AUDITOR]
+PIPELINE_ENTRY_STATUS = PipelineStatus.PROPOSAL_UNDER_PIPELINE.value
+OPEN_APPROVAL_STATES = ("submitted", "under_recommendation", "recommended")
+
+
+def _like_pattern(text: str) -> str:
+    """A contains-pattern for ILIKE (escape character is the backslash)."""
+    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+@router.get("/catalog", response_model=ApiResponse[list[CatalogProjectResponse]])
+async def search_catalog(
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    q: Optional[str] = Query(None, max_length=100, description="Name, code, district or licence number"),
+    province: Optional[str] = Query(None),
+    stage: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+) -> ApiResponse[list[CatalogProjectResponse]]:
+    """Search the national hydro directory: verified projects the bank does not (yet) finance.
+
+    The catalog is reference data, so it is not subject to row-level ownership; any bank role
+    except guest may search it. Only a maker or admin can originate a loan from a record.
+    """
+    if not current_user.has_any_role(CATALOG_ROLES):
+        raise HTTPException(status_code=403, detail="The national catalog is not available to this role")
+
+    latest_licence = (
+        select(WaterLicense.license_number, WaterLicense.status)
+        .where(WaterLicense.project_id == Project.id)
+        .order_by(WaterLicense.validity_to_ad.desc().nullslast(), WaterLicense.created_at.desc())
+        .limit(1).subquery().lateral()
+    )
+    river_basin = (
+        select(HydrologyRecord.river_basin).where(HydrologyRecord.project_id == Project.id)
+        .order_by(HydrologyRecord.created_at.desc()).limit(1).scalar_subquery()
+    )
+
+    conditions = [Project.is_bank_financed.is_(False)]
+    if province:
+        conditions.append(Project.province == province)
+    if stage:
+        conditions.append(Project.project_stage == stage)
+    if q and q.strip():
+        pattern = _like_pattern(q.strip())
+        has_licence = select(WaterLicense.id).where(
+            WaterLicense.project_id == Project.id, WaterLicense.license_number.ilike(pattern, escape="\\")).exists()
+        conditions.append(or_(
+            Project.name_en.ilike(pattern, escape="\\"), Project.project_code.ilike(pattern, escape="\\"),
+            Project.district.ilike(pattern, escape="\\"), has_licence,
+        ))
+
+    total = (await db.execute(select(func.count()).select_from(Project).where(*conditions))).scalar() or 0
+    rows = (await db.execute(
+        select(Project, river_basin, latest_licence.c.license_number, latest_licence.c.status)
+        .outerjoin(latest_licence, sa_true())
+        .where(*conditions)
+        .order_by(Project.installed_capacity_mw.desc(), Project.name_en)
+        .offset((page - 1) * page_size).limit(page_size)
+    )).all()
+
+    items = [
+        CatalogProjectResponse(
+            id=str(p.id), project_code=p.project_code, name_en=p.name_en, name_np=p.name_np,
+            province=p.province, district=p.district, local_level=p.local_level,
+            installed_capacity_mw=p.installed_capacity_mw, project_stage=p.project_stage,
+            pipeline_status=p.pipeline_status, river_basin=basin, license_number=number, license_status=lic_status,
+        )
+        for p, basin, number, lic_status in rows
+    ]
+    return ApiResponse(
+        data=items,
+        meta=_get_response_meta(page=page, page_size=page_size, total_count=total),
+        audit=_get_audit_metadata(user_id=current_user.username, action="search_catalog"),
+    )
+
+
+@router.post("/{project_id}/originate", response_model=ApiResponse[dict], status_code=status.HTTP_202_ACCEPTED)
+async def originate_project(
+    project_id: str,
+    req: OriginateProjectRequest,
+    http_request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ApiResponse[dict]:
+    """Propose a catalog project for the bank's pipeline.
+
+    Submits a maker-checker change request that marks the project bank-financed and sets it to
+    ``proposal_under_pipeline``. Nothing changes until a checker approves it; then the project
+    appears in the bank's portfolio. The maker becomes the project's direct owner, so they can
+    follow it, exactly as when they create a project.
+    """
+    if not await RLSService.can_create_project(current_user):
+        raise HTTPException(status_code=403, detail="Maker or admin role required")
+
+    project = (await db.execute(
+        select(Project).where(Project.id == _parse_project_id(project_id)))).scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+    if project.is_bank_financed:
+        raise HTTPException(status_code=409, detail="This project is already in the bank's portfolio")
+
+    from backend.app.models.governance import ApprovalRequest
+    pending = (await db.execute(
+        select(func.count()).select_from(ApprovalRequest).where(
+            ApprovalRequest.entity_type == "PROJECT", ApprovalRequest.entity_id == str(project.id),
+            ApprovalRequest.current_state.in_(OPEN_APPROVAL_STATES),
+        ))).scalar() or 0
+    if pending:
+        raise HTTPException(status_code=409, detail="A request for this project is already awaiting a decision")
+
+    owned = (await db.execute(select(func.count()).select_from(ProjectOwner).where(
+        ProjectOwner.user_id == current_user.uuid, ProjectOwner.project_id == project.id))).scalar() or 0
+    if not owned:
+        await RLSService.assign_project_ownership(db, current_user.uuid, project.id, "direct")
+
+    from backend.app.config import settings
+    from backend.app.middleware.security import client_ip
+    try:
+        result = await MutationService.submit_mutation(  # commits the ownership with the request
+            db=db, current_user=current_user, entity_type="PROJECT", entity_id=str(project.id), action="UPDATE",
+            changes={"is_bank_financed": True, "pipeline_status": PIPELINE_ENTRY_STATUS},
+            justification=req.justification,
+            source_ip=client_ip(http_request.scope, settings.TRUSTED_PROXY_HOPS),
+        )
+    except PermissionError as e:
+        await db.rollback()
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return ApiResponse(
+        data=result,
+        meta=_get_response_meta(),
+        audit=_get_audit_metadata(user_id=current_user.username, action="originate_project"),
     )
 
 
@@ -255,6 +416,7 @@ async def get_project(
         installed_capacity_mw=project.installed_capacity_mw,
         project_stage=project.project_stage,
         pipeline_status=project.pipeline_status,
+        is_bank_financed=project.is_bank_financed,
         drop_reason=project.drop_reason,
         cod_history=[h for h in cod_history if h.date_ad],  # Filter out nulls
         created_at=project.created_at.isoformat() if project.created_at else None,
@@ -308,6 +470,7 @@ async def create_project(
         installed_capacity_mw=req.installed_capacity_mw,
         project_stage=req.project_stage,
         pipeline_status=req.pipeline_status,
+        is_bank_financed=True,  # entered by the bank, so it is the bank's proposal
         created_by=user_id,
         updated_by=user_id,
     )
@@ -339,6 +502,7 @@ async def create_project(
         installed_capacity_mw=project.installed_capacity_mw,
         project_stage=project.project_stage,
         pipeline_status=project.pipeline_status,
+        is_bank_financed=True,
         drop_reason=None,
         cod_history=[],
         created_at=project.created_at.isoformat() if project.created_at else None,

@@ -40,7 +40,8 @@ POLICY: Dict[str, Dict[str, FieldRule]] = {
     "PROJECT": {
         **_AUDIT_COLUMNS,
         **{name: FieldRule(AUTHORS, "project master data: maker or admin only")
-           for name in ("project_code", "installed_capacity_mw", "pipeline_status", "project_stage")},
+           for name in ("project_code", "installed_capacity_mw", "pipeline_status", "project_stage",
+                        "is_bank_financed")},
     },
     # Covenant inputs, keyed by project. Names mirror covenant_service (kept literal to avoid an import cycle).
     "FINANCIAL_PERIOD": {
