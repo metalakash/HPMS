@@ -1,5 +1,5 @@
 import { Suspense } from 'react';
-import { Link, Navigate, Outlet, useLocation } from 'react-router';
+import { Navigate, Outlet, useLocation } from 'react-router';
 import { Spinner } from '@/components/common/Spinner';
 import { useSessionCheck } from '@/hooks/queries';
 import { useNotificationSocket } from '@/hooks/useNotificationSocket';
@@ -40,14 +40,13 @@ function AppShell() {
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <Header />
-        {enrollmentRequired && location.pathname !== '/security' && (
+        {enrollmentRequired && (
           <div role="status" className="border-b border-line bg-warning-soft px-4 py-2 text-sm text-warning sm:px-6 lg:px-8">
-            Your role requires two-step sign-in, which is not set up yet.{' '}
-            <Link to="/security" className="font-medium underline">
-              Set it up now
-            </Link>
+            Your role requires two-step sign-in. Set it up below to use HPMS.
           </div>
         )}
+        {/* Enforced on the server too: until two-step sign-in is set up, only the Security page works */}
+        {enrollmentRequired && location.pathname !== '/security' && <Navigate to="/security" replace />}
         <main id="main" className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-7xl">
             <Suspense fallback={<PageFallback />}>

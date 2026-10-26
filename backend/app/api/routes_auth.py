@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from datetime import date, datetime, timezone
 from uuid import UUID
 
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi import APIRouter, HTTPException, Request, status, Depends
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -111,7 +112,7 @@ class MFALoginRequest(BaseModel):
 
 
 @router.post("/login", response_model=Union[TokenResponse, MFAChallengeResponse])
-async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(request: LoginRequest, http_request: Request, db: AsyncSession = Depends(get_db)):
     """Authenticate user via Active Directory or local dev auth.
 
     **Phase 3:** Replaces X-User-ID header authentication.
@@ -142,11 +143,22 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
             detail="No authentication provider is configured",
         )
 
+    # Throttling and lockout come before the password is even checked (services/signin_guard.py)
+    from backend.app.services import signin_guard
+    source_ip = client_ip(http_request.scope, settings.TRUSTED_PROXY_HOPS)
+    try:
+        await signin_guard.check(db, request.username, source_ip)
+    except signin_guard.SignInRefused as refused:
+        logger.warning(f"Sign-in refused for {request.username} from {source_ip}: over the failure limit")
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(refused),
+                            headers={"Retry-After": str(refused.minutes * 60)})
+
     # Attempt authentication
     ad_user = await auth_provider.authenticate(request.username, request.password)
 
     if ad_user is None:
         logger.warning(f"Login failed for user: {request.username}")
+        await signin_guard.record(db, request.username, source_ip, "bad_credentials")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
@@ -163,6 +175,7 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
         )
 
     if not user.is_active:
+        await signin_guard.record(db, request.username, source_ip, "disabled")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is disabled",
@@ -178,11 +191,13 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
             raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                                 detail="Too many failed codes. Try again later.")
         logger.info(f"Password accepted for {request.username}; second factor required")
+        await signin_guard.record(db, request.username, source_ip, "password_accepted")
         return MFAChallengeResponse(
             mfa_token=TokenManager.create_challenge_token(ad_user, user.id),
             expires_in_seconds=TokenManager.CHALLENGE_EXPIRY_MINUTES * 60,
         )
 
+    await signin_guard.record(db, request.username, source_ip, "success")
     return _issue_token(ad_user, user, mfa_enrollment_required=_needs_enrollment(ad_user))
 
 
@@ -192,7 +207,7 @@ def _needs_enrollment(ad_user: ADUser) -> bool:
 
 
 def _issue_token(ad_user: ADUser, user: User, mfa_enrollment_required: bool = False) -> TokenResponse:
-    token = TokenManager.create_token(ad_user, user.id)
+    token = TokenManager.create_token(ad_user, user.id, mfa_enrolment_pending=mfa_enrollment_required)
     logger.info(f"Login successful for user: {ad_user.username} with roles: {[r.value for r in ad_user.roles]}")
     return TokenResponse(
         access_token=token,
@@ -234,6 +249,8 @@ async def login_mfa(body: MFALoginRequest, http_request: Request, db: AsyncSessi
 
     ad_user = ADUser(user.username, payload.get("email"), payload.get("full_name"),
                      [UserRole(r) for r in payload.get("roles", [])])
+    from backend.app.services import signin_guard
+    await signin_guard.record(db, user.username, client_ip(http_request.scope, settings.TRUSTED_PROXY_HOPS), "success")
     return _issue_token(ad_user, user)
 
 
@@ -264,14 +281,20 @@ async def get_current_user_info(
 
 
 @router.post("/logout")
-async def logout():
-    """Logout endpoint (stateless, token-based).
+async def logout(credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer(auto_error=False)),
+                 db: AsyncSession = Depends(get_db)):
+    """Sign out: the presented token is revoked at once, not left valid until it expires.
 
-    **Phase 3 Note:**
-    Logout is client-side (delete token). Server doesn't maintain session state.
-    Token remains valid until expiry. For immediate revocation, use token blacklist (Phase 4).
-
-    **Response:** Confirmation message
+    Answers 200 whatever is presented, so a client can always clear its own session.
     """
+    from backend.app.models.auth import RevokedToken
+    from sqlalchemy import delete as sql_delete
 
-    return {"message": "Logout successful. Please discard your token."}
+    payload = TokenManager.verify_token(credentials.credentials) if credentials else None
+    if payload and payload.get("jti") and payload.get("exp"):
+        expires = datetime.fromtimestamp(int(payload["exp"]), tz=timezone.utc)
+        await db.execute(sql_delete(RevokedToken).where(RevokedToken.expires_at < datetime.now(timezone.utc)))
+        await db.merge(RevokedToken(jti=str(payload["jti"])[:64], expires_at=expires))
+        await db.commit()
+        logger.info(f"Signed out {payload.get('username')}; token revoked")
+    return {"message": "Signed out"}

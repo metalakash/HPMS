@@ -7,7 +7,10 @@ import logging
 from typing import Optional
 from uuid import UUID
 from datetime import datetime, timedelta
-from jose import JWTError, jwt
+import uuid
+
+import jwt  # PyJWT: maintained; replaces python-jose (unmaintained, PYSEC-2026-4298)
+from jwt import PyJWTError as JWTError
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
@@ -30,7 +33,7 @@ class TokenManager:
     CHALLENGE_TYPE = "mfa_challenge"
 
     @staticmethod
-    def create_token(ad_user: ADUser, user_id: UUID) -> str:
+    def create_token(ad_user: ADUser, user_id: UUID, mfa_enrolment_pending: bool = False) -> str:
         """Create JWT token from AD user.
 
         Args:
@@ -48,7 +51,10 @@ class TokenManager:
             "sub": str(user_id),
             "exp": datetime.utcnow() + timedelta(minutes=TokenManager.TOKEN_EXPIRY_MINUTES),
             "iat": datetime.utcnow(),
+            "jti": uuid.uuid4().hex,  # this token's id, so signing out can revoke it
         }
+        if mfa_enrolment_pending:
+            payload["mfa_enrol"] = True  # the role requires MFA and it is not set up: only enrolment is open
 
         token = jwt.encode(
             payload,
@@ -98,6 +104,7 @@ class TokenManager:
                 token,
                 settings.JWT_SECRET_KEY,
                 algorithms=[TokenManager.ALGORITHM],
+                options={"require": ["exp", "sub"]},
             )
             if payload.get("typ") == TokenManager.CHALLENGE_TYPE:
                 logger.warning("MFA challenge token presented as an access token")
@@ -136,8 +143,12 @@ class CurrentUser:
         return any(self.has_role(r) for r in roles)
 
 
+# While MFA enrolment is pending, only these paths answer: setting it up, and signing out
+MFA_ENROLMENT_PATHS = ("/api/v1/mfa/", "/api/v1/auth/me", "/api/v1/auth/logout")
+
+
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security),
-                           db=Depends(get_db)) -> CurrentUser:
+                           db=Depends(get_db), request: Request = None) -> CurrentUser:
     """Dependency to extract and validate current user from JWT token.
 
     Args:
@@ -173,6 +184,14 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     if await _is_blocked(db, user.uuid):
         # A blocked account loses its open sessions at once, not when the token expires
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account is disabled")
+    if await _is_revoked(db, payload.get("jti")):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Signed out; sign in again")
+    path = request.url.path if request is not None else ""
+    if payload.get("mfa_enrol") and not path.startswith(MFA_ENROLMENT_PATHS):
+        # Enforced, not just flagged: the role requires two-step sign-in. Lifted the moment it is set up.
+        if not await _mfa_enabled(db, user.uuid):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                                detail="Your role requires two-step sign-in. Set it up on the Security page first.")
 
     return user
 
@@ -187,6 +206,31 @@ async def _is_blocked(db, user_id: UUID) -> bool:
         logger.warning("Could not check account status: %s", error)
         return False
     return active is False
+
+
+async def _mfa_enabled(db, user_id) -> bool:
+    from sqlalchemy import select
+    from backend.app.models.mfa import UserMFA
+
+    try:
+        return bool((await db.execute(select(UserMFA.is_mfa_enabled).where(UserMFA.user_id == user_id))).scalar())
+    except Exception as error:
+        logger.warning("Could not check MFA enrolment: %s", error)
+        return False
+
+
+async def _is_revoked(db, jti) -> bool:
+    """Whether this token was signed out. Tokens issued before token ids existed cannot be revoked this way."""
+    if not jti:
+        return False
+    from sqlalchemy import select
+    from backend.app.models.auth import RevokedToken
+
+    try:
+        return (await db.execute(select(RevokedToken.jti).where(RevokedToken.jti == str(jti)))).first() is not None
+    except Exception as error:
+        logger.warning("Could not check token revocation: %s", error)
+        return False
 
 
 async def get_current_user_optional(request: Request) -> Optional[CurrentUser]:

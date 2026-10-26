@@ -490,11 +490,11 @@ class PDFService:
         """
 
         try:
-            from PyPDF2 import PdfReader, PdfWriter
+            from pypdf import PdfReader, PdfWriter  # maintained successor of PyPDF2 (PYSEC-2026-1835)
             from reportlab.pdfgen import canvas
             from reportlab.lib.pagesizes import letter
         except ImportError:
-            logger.warning("PyPDF2 or reportlab not installed. Skipping watermark.")
+            logger.warning("pypdf or reportlab not installed. Skipping watermark.")
             return pdf_bytes
 
         try:
@@ -569,9 +569,9 @@ class PDFService:
         """
 
         try:
-            from PyPDF2 import PdfReader, PdfWriter
+            from pypdf import PdfReader, PdfWriter  # maintained successor of PyPDF2 (PYSEC-2026-1835)
         except ImportError:
-            logger.warning("PyPDF2 not installed. Skipping encryption.")
+            logger.warning("pypdf not installed. Skipping encryption.")
             return pdf_bytes
 
         try:
@@ -593,10 +593,14 @@ class PDFService:
                 pdf_writer.add_page(page)
 
             # Encrypt with password
+            from pypdf.constants import UserAccessPermissions
+
+            # AES-256, not the library's default RC4 (broken); readers may print, not edit or copy
             pdf_writer.encrypt(
                 user_password=password,
                 owner_password=owner_password,
-                permissions_flag=-1  # All restrictions
+                permissions_flag=UserAccessPermissions.PRINT,
+                algorithm="AES-256",
             )
 
             # Write encrypted PDF

@@ -24,11 +24,32 @@ limiter = Limiter(key_func=get_remote_address)
 # Language detection middleware (Phase 4 Task 5)
 from backend.app.i18n.middleware import LanguageDetectionMiddleware
 
+from backend.app.security import startup_checks
+
+# Production refuses default or weak signing keys (security/startup_checks.py)
+startup_checks.enforce(settings)
+
 app = FastAPI(
     title="SBL HPMS",
     description="Hydropower Project Management Solution",
     version="0.1.0",
+    # The interactive docs map every endpoint; off in production (API_DOCS_ENABLED)
+    docs_url="/docs" if settings.API_DOCS_ENABLED else None,
+    redoc_url="/redoc" if settings.API_DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if settings.API_DOCS_ENABLED else None,
 )
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(request: Request, exc: Exception):
+    """An unexpected failure: log it in full, tell the caller only a reference to quote (no internal detail)."""
+    from fastapi.responses import JSONResponse
+    import uuid as _uuid
+
+    reference = _uuid.uuid4().hex[:12]
+    logger.exception("Unhandled error %s on %s %s", reference, request.method, request.url.path)
+    return JSONResponse(status_code=500, content={
+        "detail": f"Something went wrong on our side. If it continues, quote reference {reference}."})
 
 # Middleware - Security headers (CSP, nosniff, no-store on API responses, ...)
 @app.middleware("http")

@@ -138,7 +138,7 @@ def test_access_token_is_not_a_challenge_token():
 
 
 def test_challenge_token_expires_in_minutes(monkeypatch):
-    from jose import jwt
+    import jwt
     from backend.app.config import settings
     token = TokenManager.create_challenge_token(ad_user(), uuid.uuid4())
     payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=["HS256"])

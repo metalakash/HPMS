@@ -10,7 +10,7 @@ from .financial import EnergyBond, EnergyFinancingQuarter, LoanAccountRateHistor
 from .financial import NewLoanDisbursementQuarter, NewLoanLimit
 from .document import Document, DocumentVersion, DocumentApprovalRequest, DocumentBlob
 from .import_tracking import ImportBatch, ImportRowError
-from .auth import User, UserRoleAssignment, ProjectOwner
+from .auth import User, UserRoleAssignment, ProjectOwner, LoginAttempt, RevokedToken
 from .mfa import UserMFA, TOTPVerification, SMSVerification, BackupCode, TrustedDevice
 from .scheduler import ExportJob, ExportJobRun
 from .reporting import ReportDefinition
@@ -65,6 +65,8 @@ __all__ = [
     "AppParameter",
     "StakeholderInteraction",
     "ExchangeRate",
+    "LoginAttempt",
+    "RevokedToken",
     "ImportBatch",
     "ImportRowError",
     "User",

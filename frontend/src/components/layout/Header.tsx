@@ -15,8 +15,8 @@ export function Header() {
 
   const handleLogout = () => {
     // Stateless JWT: the server call is informational, so don't block on it.
-    void authApi.logout().catch(() => undefined);
-    logout();
+    // Ask the server to revoke the token first (it needs the token to do so), then clear the session
+    void authApi.logout().catch(() => undefined).finally(logout);
     navigate('/login', { replace: true });
   };
 

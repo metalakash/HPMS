@@ -1,6 +1,6 @@
 """Authentication models for user accounts and role management."""
 
-from sqlalchemy import Column, String, Boolean, Date, Index, ForeignKey, Table, Enum as SQLEnum, Text
+from sqlalchemy import BigInteger, Column, String, Boolean, Date, DateTime, Index, ForeignKey, Table, Enum as SQLEnum, Text, func
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
@@ -122,3 +122,26 @@ class ProjectOwner(Base, TimestampedMixin):
         Index("ix_owner_user_project", "user_id", "project_id"),
         Index("ix_owner_project", "project_id"),
     )
+
+
+class LoginAttempt(Base):
+    """Every sign-in attempt, kept for throttling, lockout and the security record (OWASP ASVS V2)."""
+
+    __tablename__ = 'login_attempts'
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    username = Column(String(255), nullable=False, index=True)  # as typed, lower case
+    source_ip = Column(String(64), index=True)
+    succeeded = Column(Boolean, nullable=False, default=False)
+    outcome = Column(String(40), nullable=False)  # success, bad_credentials, locked, throttled, disabled, mfa_failed
+    attempted_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+
+
+class RevokedToken(Base):
+    """An access token ended before its expiry (signed out). Checked on every request until it would have expired."""
+
+    __tablename__ = 'revoked_tokens'
+
+    jti = Column(String(64), primary_key=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

@@ -31,6 +31,10 @@ services:
       # the published admin password can use it. Remove together with ALLOW_DEV_AUTH.
       - key: DEMO_RESET_ENABLED
         value: "true"
+      # Public site: failed sign-ins lock a username only from the address they came from, so strangers
+      # cannot lock the demo accounts. Inside the bank leave the default (user).
+      - key: LOGIN_LOCKOUT_SCOPE
+        value: "user_ip"
       - key: DEBUG
         value: "false"
 

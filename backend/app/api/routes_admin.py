@@ -163,7 +163,7 @@ async def seed_projects_from_upload(
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Seeding failed: {str(e)}"
+            detail="Seeding failed; the error has been logged"
         )
 
 

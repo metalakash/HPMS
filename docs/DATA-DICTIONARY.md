@@ -2,7 +2,7 @@
 
 > Generated from the SQLAlchemy models by `backend/scripts/generate_data_dictionary.py`. Do not edit by hand; run `python -m backend.scripts.generate_data_dictionary` and commit the result.
 
-**80 tables and views, 1163 columns.** Dates are stored as AD `DATE` columns with a paired `*_bs` text column (`YYYY-MM-DD` Bikram Sambat) where the business needs both calendars. Descriptions come from the model docstrings.
+**82 tables and views, 1172 columns.** Dates are stored as AD `DATE` columns with a paired `*_bs` text column (`YYYY-MM-DD` Bikram Sambat) where the business needs both calendars. Descriptions come from the model docstrings.
 
 ## Contents
 
@@ -14,7 +14,7 @@
 - **Regulatory filing calendar, reminders, stakeholder contacts**: `filing_calendar`, `regulatory_requirements`, `stakeholder_contacts`, `stakeholder_interactions`, `user_reminders`
 - **Report builder**: `report_definitions`
 - **Scheduled exports**: `export_job`, `export_job_run`
-- **Users and access**: `project_owner`, `user`, `user_role_assignment`
+- **Users and access**: `login_attempts`, `project_owner`, `revoked_tokens`, `user`, `user_role_assignment`
 - **Multi-factor authentication**: `backup_code`, `sms_verification`, `totp_verification`, `trusted_device`, `user_mfa`
 - **Workflow and approvals**: `app_parameters`, `approval_requests`, `approval_steps`, `permissions`, `role_permissions`, `roles`, `workflow_definitions`
 - **Audit trail**: `audit_log_reads`, `audit_logs`, `audit_retention_checkpoints`
@@ -1306,6 +1306,19 @@ Constraints and composite indexes: index `ix_run_next_retry` (job_id, next_retry
 
 ## Users and access
 
+### `login_attempts`
+
+Every sign-in attempt, kept for throttling, lockout and the security record (OWASP ASVS V2).
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | BIGINT | no |  | PK |
+| `username` | VARCHAR(255) | no |  | indexed |
+| `source_ip` | VARCHAR(64) | yes |  | indexed |
+| `succeeded` | BOOLEAN | no | `False` |  |
+| `outcome` | VARCHAR(40) | no |  |  |
+| `attempted_at` | DATETIME | no | `now()` | indexed |
+
 ### `project_owner`
 
 Project ownership for row-level security.
@@ -1324,6 +1337,16 @@ Project ownership for row-level security.
 | `updated_by` | VARCHAR(255) | yes |  |  |
 
 Constraints and composite indexes: index `ix_owner_user_project` (user_id, project_id).
+
+### `revoked_tokens`
+
+An access token ended before its expiry (signed out). Checked on every request until it would have expired.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `jti` | VARCHAR(64) | no |  | PK |
+| `expires_at` | DATETIME | no |  | indexed |
+| `revoked_at` | DATETIME | no | `now()` |  |
 
 ### `user`
 

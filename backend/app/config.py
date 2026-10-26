@@ -43,6 +43,17 @@ class Settings(BaseSettings):
     # PostgreSQL row policies on project data, behind the application's own checks (security/db_row_security.py,
     # migration 033). Needs the application to connect as a non-superuser, which row security never applies to.
     DB_ROW_SECURITY: bool = os.getenv("DB_ROW_SECURITY", "false").lower() == "true"
+    # Interactive API documentation (/docs, /redoc, /openapi.json). Off in production unless asked for: it maps
+    # every endpoint for an attacker. Unset = on while DEBUG is on.
+    # Sign-in protection (services/signin_guard.py): failed attempts per username, then per source address,
+    # within the window; over the limit, sign-in is refused for the rest of the window.
+    LOGIN_MAX_FAILURES: int = int(os.getenv("LOGIN_MAX_FAILURES", "5"))
+    LOGIN_IP_MAX_FAILURES: int = int(os.getenv("LOGIN_IP_MAX_FAILURES", "20"))
+    LOGIN_LOCKOUT_MINUTES: int = int(os.getenv("LOGIN_LOCKOUT_MINUTES", "15"))
+    # user = a username is locked wherever the failures came from (inside the bank); user_ip = only from the
+    # address that failed, so a public site's accounts cannot be locked by strangers (the hosted demo)
+    LOGIN_LOCKOUT_SCOPE: str = os.getenv("LOGIN_LOCKOUT_SCOPE", "user")
+    API_DOCS_ENABLED: bool = os.getenv("API_DOCS_ENABLED", os.getenv("DEBUG", "true")).lower() == "true"
     AD_SERVER: str = os.getenv("AD_SERVER", "ldap.sbl.local")
     AD_DOMAIN: str = os.getenv("AD_DOMAIN", "sbl.local")
     AD_BASE_DN: str = os.getenv("AD_BASE_DN", "dc=sbl,dc=local")

@@ -111,7 +111,7 @@ async def test_unsupported_and_empty_files_are_refused_with_the_reason(api, proj
 
 async def test_files_over_the_limit_are_refused(api, project, monkeypatch):
     monkeypatch.setattr(settings, "DOCUMENT_MAX_MB", 1)
-    r = await file_letter(api, project, await login(api, "admin"), content=b"%PDF" + b"0" * (1024 * 1024 + 10))
+    r = await file_letter(api, project, await login(api, "admin"), content=b"%PDF-" + b"0" * (1024 * 1024 + 10))
     assert r.status_code == 422 and "the limit is 1 MB" in r.json()["detail"]
 
 

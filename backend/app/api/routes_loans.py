@@ -204,7 +204,8 @@ async def trigger_rate_sync(
         )
     except Exception as e:
         logger.error(f"Sync failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+        logger.exception("Sync failed")
+        raise HTTPException(status_code=500, detail="Sync failed; the error has been logged")
 
     # Commit any DB changes
     await db.commit()
@@ -399,7 +400,8 @@ async def create_sync_schedule(
 
     except Exception as e:
         logger.error(f"❌ Failed to create schedule: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to create schedule: {str(e)}")
+        logger.exception("Failed to create schedule")
+        raise HTTPException(status_code=500, detail="Failed to create schedule; the error has been logged")
 
 
 @router.get(
@@ -427,7 +429,8 @@ async def list_sync_schedules(
 
     except Exception as e:
         logger.error(f"❌ Failed to list schedules: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to list schedules: {str(e)}")
+        logger.exception("Failed to list schedules")
+        raise HTTPException(status_code=500, detail="Failed to list schedules; the error has been logged")
 
 
 @router.get(
@@ -457,7 +460,8 @@ async def get_sync_schedule(
         raise
     except Exception as e:
         logger.error(f"❌ Failed to get schedule: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get schedule: {str(e)}")
+        logger.exception("Failed to get schedule")
+        raise HTTPException(status_code=500, detail="Failed to get schedule; the error has been logged")
 
 
 @router.put(
@@ -490,7 +494,8 @@ async def update_sync_schedule(
         raise
     except Exception as e:
         logger.error(f"❌ Failed to update schedule: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to update schedule: {str(e)}")
+        logger.exception("Failed to update schedule")
+        raise HTTPException(status_code=500, detail="Failed to update schedule; the error has been logged")
 
 
 @router.patch(
@@ -526,7 +531,8 @@ async def toggle_sync_schedule(
         raise
     except Exception as e:
         logger.error(f"❌ Failed to toggle schedule: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to toggle schedule: {str(e)}")
+        logger.exception("Failed to toggle schedule")
+        raise HTTPException(status_code=500, detail="Failed to toggle schedule; the error has been logged")
 
 
 # Declared last on purpose: "/{account_id}" would otherwise swallow GET /sync-schedule (list), which

@@ -117,15 +117,51 @@ After installing the new floors the full test suite passed (655 passed). Re-run 
 ## Open items
 
 - **A.2** Independent VAPT / code-security review before go-live.
-- **A.6** Database-level RLS (policies) and pgcrypto for sensitive columns.
+- **A.6** pgcrypto for sensitive columns (database row policies are built: migration `033`, `DB_ROW_SECURITY`).
 - **A.5** CBS mTLS is not evidenced in the adapter; real Finacle binding is pending the sandbox.
 - **E.4** Retention period must be confirmed against NRB / BAFIA requirements (research brief §1.1).
 - Legacy `audit_logs` rows written by the old approve/reject code have blank hashes; `GET /admin/audit/verify`
   will report the first one. They are history and have not been rewritten.
 - Rotate `SECRET_KEY`, `JWT_SECRET_KEY`; set `MFA_ENCRYPTION_KEY` (separate from `SECRET_KEY`) before enrolling real users; run
   migration `017` with the production key in the environment.
-- Decide whether roles in `MFA_REQUIRED_ROLES` should be *blocked* from signing in until they enrol (today they are only
-  flagged), and whether to honour trusted devices.
+- Whether to honour trusted devices for MFA (roles in `MFA_REQUIRED_ROLES` are now blocked until they enrol; see below).
 - Migrations `012`–`018` were applied to a real PostgreSQL (the development database, 011 → 018) and the DB-backed tests
   (trigger, purge, chain, report builder, regulatory calendar, MFA login) passed against it with `TEST_DATABASE_REUSE=1`;
   the hosted/production database and a staging copy of real data have not been migrated.
+
+
+---
+
+## Hardening round, 2026-10-26 (OWASP ASVS 4.0 level 2 as the yardstick)
+
+### Done, with tests (`tests/integration/test_security_hardening_db.py` and the suites named)
+
+| Area | Change | ASVS |
+|---|---|---|
+| Brute force | Every sign-in attempt recorded (`login_attempts`, migration `034`). 5 failures for a username in 15 minutes lock it; 20 from one address throttle the address (429 with `Retry-After`). Settings: `LOGIN_MAX_FAILURES`, `LOGIN_IP_MAX_FAILURES`, `LOGIN_LOCKOUT_MINUTES`, `LOGIN_LOCKOUT_SCOPE` (`user` inside the bank; `user_ip` on the public demo so strangers cannot lock the demo accounts). | V2.2.1 |
+| Session end | Sign-out revokes the token on the server (`revoked_tokens`, token id `jti`); checked on every request. The web app now sends the token before clearing it. | V3.3.1 |
+| MFA | Roles in `MFA_REQUIRED_ROLES` without MFA get a token that opens only MFA setup and sign-out; lifted the moment MFA is enabled. The web app sends them to the Security page. | V2.8, V4.1 |
+| Configuration | Production (`DEBUG=false`) refuses to start with a default, short (< 32) or shared `SECRET_KEY`/`JWT_SECRET_KEY`, or a short `MFA_ENCRYPTION_KEY`. | V14.1, V6.4 |
+| Exposure | `/docs`, `/redoc`, `/openapi.json` off in production unless `API_DOCS_ENABLED=true`. | V14.3 |
+| Errors | Unexpected errors answer with a reference only, logged in full; seven endpoints that echoed exception text fixed. | V7.4.1 |
+| Uploads | A document's content must match its type's signature bytes (PDF, PNG, JPEG, Office), so a renamed executable is refused. | V12.2.1 |
+| PDF | Password-protected PDFs use AES-256 (was RC4) and allow printing only (the old flag allowed everything). | V6.2 |
+| Headers | `Cross-Origin-Opener-Policy` and `Cross-Origin-Resource-Policy: same-origin` added to the existing CSP, HSTS, nosniff, frame and referrer headers. | V14.4 |
+| Dependencies | `python-jose` (unmaintained; token-forgery advisory PYSEC-2026-4298) replaced by `PyJWT`; tokens now require `exp` and `sub`. `PyPDF2` (unmaintained; PYSEC-2026-1835) replaced by `pypdf`. npm: `follow-redirects`, `vitest`, `source-map-js` advisories fixed; `npm audit` and `pip-audit` clean of application advisories (pip itself, the installer, has advisories: upgrade it in build images). | V14.2 |
+| Directory | `AD_GROUP_ROLE_MAP` in configuration; a directory user in no HPMS group is refused. | V4.1 |
+
+### Scoped for the hardening sprint (not done)
+
+| Item | Why | Size |
+|---|---|---|
+| Session in an httpOnly, Secure, SameSite cookie with CSRF tokens, instead of a bearer token in session storage | A script injected into the page could read the token today; CSP lowers but does not remove that risk | M |
+| Idle timeout (15–30 minutes) with token refresh and an absolute session limit | Tokens live 8 hours; banks usually require an idle limit | M |
+| Sign-in activity screen for admins and alerts on lockouts | The record exists (`login_attempts`); nobody is told yet | S |
+| Security events to the bank's SIEM (structured logs: sign-in, lockout, block, role change, approvals) | Monitoring and incident response | M |
+| SAST, dependency and secret scanning in CI (e.g. Bandit, pip-audit, npm audit, gitleaks), and an SBOM | Catch regressions before merge | S |
+| TLS to PostgreSQL and verified certificates; encrypted, tested backups | Data in transit and at rest beyond the application | Infra |
+| Secrets in a vault (not environment variables), with rotation | Key management | Infra |
+| pgcrypto for selected columns | Defence for database dumps | M |
+| WAF / reverse proxy with rate limits in front of the API | Volumetric attacks; the application throttles sign-in only | Infra |
+| Remove the `*.onrender.com` wildcard from trusted hosts outside the demo | Host header hardening | S |
+| Independent penetration test and fixes | Assurance (RFP TECH A.2) | External |

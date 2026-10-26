@@ -162,14 +162,19 @@ Set on the server, outside the application; a change needs a restart. Secrets ar
 | Setting | Area | Default | Read by | Notes |
 |---|---|---|---|---|
 | `DATABASE_URL` | Database | (secret) | `database`, `seed_projects`, `seed_synthetic_loans` |  |
-| `SECRET_KEY` | Sign-in tokens | (secret) | `secret_box` |  |
+| `SECRET_KEY` | Sign-in tokens | (secret) | `secret_box`, `startup_checks` |  |
 | `ALGORITHM` | Sign-in tokens | `HS256` | `auth_middleware` |  |
-| `JWT_SECRET_KEY` | Sign-in tokens | (secret) | `auth_middleware` |  |
+| `JWT_SECRET_KEY` | Sign-in tokens | (secret) | `auth_middleware`, `startup_checks` |  |
 | `JWT_EXPIRY_MINUTES` | Sign-in tokens | `480` | `auth_middleware` | 8 hours |
 | `USE_LDAP` | Directory sign-in | `false` | `routes_auth`, `auth_selection`, `demo_reset` |  |
 | `ALLOW_DEV_AUTH` | Demo | `(unset)` | `auth_selection`, `demo_reset` | Built-in demo accounts (public passwords). Unset = allowed only while DEBUG=true; see security/auth_selection.py |
 | `DEMO_RESET_ENABLED` | Demo | `false` | `demo_reset` | Admin button that replaces all project data with the synthetic demo portfolio. Hosted demo only; also needs the demo accounts allowed, and refuses a database holding bank data (services/demo_reset.py) |
 | `DB_ROW_SECURITY` | Data security | `false` | `auth_middleware`, `db_row_security` | PostgreSQL row policies on project data, behind the application's own checks (security/db_row_security.py, # migration 033). Needs the application to connect as a non-superuser, which row security never applies to. |
+| `LOGIN_MAX_FAILURES` | Other | `5` | `signin_guard` | Interactive API documentation (/docs, /redoc, /openapi.json). Off in production unless asked for: it maps every endpoint for an attacker. Unset = on while DEBUG is on. Sign-in protection (services/signin_guard.py): failed attempts per username, then per source address, within the window; over the limit, sign-in is refused for the rest of the window. |
+| `LOGIN_IP_MAX_FAILURES` | Other | `20` | `signin_guard` |  |
+| `LOGIN_LOCKOUT_MINUTES` | Other | `15` | `signin_guard` |  |
+| `LOGIN_LOCKOUT_SCOPE` | Other | `user` | `signin_guard` | user = a username is locked wherever the failures came from (inside the bank); user_ip = only from the address that failed, so a public site's accounts cannot be locked by strangers (the hosted demo) |
+| `API_DOCS_ENABLED` | Other | `true` | `main` |  |
 | `AD_SERVER` | Directory sign-in | `ldap.sbl.local` | `auth_selection` |  |
 | `AD_DOMAIN` | Directory sign-in | `sbl.local` | `auth_selection` |  |
 | `AD_BASE_DN` | Directory sign-in | `dc=sbl,dc=local` | `auth_selection` |  |
@@ -177,7 +182,7 @@ Set on the server, outside the application; a change needs a restart. Secrets ar
 | `AD_SERVICE_ACCOUNT_PASSWORD` | Directory sign-in | (secret) | `auth_selection` |  |
 | `AD_GROUP_ROLE_MAP` | Directory sign-in | `SBL_HPMS_ADMIN=admin,SBL_HPMS_MAKER=maker,SBL_HPMS_APPROVER=approver,SBL_HPMS_AUDITOR=auditor` | `auth_selection`, `ldap_provider` | Directory group -> HPMS role, comma-separated group=role pairs (admin, maker, approver, auditor, guest). The default names are placeholders: set the bank's own groups. A wrong value stops the server at startup. |
 | `MFA_REQUIRED_ROLES` | Multi-factor authentication | (empty) | `routes_auth` | Roles that should have MFA; users in them without it get `mfa_enrollment_required` at login (comma separated) |
-| `MFA_ENCRYPTION_KEY` | Multi-factor authentication | (secret) | `secret_box` | Encrypts TOTP seeds at rest (security/secret_box.py). Falls back to SECRET_KEY when unset. |
+| `MFA_ENCRYPTION_KEY` | Multi-factor authentication | (secret) | `secret_box`, `startup_checks` | Encrypts TOTP seeds at rest (security/secret_box.py). Falls back to SECRET_KEY when unset. |
 | `MFA_ENCRYPTION_KEY_OLD` | Multi-factor authentication | (secret) | `secret_box` | previous key(s), comma separated |
 | `DEBUG` | Application | `true` | `routes_ws`, `database`, `main` … |  |
 | `ADMIN_IP_ALLOWLIST` | Network access | (empty) | `main` | Network access control (RFP A.7). Empty allow-list = disabled. comma-separated IPs / CIDRs |

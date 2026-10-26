@@ -89,6 +89,9 @@ class IPAllowlistMiddleware:
 def apply_security_headers(headers, path: str) -> None:
     """Set the standard hardening headers on a response's mutable header map."""
     headers["X-Content-Type-Options"] = "nosniff"
+    # Isolate the browsing context and keep responses from being embedded by other sites
+    headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    headers["Cross-Origin-Resource-Policy"] = "same-origin"
     headers["X-Frame-Options"] = "DENY"
     headers["X-XSS-Protection"] = "1; mode=block"
     headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"

@@ -243,14 +243,15 @@ describe('Security page', () => {
     expect(await screen.findByRole('button', { name: 'Set up authenticator app' })).toBeInTheDocument();
   });
 
-  it('nags users whose role requires MFA until they enrol', async () => {
+  it('keeps users whose role requires MFA on the Security page until they enrol', async () => {
     signIn();
     useAuthStore.setState({ mfaEnrollmentRequired: true });
     server.use(status());
     const { router } = renderRoute('/');
-    const link = await screen.findByRole('link', { name: 'Set it up now' });
-    expect(link).toHaveAttribute('href', '/security');
-    router.navigate('/security');
-    await waitFor(() => expect(screen.queryByRole('link', { name: 'Set it up now' })).not.toBeInTheDocument());
+    // Enforced: any other page sends them to Security (the server refuses everything else too)
+    await waitFor(() => expect(router.state.location.pathname).toBe('/security'));
+    expect(await screen.findByText(/Your role requires two-step sign-in/)).toBeInTheDocument();
+    router.navigate('/projects');
+    await waitFor(() => expect(router.state.location.pathname).toBe('/security'));
   });
 });

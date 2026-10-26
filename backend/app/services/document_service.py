@@ -37,6 +37,17 @@ ALLOWED_TYPES = {
 }
 
 
+# The bytes each type's files start with: a file whose content does not match its name is refused, so a
+# renamed executable or script cannot be filed as "letter.pdf" (OWASP ASVS V12.2)
+SIGNATURES = {
+    ".pdf": (b"%PDF-",),
+    ".png": (b"\x89PNG\r\n\x1a\n",),
+    ".jpg": (b"\xff\xd8\xff",), ".jpeg": (b"\xff\xd8\xff",),
+    ".docx": (b"PK\x03\x04",), ".xlsx": (b"PK\x03\x04",),  # Office Open XML is a zip package
+    ".doc": (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",), ".xls": (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),  # legacy Office
+}
+
+
 class DocumentRejected(ValueError):
     """The file or the request cannot be accepted; the message says why, for the user."""
 
@@ -73,6 +84,8 @@ class DocumentService:
                 f"{file.name}: this file type is not accepted. Attach a PDF, image (jpg, png), Word or Excel file")
         if not file.content:
             raise DocumentRejected(f"{file.name} is empty")
+        if not file.content.startswith(SIGNATURES[file.extension]):
+            raise DocumentRejected(f"{file.name}: the content is not a {file.extension[1:].upper()} file")
         if len(file.content) > self.max_bytes:
             raise DocumentRejected(
                 f"{file.name} is {len(file.content) / 1048576:.1f} MB; the limit is {self.max_bytes // 1048576} MB")
