@@ -397,10 +397,13 @@ def read_energy_financing(path: Path, portfolio: Dict[str, Any], issues: List[st
     import openpyxl
 
     book = openpyxl.load_workbook(path, read_only=True, data_only=True)
-    opening = portfolio["quarters"][0]["period_end_ad"] if portfolio["quarters"] else None
-    portfolio["bonds"] = read_bonds(book, portfolio.get("bond_holding"), issues)
-    portfolio["ratio_quarters"] = read_ratio_inputs(book, opening, issues)
-    portfolio["pipeline"] = read_pipeline(book, issues)
+    try:
+        opening = portfolio["quarters"][0]["period_end_ad"] if portfolio["quarters"] else None
+        portfolio["bonds"] = read_bonds(book, portfolio.get("bond_holding"), issues)
+        portfolio["ratio_quarters"] = read_ratio_inputs(book, opening, issues)
+        portfolio["pipeline"] = read_pipeline(book, issues)
+    finally:
+        book.close()  # a read-only workbook holds its file open until closed
 
 
 def energy_financing_results(portfolio: Dict[str, Any], with_pipeline: bool = False):
@@ -457,9 +460,11 @@ def read_generation(path: Path, issues: List[str]) -> Dict[str, Dict[Tuple[int, 
     import openpyxl
 
     plants: Dict[str, Dict[Tuple[int, int], Dict[str, Any]]] = {}
-    for sheet in openpyxl.load_workbook(path, read_only=True, data_only=True).worksheets:
-        rows = list(sheet.iter_rows(values_only=True))
-        title = next((" ".join(str(r[0]).split()) for r in rows if r and r[0]), sheet.title)
+    book = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    sheets = [(sheet.title, list(sheet.iter_rows(values_only=True))) for sheet in book.worksheets]
+    book.close()  # a read-only workbook holds its file open until closed
+    for sheet_title, rows in sheets:
+        title = next((" ".join(str(r[0]).split()) for r in rows if r and r[0]), sheet_title)
         months: Dict[Tuple[int, int], Dict[str, Any]] = {}
         columns: Dict[str, int] = {}
         block: Optional[Tuple[int, bool]] = None  # (first BS year of the block, block is a fiscal year)
@@ -654,106 +659,172 @@ def report(portfolio: Dict[str, Any], issues: List[str]) -> bool:
     return agrees
 
 
-async def load(portfolio: Dict[str, Any], projection_file: str, generation_file: str) -> Dict[str, int]:
-    from sqlalchemy import delete
-    from sqlalchemy.ext.asyncio import AsyncSession
+def parse(projection: Path, generation: Path) -> Tuple[Dict[str, Any], List[str]]:
+    """Read both workbooks into what gets loaded, with the notes raised on the way."""
+    issues: List[str] = []
+    portfolio = read_portfolio(projection, issues)
+    resolve_statuses(portfolio["borrowers"], issues)
+    attach_locations(portfolio["borrowers"])
+    read_energy_financing(projection, portfolio, issues)
+    assign_generation(read_generation(generation, issues), portfolio["borrowers"], issues)
+    return portfolio, issues
 
-    from backend.app.database import engine
+
+def summary(portfolio: Dict[str, Any], issues: List[str]) -> Dict[str, Any]:
+    """The reconciliation as data, for the import screen: what was read, against the workbook's own totals.
+    Amounts are strings so they survive JSON exactly. ``agrees`` is what the load requires."""
+    borrowers, total = portfolio["borrowers"], portfolio["total"]
+    totals = []
+    agrees = bool(borrowers)
+    for field in ("mw", "limit", "outstanding"):
+        parsed = sum(((b[field] or 0) for b in borrowers), Decimal(0))
+        stated = total.get(field)
+        match = stated is not None and abs(parsed - stated) < 1
+        agrees = agrees and match
+        totals.append({"field": field, "parsed": str(parsed), "workbook": None if stated is None else str(stated),
+                       "matches": match})
+    statuses = []
+    for label in STATUSES:
+        rows = [b for b in borrowers if b["status"] == label]
+        stated = portfolio["stated"].get(label)
+        if not rows and not stated:
+            continue
+        statuses.append({"status": STATUSES[label][0], "label": label, "count": len(rows),
+                         "mw": str(sum((b["mw"] or 0 for b in rows), Decimal(0))),
+                         "limit": str(sum((b["limit"] for b in rows), Decimal(0))),
+                         "outstanding": str(sum((b["outstanding"] for b in rows), Decimal(0))),
+                         "workbook_count": stated["count"] if stated else None,
+                         "workbook_mw": str(stated["mw"]) if stated else None})
+    quarters = portfolio["quarters"]
+    pipeline = portfolio.get("pipeline") or {"limits": [], "quarters": []}
+    with_generation = [b for b in borrowers if b["generation"]]
+    return {
+        "as_of": portfolio["as_of_label"], "borrowers": len(borrowers), "agrees": agrees,
+        "totals": totals, "statuses": statuses,
+        "projection": {"quarters": len(quarters), "borrowers": sum(1 for b in borrowers if b["projection"]),
+                       "first": quarters[0]["period_end_bs"] if quarters else None,
+                       "last": quarters[-1]["period_end_bs"] if quarters else None},
+        "bonds": {"count": len(portfolio.get("bonds", [])),
+                  "amount": str(sum((b["amount"] for b in portfolio.get("bonds", [])), Decimal(0)))},
+        "ratio_quarters": len(portfolio.get("ratio_quarters", [])),
+        "new_loans": {"limits": len(pipeline["limits"]), "quarters": len(pipeline["quarters"]),
+                      "amount": str(sum((l["new_limit"] for l in pipeline["limits"]), Decimal(0)))},
+        "generation": {"borrowers": len(with_generation), "plants": sum(len(b["plants"]) for b in with_generation),
+                       "months": sum(len(b["generation"]) for b in with_generation)},
+        "located": sum(1 for b in borrowers if b["licence"]),
+        "notes": list(issues),
+    }
+
+
+async def write(session, portfolio: Dict[str, Any], projection_file: str, generation_file: str) -> Dict[str, int]:
+    """Add the workbook's portfolio to ``session``. The caller clears the old portfolio first and commits."""
     from backend.app.models.financial import (
         EnergyBond, EnergyFinancingQuarter, LoanAccount, LoanProjectionQuarter, NewLoanDisbursementQuarter, NewLoanLimit,
     )
     from backend.app.models.operations import EnergyGenerationData, NEAPPARate
     from backend.app.models.project import Project
     from backend.app.services.risk_service import bs_string
-    from backend.scripts.seed_realistic_data import DELETE_ORDER, ID_NAMESPACE, PROVINCES
-
-    if engine.url.host not in ("localhost", "127.0.0.1", "::1"):
-        raise SystemExit(f"Refusing to load customer data into {engine.url.host}: local databases only.")
+    from backend.scripts.seed_realistic_data import ID_NAMESPACE, PROVINCES
 
     counts = {"projects": 0, "loans": 0, "projection": 0, "generation": 0, "rates": 0,
               "bonds": len(portfolio["bonds"]), "ratio_quarters": len(portfolio["ratio_quarters"]),
               "new_limits": len(portfolio["pipeline"]["limits"]), "new_loan_quarters": len(portfolio["pipeline"]["quarters"])}
+    for bond in portfolio["bonds"]:
+        session.add(EnergyBond(
+            id=uuid.uuid4(), name=bond["name"], amount=money(bond["amount"]), yield_pct=bond["yield_pct"],
+            investment_date_ad=bond["investment_date"], investment_date_bs=bs_string(bond["investment_date"]),
+            maturity_date_ad=bond["maturity_date"], maturity_date_bs=bs_string(bond["maturity_date"]),
+            data_provenance=PROVENANCE, source_reference=f"{projection_file} / {BOND_SHEET}"[:255]))
+    for q in portfolio["ratio_quarters"]:
+        session.add(EnergyFinancingQuarter(
+            id=uuid.uuid4(), fiscal_year=q["fiscal_year"], quarter=q["quarter"],
+            period_end_ad=q["period_end_ad"], period_end_bs=q["period_end_bs"],
+            bank_total_loans=money(q["bank_total_loans"]), required_pct=q["required_pct"],
+            hydro_outstanding_actual=money(q["hydro_outstanding_actual"]),
+            energy_bond_actual=money(q["energy_bond_actual"]),
+            data_provenance=PROVENANCE, source_reference=f"{projection_file} / {RATIO_SHEET}"[:255]))
+
+    for limit in portfolio["pipeline"]["limits"]:
+        session.add(NewLoanLimit(
+            id=uuid.uuid4(), fiscal_year=limit["fiscal_year"], new_limit=money(limit["new_limit"]),
+            drawdown_pct=limit["drawdown_pct"], data_provenance=PROVENANCE,
+            source_reference=f"{projection_file} / {PIPELINE_SHEET}"[:255]))
+    for q in portfolio["pipeline"]["quarters"]:
+        session.add(NewLoanDisbursementQuarter(
+            id=uuid.uuid4(), fiscal_year=q["fiscal_year"], quarter=q["quarter"], period_end_ad=q["period_end_ad"],
+            period_end_bs=q["period_end_bs"], planned_disbursement=money(q["planned_disbursement"]),
+            data_provenance=PROVENANCE, source_reference=f"{projection_file} / {PIPELINE_RATIO_SHEET}"[:255]))
+
+    for index, b in enumerate(portfolio["borrowers"], start=1):
+        pipeline_status, stage = STATUSES[b["status"]]
+        licence = b["licence"] or {}
+        province, code = PROVINCES.get(licence.get("province"), (None, "NP"))
+        project = Project(
+            id=uuid.uuid5(ID_NAMESPACE, f"bank:{b['name']}"), project_code=f"HPM-{code}-{index:04d}",
+            name_en=b["name"], name_np=b["name"], province=province,
+            district=(licence.get("district") or "").strip().title() or None,
+            local_level=(licence.get("municipality") or "").strip() or None,
+            installed_capacity_mw=b["mw"] or Decimal(0), project_stage=stage, pipeline_status=pipeline_status,
+            is_bank_financed=True)
+        session.add(project)
+        await session.flush()
+        counts["projects"] += 1
+
+        if b["limit"] > 0 or b["outstanding"] > 0:
+            session.add(LoanAccount(
+                id=uuid.uuid4(), project_id=project.id, finacle_account_id=f"XLS-{project.project_code}",
+                customer_cif=b["cif"], facility_type="term_loan", sanctioned_amount=money(b["limit"]),
+                disbursed_amount=money(b["limit"] - b["remaining"]), outstanding_principal=money(b["outstanding"]),
+                sync_status="success", data_provenance=PROVENANCE,
+                source_reference=f"{projection_file} / {PORTFOLIO_SHEET} row {b['row']}"[:255]))
+            counts["loans"] += 1
+
+        for quarter, figures in zip(portfolio["quarters"], b["projection"]):
+            session.add(LoanProjectionQuarter(
+                id=uuid.uuid4(), project_id=project.id, fiscal_year=quarter["fiscal_year"],
+                quarter=quarter["quarter"], period_end_ad=quarter["period_end_ad"],
+                period_end_bs=quarter["period_end_bs"], is_opening=quarter["is_opening"],
+                projected_disbursement=money(figures["disbursement"]),
+                projected_repayment=money(figures["repayment"]),
+                projected_outstanding=money(figures["outstanding"]), data_provenance=PROVENANCE,
+                source_reference=f"{projection_file} / {PORTFOLIO_SHEET}"[:255]))
+            counts["projection"] += 1
+
+        for (year, month), values in sorted(b["generation"].items()):
+            session.add(EnergyGenerationData(
+                id=uuid.uuid4(), project_id=project.id, month_ad=bs_month_start(year, month),
+                month_bs=f"{year}-{month:02d}", season="dry" if month in DRY_MONTHS else "wet",
+                contract_energy_mwh=money(values["contract"] / 1000) if values["contract"] is not None else None,
+                actual_energy_mwh=money(values["generated"] / 1000), revenue_npr=money(values["revenue"]),
+                data_provenance=PROVENANCE, source_reference=f"{generation_file} / {', '.join(b['plants'])}"[:255]))
+            counts["generation"] += 1
+        steps = rate_history(b["generation"])
+        for step in steps:
+            current = step["valid_to_ad"] is None
+            session.add(NEAPPARate(
+                id=uuid.uuid4(), project_id=project.id, season=step["season"],
+                rate_per_mwh_npr=step["rate"] * 1000, valid_from_ad=step["valid_from_ad"],
+                valid_from_bs=step["valid_from_bs"], valid_to_ad=step["valid_to_ad"], is_current=current,
+                data_provenance=PROVENANCE, source_reference=generation_file[:255]))
+            counts["rates"] += 1
+    await session.flush()
+    return counts
+
+
+async def load(portfolio: Dict[str, Any], projection_file: str, generation_file: str) -> Dict[str, int]:
+    """The command-line load: replace the portfolio in a database on this machine."""
+    from sqlalchemy import delete
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from backend.app.database import engine
+    from backend.scripts.seed_realistic_data import DELETE_ORDER
+
+    if engine.url.host not in ("localhost", "127.0.0.1", "::1"):
+        raise SystemExit(f"Refusing to load customer data into {engine.url.host}: local databases only.")
     async with AsyncSession(engine) as session:
         for model in DELETE_ORDER:
             await session.execute(delete(model))
-        for bond in portfolio["bonds"]:
-            session.add(EnergyBond(
-                id=uuid.uuid4(), name=bond["name"], amount=money(bond["amount"]), yield_pct=bond["yield_pct"],
-                investment_date_ad=bond["investment_date"], investment_date_bs=bs_string(bond["investment_date"]),
-                maturity_date_ad=bond["maturity_date"], maturity_date_bs=bs_string(bond["maturity_date"]),
-                data_provenance=PROVENANCE, source_reference=f"{projection_file} / {BOND_SHEET}"[:255]))
-        for q in portfolio["ratio_quarters"]:
-            session.add(EnergyFinancingQuarter(
-                id=uuid.uuid4(), fiscal_year=q["fiscal_year"], quarter=q["quarter"],
-                period_end_ad=q["period_end_ad"], period_end_bs=q["period_end_bs"],
-                bank_total_loans=money(q["bank_total_loans"]), required_pct=q["required_pct"],
-                hydro_outstanding_actual=money(q["hydro_outstanding_actual"]),
-                energy_bond_actual=money(q["energy_bond_actual"]),
-                data_provenance=PROVENANCE, source_reference=f"{projection_file} / {RATIO_SHEET}"[:255]))
-
-        for limit in portfolio["pipeline"]["limits"]:
-            session.add(NewLoanLimit(
-                id=uuid.uuid4(), fiscal_year=limit["fiscal_year"], new_limit=money(limit["new_limit"]),
-                drawdown_pct=limit["drawdown_pct"], data_provenance=PROVENANCE,
-                source_reference=f"{projection_file} / {PIPELINE_SHEET}"[:255]))
-        for q in portfolio["pipeline"]["quarters"]:
-            session.add(NewLoanDisbursementQuarter(
-                id=uuid.uuid4(), fiscal_year=q["fiscal_year"], quarter=q["quarter"], period_end_ad=q["period_end_ad"],
-                period_end_bs=q["period_end_bs"], planned_disbursement=money(q["planned_disbursement"]),
-                data_provenance=PROVENANCE, source_reference=f"{projection_file} / {PIPELINE_RATIO_SHEET}"[:255]))
-
-        for index, b in enumerate(portfolio["borrowers"], start=1):
-            pipeline_status, stage = STATUSES[b["status"]]
-            licence = b["licence"] or {}
-            province, code = PROVINCES.get(licence.get("province"), (None, "NP"))
-            project = Project(
-                id=uuid.uuid5(ID_NAMESPACE, f"bank:{b['name']}"), project_code=f"HPM-{code}-{index:04d}",
-                name_en=b["name"], name_np=b["name"], province=province,
-                district=(licence.get("district") or "").strip().title() or None,
-                local_level=(licence.get("municipality") or "").strip() or None,
-                installed_capacity_mw=b["mw"] or Decimal(0), project_stage=stage, pipeline_status=pipeline_status,
-                is_bank_financed=True)
-            session.add(project)
-            await session.flush()
-            counts["projects"] += 1
-
-            if b["limit"] > 0 or b["outstanding"] > 0:
-                session.add(LoanAccount(
-                    id=uuid.uuid4(), project_id=project.id, finacle_account_id=f"XLS-{project.project_code}",
-                    customer_cif=b["cif"], facility_type="term_loan", sanctioned_amount=money(b["limit"]),
-                    disbursed_amount=money(b["limit"] - b["remaining"]), outstanding_principal=money(b["outstanding"]),
-                    sync_status="success", data_provenance=PROVENANCE,
-                    source_reference=f"{projection_file} / {PORTFOLIO_SHEET} row {b['row']}"[:255]))
-                counts["loans"] += 1
-
-            for quarter, figures in zip(portfolio["quarters"], b["projection"]):
-                session.add(LoanProjectionQuarter(
-                    id=uuid.uuid4(), project_id=project.id, fiscal_year=quarter["fiscal_year"],
-                    quarter=quarter["quarter"], period_end_ad=quarter["period_end_ad"],
-                    period_end_bs=quarter["period_end_bs"], is_opening=quarter["is_opening"],
-                    projected_disbursement=money(figures["disbursement"]),
-                    projected_repayment=money(figures["repayment"]),
-                    projected_outstanding=money(figures["outstanding"]), data_provenance=PROVENANCE,
-                    source_reference=f"{projection_file} / {PORTFOLIO_SHEET}"[:255]))
-                counts["projection"] += 1
-
-            for (year, month), values in sorted(b["generation"].items()):
-                session.add(EnergyGenerationData(
-                    id=uuid.uuid4(), project_id=project.id, month_ad=bs_month_start(year, month),
-                    month_bs=f"{year}-{month:02d}", season="dry" if month in DRY_MONTHS else "wet",
-                    contract_energy_mwh=money(values["contract"] / 1000) if values["contract"] is not None else None,
-                    actual_energy_mwh=money(values["generated"] / 1000), revenue_npr=money(values["revenue"]),
-                    data_provenance=PROVENANCE, source_reference=f"{generation_file} / {', '.join(b['plants'])}"[:255]))
-                counts["generation"] += 1
-            steps = rate_history(b["generation"])
-            for step in steps:
-                current = step["valid_to_ad"] is None
-                session.add(NEAPPARate(
-                    id=uuid.uuid4(), project_id=project.id, season=step["season"],
-                    rate_per_mwh_npr=step["rate"] * 1000, valid_from_ad=step["valid_from_ad"],
-                    valid_from_bs=step["valid_from_bs"], valid_to_ad=step["valid_to_ad"], is_current=current,
-                    data_provenance=PROVENANCE, source_reference=generation_file[:255]))
-                counts["rates"] += 1
+        counts = await write(session, portfolio, projection_file, generation_file)
         await session.commit()
     return counts
 
@@ -767,12 +838,7 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-    issues: List[str] = []
-    portfolio = read_portfolio(args.projection, issues)
-    resolve_statuses(portfolio["borrowers"], issues)
-    attach_locations(portfolio["borrowers"])
-    read_energy_financing(args.projection, portfolio, issues)
-    assign_generation(read_generation(args.generation, issues), portfolio["borrowers"], issues)
+    portfolio, issues = parse(args.projection, args.generation)
     agrees = report(portfolio, issues)
 
     if not args.apply:

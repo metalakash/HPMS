@@ -25,7 +25,7 @@ TWO_STEP = ["submitted", "recommended", "approved"]
 ONE_STEP = ["submitted", "approved"]
 
 # Change types whose final approval is reserved for administrators unless an admin changes the rule
-ADMIN_FINAL = {"COVENANT_TERMS", "SETTING", "APPROVAL_RULE"}
+ADMIN_FINAL = {"COVENANT_TERMS", "SETTING", "APPROVAL_RULE", "BANK_IMPORT"}
 
 # The change types a rule can be set for, with what they are called on screen
 CHANGE_TYPES = {
@@ -38,6 +38,7 @@ CHANGE_TYPES = {
     "SETTING": "Application settings",
     "APPROVAL_RULE": "Approval rules",
     "EXCHANGE_RATE": "Exchange rates",
+    "BANK_IMPORT": "Bank workbook import",
 }
 
 

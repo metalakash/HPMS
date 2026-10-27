@@ -5,7 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api';
 
-export type ChangeType = 'BUDGET_LINE' | 'LOAN_PROJECTION' | 'SETTING' | 'APPROVAL_RULE' | 'EXCHANGE_RATE';
+export type ChangeType = 'BUDGET_LINE' | 'LOAN_PROJECTION' | 'SETTING' | 'APPROVAL_RULE' | 'EXCHANGE_RATE' | 'BANK_IMPORT';
 
 export interface BudgetLine {
   id: string;

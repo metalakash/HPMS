@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link2, ShieldCheck, Users } from 'lucide-react';
+import { BankImportCard } from '@/components/admin/BankImportCard';
 import { Badge } from '@/components/common/Badge';
 import { Button } from '@/components/common/Button';
 import { Card, CardBody, CardHeader } from '@/components/common/Card';
@@ -322,6 +323,7 @@ export default function AdminPage() {
           </Card>
         </div>
       </div>
+      <BankImportCard />
       {editing && <UserChangeModal editing={editing} onClose={() => setEditing(null)} />}
     </>
   );

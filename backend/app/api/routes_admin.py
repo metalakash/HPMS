@@ -199,6 +199,73 @@ async def reset_demo_data(
     return {"data": result}
 
 
+# ---------------------------------------------------------------- bank workbook import
+
+async def _import_view(db: AsyncSession, row) -> dict:
+    """An import without its file content, with the state of the change request that loads it."""
+    from ..models.governance import ApprovalRequest
+    from ..services.bank_import import KIND, binding
+
+    request = (await db.execute(
+        select(ApprovalRequest).where(ApprovalRequest.entity_type == KIND, ApprovalRequest.entity_id == str(row.id))
+        .order_by(ApprovalRequest.submitted_at.desc()).limit(1))).scalar_one_or_none()
+    return {
+        "id": str(row.id), "status": row.status, "projection_filename": row.projection_filename,
+        "generation_filename": row.generation_filename, "uploaded_by": row.uploaded_by,
+        "uploaded_at": row.uploaded_at.isoformat() if row.uploaded_at else None,
+        "agrees": row.agrees, "summary": row.summary, "replaces": row.replaces, "files": binding(row),
+        "applied_by": row.applied_by, "applied_at": row.applied_at.isoformat() if row.applied_at else None,
+        "result": row.result,
+        "request": {"id": str(request.id), "state": request.current_state} if request else None,
+    }
+
+
+@router.get("/bank-import")
+async def bank_import_status(db: AsyncSession = Depends(get_db), current_user=Depends(require_admin)):
+    """Whether workbook import is offered here, and the latest uploads."""
+    from ..models.bank_import import BankImport
+    from ..services.bank_import import enabled
+
+    if not enabled():
+        return {"data": {"enabled": False, "imports": []}}
+    rows = (await db.execute(select(BankImport).order_by(BankImport.uploaded_at.desc()).limit(10))).scalars().all()
+    return {"data": {"enabled": True, "imports": [await _import_view(db, row) for row in rows]}}
+
+
+@router.post("/bank-import/preview")
+async def preview_bank_import(
+    request: Request,
+    projection: UploadFile = File(...),
+    generation: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_admin),
+):
+    """Read the two workbooks and show what loading them would do. Nothing in the portfolio changes:
+    loading is a change request that another administrator approves."""
+    from ..config import settings
+    from ..middleware.security import client_ip
+    from ..services.audit_chain import append_audit_log
+    from ..services.bank_import import ImportRefused, preview
+
+    limit = settings.BANK_IMPORT_MAX_MB * 1024 * 1024
+    files = []
+    for upload in (projection, generation):
+        content = await upload.read(limit + 1)
+        files.append((upload.filename or "workbook.xlsx", content))
+    try:
+        row = await preview(db, files[0], files[1], current_user.username)
+    except ImportRefused as refused:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(refused))
+    await append_audit_log(
+        db, user_id=current_user.id or current_user.username, user_role="admin", entity_type="BANK_IMPORT",
+        entity_id=str(row.id), action="UPLOAD", reason="Bank workbooks uploaded for preview",
+        post_state={"files": [row.projection_filename, row.generation_filename], "agrees": row.agrees,
+                    "borrowers": row.summary["borrowers"]},
+        source_ip=client_ip(request.scope, settings.TRUSTED_PROXY_HOPS))
+    await db.commit()
+    return {"data": await _import_view(db, row)}
+
+
 # ---------------------------------------------------------------- user administration (FUNC A.2)
 
 class UserStatusChange(BaseModel):

@@ -2,7 +2,7 @@
 
 > Generated from the SQLAlchemy models by `backend/scripts/generate_data_dictionary.py`. Do not edit by hand; run `python -m backend.scripts.generate_data_dictionary` and commit the result.
 
-**82 tables and views, 1172 columns.** Dates are stored as AD `DATE` columns with a paired `*_bs` text column (`YYYY-MM-DD` Bikram Sambat) where the business needs both calendars. Descriptions come from the model docstrings.
+**83 tables and views, 1188 columns.** Dates are stored as AD `DATE` columns with a paired `*_bs` text column (`YYYY-MM-DD` Bikram Sambat) where the business needs both calendars. Descriptions come from the model docstrings.
 
 ## Contents
 
@@ -21,6 +21,7 @@
 - **Documents**: `document_approval_requests`, `document_blobs`, `document_versions`, `documents`
 - **Import / ETL**: `airflow_loan_dag_runs`, `loan_data_provenance`, `loan_reconciliation_log`
 - **Bulk import tracking**: `import_batches`, `import_row_errors`
+- **Other**: `bank_imports`
 
 ## Projects
 
@@ -1891,3 +1892,28 @@ Line-by-line error log for import batch.
 | `updated_by` | VARCHAR(255) | yes |  |  |
 
 Constraints and composite indexes: index `ix_error_row` (batch_id, row_number).
+
+## Other
+
+### `bank_imports`
+
+The files as uploaded (encrypted), the reconciliation shown at preview, and the result once applied.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | UUID | no |  | PK |
+| `status` | VARCHAR(20) | no | `previewed` |  |
+| `projection_filename` | VARCHAR(255) | no |  |  |
+| `generation_filename` | VARCHAR(255) | no |  |  |
+| `projection_sha256` | VARCHAR(64) | no |  |  |
+| `generation_sha256` | VARCHAR(64) | no |  |  |
+| `projection_content` | BLOB | no |  |  |
+| `generation_content` | BLOB | no |  |  |
+| `summary` | JSONB | no |  |  |
+| `agrees` | BOOLEAN | no | `False` |  |
+| `replaces` | JSONB | yes |  |  |
+| `uploaded_by` | VARCHAR(100) | no |  |  |
+| `uploaded_at` | DATETIME | no | `now()` |  |
+| `applied_by` | VARCHAR(100) | yes |  |  |
+| `applied_at` | DATETIME | yes |  |  |
+| `result` | JSONB | yes |  |  |

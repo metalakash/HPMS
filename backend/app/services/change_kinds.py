@@ -33,6 +33,7 @@ class ChangeKind:
     apply: Apply  # (db, entity_id, changes, approver username) -> (before, after)
     label: str  # how the approvals queue names it, e.g. "Budget for"
     author_roles: FrozenSet[str] = field(default_factory=lambda: frozenset({"maker", "admin"}))
+    names_entity: bool = True  # False when entity_id is an internal id, not something to show in the queue
 
 
 _KINDS: Dict[str, ChangeKind] = {}
@@ -48,9 +49,17 @@ def get(entity_type: str) -> Optional[ChangeKind]:
     return _KINDS.get(entity_type.upper())
 
 
+def bank_wide_kinds() -> List[str]:
+    """Change types that are not about one project or loan: settings, rules, rates, imports."""
+    _load()
+    return sorted(name for name, kind in _KINDS.items() if not kind.project_scoped)
+
+
 def _load() -> None:
     # Kinds register themselves on import; imported here so the mutation service needs no list of them
-    from backend.app.services import budget_changes, fx_changes, projection_changes, settings_changes  # noqa: F401
+    from backend.app.services import (  # noqa: F401
+        bank_import, budget_changes, fx_changes, projection_changes, settings_changes,
+    )
 
 
 async def submitted_changes(db: AsyncSession, approval: ApprovalRequest) -> Dict[str, Any]:

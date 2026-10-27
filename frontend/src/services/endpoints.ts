@@ -55,7 +55,7 @@ export const authApi = {
   /** Second step: the challenge token plus an authenticator or backup code. */
   loginMfa: (body: { mfa_token: string; code: string }) =>
     api.post<TokenResponse>('/api/v1/auth/login/mfa', body).then((r) => r.data),
-  logout: () => api.post('/api/v1/auth/logout'),
+  logout: () => api.post('/api/v1/auth/logout', undefined, { timeout: 5_000 }),
   /** Profile for the bearer token; a 401 here means the stored session is stale. */
   me: () => api.get<AuthUser>('/api/v1/auth/me').then((r) => r.data),
 };

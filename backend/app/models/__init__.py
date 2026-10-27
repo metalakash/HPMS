@@ -11,6 +11,7 @@ from .financial import NewLoanDisbursementQuarter, NewLoanLimit
 from .document import Document, DocumentVersion, DocumentApprovalRequest, DocumentBlob
 from .import_tracking import ImportBatch, ImportRowError
 from .auth import User, UserRoleAssignment, ProjectOwner, LoginAttempt, RevokedToken
+from .bank_import import BankImport
 from .mfa import UserMFA, TOTPVerification, SMSVerification, BackupCode, TrustedDevice
 from .scheduler import ExportJob, ExportJobRun
 from .reporting import ReportDefinition
@@ -67,6 +68,7 @@ __all__ = [
     "ExchangeRate",
     "LoginAttempt",
     "RevokedToken",
+    "BankImport",
     "ImportBatch",
     "ImportRowError",
     "User",

@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # Admin button that replaces all project data with the synthetic demo portfolio. Hosted demo only;
     # also needs the demo accounts allowed, and refuses a database holding bank data (services/demo_reset.py)
     DEMO_RESET_ENABLED: bool = os.getenv("DEMO_RESET_ENABLED", "false").lower() == "true"
+    # Admin > "Import bank workbooks": load the bank's portfolio workbooks through the screen, with a preview and a
+    # second admin's approval. Off unless asked for, and never where demo reset is on (a public demo).
+    BANK_IMPORT_ENABLED: bool = os.getenv("BANK_IMPORT_ENABLED", "false").lower() == "true"
+    BANK_IMPORT_MAX_MB: int = int(os.getenv("BANK_IMPORT_MAX_MB", "20"))
     # PostgreSQL row policies on project data, behind the application's own checks (security/db_row_security.py,
     # migration 033). Needs the application to connect as a non-superuser, which row security never applies to.
     DB_ROW_SECURITY: bool = os.getenv("DB_ROW_SECURITY", "false").lower() == "true"

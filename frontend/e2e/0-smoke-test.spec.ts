@@ -48,9 +48,19 @@ test.describe('0. Smoke', () => {
     expect(errors).toEqual([]);
   });
 
-  test('signing out returns to the login page', async ({ authenticatedPage: page }) => {
-    await page.goto('/');
+  test('signing out returns to the login page and ends the session on the server', async ({ page }) => {
+    // Its own session: signing out revokes the token, so the worker's shared one must not be used here
+    await page.goto('/login');
+    await page.getByLabel('Username').fill(E2E_USERNAME);
+    await page.getByLabel('Password').fill(E2E_PASSWORD);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+    const token = await page.evaluate(() => JSON.parse(sessionStorage.getItem('hpms-auth') ?? '{}').state?.token);
+    expect(token).toBeTruthy();
+
     await page.getByRole('button', { name: 'Sign out' }).click();
     await expect(page).toHaveURL(/\/login$/);
+    const after = await page.request.get('/api/v1/projects', { headers: { Authorization: `Bearer ${token}` } });
+    expect(after.status()).toBe(401);
   });
 });

@@ -36,6 +36,7 @@ their own change and the two checks of a two-step rule come from different peopl
 | `SETTING` | Application settings | 2 | approver, admin | admin |
 | `APPROVAL_RULE` | Approval rules | 2 | approver, admin | admin |
 | `EXCHANGE_RATE` | Exchange rates | 2 | approver, admin | approver, admin |
+| `BANK_IMPORT` | Bank workbook import | 2 | approver, admin | admin |
 
 ## 3. Who may propose each change
 
@@ -45,6 +46,7 @@ their own change and the two checks of a two-step rule come from different peopl
 | `FINANCIAL_PERIOD` | maker, admin | a project |
 | `COVENANT_TERMS` | admin | a project |
 | `APPROVAL_RULE` | admin | bank-wide |
+| `BANK_IMPORT` | admin | bank-wide |
 | `BUDGET_LINE` | admin, maker | a project the proposer may update |
 | `EXCHANGE_RATE` | admin, maker | bank-wide |
 | `LOAN_PROJECTION` | admin, maker | a project the proposer may update |
@@ -168,7 +170,9 @@ Set on the server, outside the application; a change needs a restart. Secrets ar
 | `JWT_EXPIRY_MINUTES` | Sign-in tokens | `480` | `auth_middleware` | 8 hours |
 | `USE_LDAP` | Directory sign-in | `false` | `routes_auth`, `auth_selection`, `demo_reset` |  |
 | `ALLOW_DEV_AUTH` | Demo | `(unset)` | `auth_selection`, `demo_reset` | Built-in demo accounts (public passwords). Unset = allowed only while DEBUG=true; see security/auth_selection.py |
-| `DEMO_RESET_ENABLED` | Demo | `false` | `demo_reset` | Admin button that replaces all project data with the synthetic demo portfolio. Hosted demo only; also needs the demo accounts allowed, and refuses a database holding bank data (services/demo_reset.py) |
+| `DEMO_RESET_ENABLED` | Demo | `false` | `bank_import`, `demo_reset` | Admin button that replaces all project data with the synthetic demo portfolio. Hosted demo only; also needs the demo accounts allowed, and refuses a database holding bank data (services/demo_reset.py) |
+| `BANK_IMPORT_ENABLED` | Other | `false` | `bank_import` | Admin > "Import bank workbooks": load the bank's portfolio workbooks through the screen, with a preview and a second admin's approval. Off unless asked for, and never where demo reset is on (a public demo). |
+| `BANK_IMPORT_MAX_MB` | Other | `20` | `routes_admin`, `bank_import` |  |
 | `DB_ROW_SECURITY` | Data security | `false` | `auth_middleware`, `db_row_security` | PostgreSQL row policies on project data, behind the application's own checks (security/db_row_security.py, # migration 033). Needs the application to connect as a non-superuser, which row security never applies to. |
 | `LOGIN_MAX_FAILURES` | Other | `5` | `signin_guard` | Interactive API documentation (/docs, /redoc, /openapi.json). Off in production unless asked for: it maps every endpoint for an attacker. Unset = on while DEBUG is on. Sign-in protection (services/signin_guard.py): failed attempts per username, then per source address, within the window; over the limit, sign-in is refused for the rest of the window. |
 | `LOGIN_IP_MAX_FAILURES` | Other | `20` | `signin_guard` |  |

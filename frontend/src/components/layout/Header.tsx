@@ -13,10 +13,11 @@ export function Header() {
   const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
   const navigate = useNavigate();
 
-  const handleLogout = () => {
-    // Stateless JWT: the server call is informational, so don't block on it.
-    // Ask the server to revoke the token first (it needs the token to do so), then clear the session
-    void authApi.logout().catch(() => undefined).finally(logout);
+  const handleLogout = async () => {
+    // The server revokes the token (it needs the token to do so), then the session is cleared. Waiting for it
+    // means a sign-out is final before the screen changes; an unreachable server only delays it a few seconds.
+    await authApi.logout().catch(() => undefined);
+    logout();
     navigate('/login', { replace: true });
   };
 
@@ -42,7 +43,7 @@ export function Header() {
       </div>
       <button
         type="button"
-        onClick={handleLogout}
+        onClick={() => void handleLogout()}
         className="rounded-md p-2 hover:bg-surface-2"
         aria-label="Sign out"
         title="Sign out"

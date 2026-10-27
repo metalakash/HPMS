@@ -204,7 +204,9 @@ async def _entity_labels(db: AsyncSession, approvals) -> Dict[tuple, str]:
             kind = "PROJECT"
             covenant.add(a)
         elif registered:
-            labels[(a.entity_type.upper(), a.entity_id)] = f"{registered.label} {str(a.entity_id).replace('_', ' ').lower()}"
+            labels[(a.entity_type.upper(), a.entity_id)] = (
+                f"{registered.label} {str(a.entity_id).replace('_', ' ').lower()}" if registered.names_entity
+                else registered.label)
         if kind in wanted:
             try:
                 wanted[kind].append(UUID(str(a.entity_id)))
