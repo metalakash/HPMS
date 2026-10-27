@@ -5,7 +5,7 @@ services:
     dockerfilePath: ./backend/Dockerfile
     dockerContext: .
     plan: free
-    healthCheckPath: /docs
+    healthCheckPath: /health  # API docs are off in production (API_DOCS_ENABLED), so /docs answers 404 and fails the check
     envVars:
       - key: DATABASE_URL
         fromDatabase:
