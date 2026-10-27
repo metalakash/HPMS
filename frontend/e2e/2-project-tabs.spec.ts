@@ -11,7 +11,7 @@ test.describe('2. Project tabs', () => {
     authenticatedPage: page,
     api,
   }) => {
-    const { rows } = await fetchProjects(api, { stage: 'operation', page_size: 1 });
+    const { rows } = await fetchProjects(api, { status: 'under_operation', page_size: 1 });  // not a settled one
     const project = rows[0];
     const base = `/api/v1/projects/${project.id}`;
     const generation = (await (await api.get(`${base}/generation-ppa`)).json()).data;
@@ -85,7 +85,7 @@ test.describe('2. Project tabs', () => {
     authenticatedPage: page,
     api,
   }) => {
-    const { rows } = await fetchProjects(api, { stage: 'operation', page_size: 1 });
+    const { rows } = await fetchProjects(api, { status: 'under_operation', page_size: 1 });  // not a settled one
     const loansUrl = `/api/v1/projects/${rows[0].id}/loan-accounts`;
     const before = (await (await api.get(loansUrl)).json()).data;
 

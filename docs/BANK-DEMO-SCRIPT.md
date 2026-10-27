@@ -40,8 +40,8 @@ Point each part at the team it matters to most, so every department sees its own
 | Min | Step | Say | Click path |
 |---|---|---|---|
 | 0:00 | **Frame it** | "Synthetic data, our requirements: this is built against the RFP we issued. Of its 116 requirements, these are done, these wait on input from us, these are outside the software." | RFP status report: the summary band |
-| 2:00 | **Portfolio** | "Our hydropower book on one screen: by stage, province and capacity." | `admin`: Dashboard. Then Projects: filter by province and stage |
-| 4:00 | **One project** | "Everything about a plant in one place, instead of asking three departments." | Projects, **Kali Gandaki A**. Tabs: Generation & PPA (contract against actual energy), Hydrology, Land & governance (shareholding, board), ESG (CO₂ avoided) |
+| 2:00 | **Portfolio** | "Our hydropower book on one screen: by stage, province and capacity. The demo book has the shape of ours: 44 facilities, 17 in operation, 14 under construction, 10 yet to start drawdown, about NPR 39 billion in limits. The names are made up." | `admin`: Dashboard. Then Projects: filter by province and stage |
+| 4:00 | **One project** | "Everything about a plant in one place, instead of asking three departments." | Projects, **Dwari Khola III Hydropower Project**. Tabs: Generation & PPA (contract against actual energy), Hydrology, Land & governance (shareholding, board), ESG (CO₂ avoided) |
 | 6:00 | **Documents** | "Sanction letters, PPAs, studies: versioned, encrypted, never deleted." | Documents tab: open the sanction letter, show versions 1 and 2, download v1 |
 | 7:00 | **Budget against cost** | "Overspend by cost head, flagged; changes go through approval, including a bulk upload from Excel." | Budget tab: heads over budget. Click **Upload budget** to show the preview only, then Cancel |
 | 8:00 | **Milestones and risk** | "Construction schedule against plan; delays feed the risk register." | Milestones tab ("days late"), Risk register tab, Insurance tab (expiring within 90 days) |

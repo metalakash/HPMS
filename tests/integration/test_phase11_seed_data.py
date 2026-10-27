@@ -38,10 +38,25 @@ def test_projects_are_deterministic_unique_and_use_the_applications_vocabulary()
     assert len(projects) == 50
     assert len({p["code"] for p in projects}) == 50
     assert len({p["name_en"] for p in projects}) == 50
-    # Real projects from the DoED list; it has none in Madhesh
+    # Placed on rivers from the DoED list, which has none in Madhesh
     provinces = {p["province"] for p in projects}
     assert provinces == {"Koshi", "Bagmati", "Gandaki", "Lumbini", "Karnali", "Sudurpashchim"}
-    assert {"Kali Gandaki A", "Khimti -I", "Kulekhani-I"} <= {p["name_en"] for p in projects}
+    # Names are invented: none is a project or promoter in the licence list
+    licensed = {realistic._name_key(r[k]) for r in realistic.load_source() for k in ("project_name", "promoter") if r[k]}
+    assert not {realistic._name_key(p["name_en"]) for p in projects} & licensed
+    assert not {realistic._name_key(p["promoter"]) for p in projects} & licensed
+    # The shape of a bank's hydropower book, with limits adding up to rounded totals per status
+    by_status = {}
+    for p in projects:
+        by_status.setdefault(p["status"], []).append(p)
+    assert {k: len(v) for k, v in by_status.items()} == {
+        "under_operation": 17, "under_construction": 14, "yet_to_start_drawdown": 10, "settled": 3,
+        "proposal_under_pipeline": 2, "under_review": 2, "approved": 2}
+    for status, (*_, total, _usual, _large) in realistic.BOOK.items():
+        assert sum(p["limit"] for p in by_status[status]) == total * realistic.CRORE
+    assert all(p["drawn_share"] == 1 for p in by_status["under_operation"])
+    assert all(0 < p["drawn_share"] <= 1 for p in by_status["under_construction"])
+    assert all(p["drawn_share"] == 0 for p in by_status["yet_to_start_drawdown"])
     assert {p["stage"] for p in projects} == {"feasibility", "construction", "operation"}
     valid_statuses = {s.value for s in PipelineStatus}
     for p in projects:
@@ -235,20 +250,21 @@ async def test_seed_creates_financed_projects_that_pass_validation(seeded):
     loans = (await seeded.execute(select(LoanAccount))).scalars().all()
     stages = dict((await seeded.execute(select(Project.id, Project.project_stage))).all())
 
-    # One loan for every project past feasibility, none before
-    assert sorted(stages[l.project_id] for l in loans) == ["construction"] * 17 + ["operation"] * 17
-    assert len({l.project_id for l in loans}) == len(loans) == 34
-    assert len({l.finacle_account_id for l in loans}) == 34
+    # One loan for every facility the bank still holds: none for proposals or settled facilities
+    assert sorted(stages[l.project_id] for l in loans) == ["construction"] * 24 + ["operation"] * 17
+    assert len({l.project_id for l in loans}) == len(loans) == 41
+    assert len({l.finacle_account_id for l in loans}) == 41
     for loan in loans:
-        assert 0 < loan.disbursed_amount <= loan.sanctioned_amount
-        assert 0 < loan.outstanding_principal <= loan.disbursed_amount
+        assert 0 <= loan.disbursed_amount <= loan.sanctioned_amount
+        assert 0 <= loan.outstanding_principal <= loan.disbursed_amount
+    assert sum(1 for l in loans if l.disbursed_amount == 0) == 10  # yet to start drawdown
 
     delinquent = [l for l in loans if l.overdue_principal or l.overdue_interest]
     assert 1 <= len(delinquent) <= 6
 
     report = await integrity.validate(seeded, today=TODAY)
     assert report.errors == []
-    assert (report.projects, report.loans) == (50, 34)
+    assert (report.projects, report.loans) == (50, 41)
 
 
 async def test_reseeding_replaces_the_data_with_an_identical_set(seeded):
@@ -500,7 +516,7 @@ async def test_project_filters_combine(api):
 
 
 async def test_project_detail_endpoints_agree_with_each_other(api, seeded):
-    rows, _ = await _all_projects(api, stage="operation")
+    rows, _ = await _all_projects(api, status="under_operation")
     project = rows[0]
     base = f"/api/v1/projects/{project['id']}"
 
@@ -560,7 +576,7 @@ async def test_unknown_project_is_404_on_every_detail_endpoint(api):
 async def test_loan_list_is_paginated_and_matches_the_seed(api):
     r = await api.get("/api/v1/loan-accounts", params={"page_size": 100})
     body = r.json()
-    assert r.status_code == 200 and body["meta"]["total_count"] == len(body["data"]) == 34
+    assert r.status_code == 200 and body["meta"]["total_count"] == len(body["data"]) == 41
     assert all(l["sync_status"] == "success" for l in body["data"])
 
     failed = (await api.get("/api/v1/loan-accounts", params={"status": "failed"})).json()
@@ -568,14 +584,15 @@ async def test_loan_list_is_paginated_and_matches_the_seed(api):
 
 
 async def test_project_tab_endpoints_serve_the_seeded_operations_data(api):
-    rows, _ = await _all_projects(api, stage="operation")
+    rows, _ = await _all_projects(api, status="under_operation")
     base = f"/api/v1/projects/{rows[0]['id']}"
 
     generation = (await api.get(f"{base}/generation-ppa")).json()["data"]
     assert generation["ppa"]["agreement_number"] == f"NEA-{rows[0]['project_code']}"
-    assert generation["summary"]["months_available"] == len(generation["monthly_data"]) == 12
+    months_on_file = realistic.GENERATION_MONTHS
+    assert generation["summary"]["months_available"] == len(generation["monthly_data"]) == months_on_file
     months = [m["month"] for m in generation["monthly_data"]]
-    assert months == sorted(months) and len(set(months)) == 12  # oldest first
+    assert months == sorted(months) and len(set(months)) == months_on_file  # oldest first
     for month in generation["monthly_data"]:
         assert month["season"] in ("wet", "dry")
         expected = round((month["actual_mwh"] - month["contract_mwh"]) / month["contract_mwh"] * 100, 2)
@@ -598,8 +615,8 @@ async def test_project_tab_endpoints_serve_the_seeded_operations_data(api):
 
 
 async def test_financed_projects_have_milestones_risks_and_eight_quarters_of_covenants(api):
-    for stage in ("construction", "operation"):
-        rows, _ = await _all_projects(api, stage=stage)
+    for stage, status in (("construction", "under_construction"), ("operation", "under_operation")):
+        rows, _ = await _all_projects(api, status=status)
         base = f"/api/v1/projects/{rows[0]['id']}"
 
         milestones = (await api.get(f"{base}/milestones")).json()["data"]
@@ -621,7 +638,7 @@ async def test_seeded_covenant_results_come_from_the_engine_and_show_some_stress
     from backend.app.models.operations import CovenantHistory, CovenantTerms, FinancialPeriod
     from backend.app.services.covenant_service import CovenantService
 
-    assert await _count(seeded, FinancialPeriod) == await _count(seeded, CovenantHistory) == 34 * 11
+    assert await _count(seeded, FinancialPeriod) == await _count(seeded, CovenantHistory) == 41 * 11
     assert 3 <= await _count(seeded, CovenantTerms) <= 8
     assert {h.data_provenance for h in (await seeded.execute(select(CovenantHistory))).scalars()} == {"CALCULATED"}
 
@@ -632,7 +649,10 @@ async def test_seeded_covenant_results_come_from_the_engine_and_show_some_stress
     assert dscr["compliant"] > dscr.get("breached", 0) > 0  # mostly healthy, something to find
     # Operating projects are tested once a full year of income is on file: 17 projects x 8 quarters
     assert sum(count for status, count in dscr.items() if status != "not_tested") == 17 * 8
-    assert set(await by_status(CovenantHistory.ltv_status)) <= {"compliant", "warning", "breached"}
+    # LTV is tested wherever something has been drawn; a facility yet to start has nothing to secure
+    undrawn = select(LoanAccount.project_id).where(LoanAccount.disbursed_amount == 0)
+    drawn_ltv = await by_status(CovenantHistory.ltv_status, CovenantHistory.project_id.not_in(undrawn))
+    assert set(drawn_ltv) <= {"compliant", "warning", "breached"}
 
     # A project still being built has no income to cover debt with; only its LTV is tested
     building = select(Project.id).where(Project.project_stage == "construction")
@@ -642,7 +662,7 @@ async def test_seeded_covenant_results_come_from_the_engine_and_show_some_stress
         return sorted((str(h.project_id), h.quarter_ad, h.dscr_value, h.icr_value, h.ltv_value) for h in rows)
 
     before = snapshot((await seeded.execute(select(CovenantHistory))).scalars())
-    assert await CovenantService.recalculate_all(seeded, today=TODAY) == 34
+    assert await CovenantService.recalculate_all(seeded, today=TODAY) == 41
     seeded.expire_all()
     assert snapshot((await seeded.execute(select(CovenantHistory))).scalars()) == before
 
@@ -659,9 +679,10 @@ async def test_seeded_water_licences_include_renewals_due(api, seeded):
 
 
 async def test_operating_projects_have_maintenance_and_plant_performance(api):
-    rows, _ = await _all_projects(api, stage="operation")
+    rows, _ = await _all_projects(api, status="under_operation")
     data = (await api.get(f"/api/v1/projects/{rows[0]['id']}/maintenance", params={"months": 12})).json()["data"]
-    assert data["maintenance_schedules"]["upcoming_count"] == 2
+    # Two jobs are booked 10 to 80 days after the seed's date; the API counts from the real clock
+    assert data["maintenance_schedules"]["upcoming_count"] in (1, 2)
     assert data["maintenance_logs"]["recent_count"] >= 1
     assert data["plant_performance"]["months_available"] >= 11
     assert 0 < data["plant_performance"]["avg_plf_pct"] <= 100
@@ -673,9 +694,9 @@ async def test_each_loan_has_one_current_rate_matching_the_loan(seeded):
         select(LoanAccountRateHistory.loan_account_id, LoanAccountRateHistory.interest_rate_pct)
         .where(LoanAccountRateHistory.is_current == "Y"))).all())
     loans = (await seeded.execute(select(LoanAccount))).scalars().all()
-    assert len(current) == len(loans) == 34
+    assert len(current) == len(loans) == 41
     assert all(current[loan.id] == loan.interest_rate_pct for loan in loans)
-    assert await _count(seeded, LoanAccountRateHistory) == 68
+    assert await _count(seeded, LoanAccountRateHistory) == 82
 
 
 async def test_reseeding_clears_stale_change_requests(seeded):
@@ -751,7 +772,7 @@ async def test_seeded_statement_revenue_is_the_generation_revenue(seeded):
 async def test_performance_lists_operating_projects_weakest_delivery_first(api, seeded):
     from backend.app.models.operations import EnergyGenerationData
     rows = (await api.get("/api/v1/analytics/performance")).json()["data"]
-    assert len(rows) == 17 and {r["months"] for r in rows} == {12}
+    assert len(rows) == 17 and {r["months"] for r in rows} == {realistic.GENERATION_MONTHS}
     delivery = [Decimal(r["delivery_pct"]) for r in rows]
     assert delivery == sorted(delivery) and all(80 < d < 110 for d in delivery)
 
@@ -817,7 +838,7 @@ def test_projection_draws_the_undrawn_limit_while_building_and_repays_on_schedul
     assert rows[0] == {"period": quarters[0], "is_opening": True, "disbursement": 0, "repayment": 0,
                        "outstanding": Decimal("700.00")}
     assert sum(r["disbursement"] for r in rows) == Decimal("300.00")
-    assert all(r["disbursement"] == 0 for r in rows[realistic.DRAWDOWN_QUARTERS + 1:])
+    assert all(r["disbursement"] == 0 for r in rows[7:])  # drawn over six quarters by default
     # The first instalment (1 June 2027) falls in the quarter ending mid-July 2027
     assert [r["repayment"] for r in rows[1:5]] == [0, 0, 0, Decimal("100")]
     for before, after in zip(rows, rows[1:]):
@@ -897,3 +918,36 @@ async def test_projection_respects_visibility_while_the_energy_share_is_bank_wid
 
     everyone = (await api.get("/api/v1/energy-financing")).json()["data"]["quarters"]
     assert (await api.get("/api/v1/energy-financing", headers=guest)).json()["data"]["quarters"] == everyone
+
+
+# ------------------------------------------------------------------ consortium facilities
+
+def test_covenants_scale_the_banks_share_up_to_the_whole_facility():
+    from backend.app.services.covenant_service import _LoanBook
+    loan = SimpleNamespace(id=uuid.uuid4(), fx_rate_to_npr=None, sanctioned_amount=Decimal("250"),
+                           outstanding_principal=Decimal("200"))
+    due = SimpleNamespace(loan_account_id=loan.id, due_date_ad=date(2026, 6, 1), principal_due=Decimal("10"),
+                          interest_due=Decimal("5"), principal_paid=ZERO, paid_date_ad=None)
+    alone = _LoanBook([loan], [due], [])
+    shared = _LoanBook([loan], [due], [], facility_limit=Decimal("1000"))  # the bank holds a quarter
+
+    assert alone.due_between(date(2026, 1, 1), date(2026, 12, 31)) == (Decimal("10"), Decimal("5"))
+    assert shared.due_between(date(2026, 1, 1), date(2026, 12, 31)) == (Decimal("40"), Decimal("20"))
+    assert shared.outstanding_at(date(2026, 7, 16), is_latest=True) == Decimal("800")
+    # A facility no larger than the bank's own limit changes nothing
+    assert _LoanBook([loan], [due], [], facility_limit=Decimal("250")).facility_factor == 1
+
+
+async def test_every_shared_facility_records_its_consortium(seeded):
+    from backend.app.models.consortium import ConsortiumFacility, ConsortiumMember
+    facilities = (await seeded.execute(select(ConsortiumFacility))).scalars().all()
+    loans = {l.project_id: l for l in (await seeded.execute(select(LoanAccount))).scalars()}
+    assert facilities and all(f.project_id in loans for f in facilities)
+    for f in facilities:
+        members = (await seeded.execute(
+            select(ConsortiumMember).where(ConsortiumMember.consortium_facility_id == f.id))).scalars().all()
+        ours = next(m for m in members if m.institution_name == "Our bank")
+        assert ours.committed_amount == loans[f.project_id].sanctioned_amount < f.total_facility_limit
+        assert sum(1 for m in members if m.is_lead) == 1
+        assert (f.sbl_role == "LEAD_BANK") == ours.is_lead
+        assert abs(sum(m.share_pct for m in members) - 100) < Decimal("0.01")

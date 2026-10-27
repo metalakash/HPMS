@@ -31,6 +31,7 @@ test.describe('12. User admin', () => {
     await row.getByRole('button', { name: 'Unblock' }).click();
     await page.getByRole('dialog').getByLabel('Reason').fill('Back from leave (E2E)');
     await page.getByRole('dialog').getByRole('button', { name: 'Unblock account' }).click();
+    await expect(page.getByRole('dialog')).toBeHidden();  // saved before the reload, which would cut it off
     await page.reload();
     await expect(row).toContainText('Active');
 
@@ -39,6 +40,7 @@ test.describe('12. User admin', () => {
     await page.getByRole('dialog').getByLabel('Role in HPMS').selectOption('auditor');
     await page.getByRole('dialog').getByLabel('Reason').fill('Covering internal audit (E2E)');
     await page.getByRole('dialog').getByRole('button', { name: 'Save role' }).click();
+    await expect(page.getByRole('dialog')).toBeHidden();
     await page.reload();
     await expect(row).toContainText('Auditor');
     await expect(row).toContainText('Set in HPMS');
@@ -47,6 +49,7 @@ test.describe('12. User admin', () => {
     await page.getByRole('dialog').getByLabel('Role in HPMS').selectOption('');
     await page.getByRole('dialog').getByLabel('Reason').fill('Cover ended (E2E)');
     await page.getByRole('dialog').getByRole('button', { name: 'Save role' }).click();
+    await expect(page.getByRole('dialog')).toBeHidden();
     await page.reload();
     await expect(row).not.toContainText('Set in HPMS');
   });

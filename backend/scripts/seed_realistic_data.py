@@ -1,12 +1,17 @@
-"""Seed a realistic test portfolio: 50 real hydropower projects with synthetic lending data.
+"""Seed a realistic demo portfolio: 50 made-up hydropower projects shaped like a bank's hydropower book.
 
-Project identity (name, capacity, river, province, district, municipality, licence stage) comes
-from backend/data/merged_hydropower_master.csv, the Niti Foundation / DoED licence list. Everything
-about the bank's relationship with a project (loans, schedules, covenants, milestones, risks,
-operations, governance, ESG) is synthetic, generated from the project's size and stage. So are the
-bank-wide figures built on top of the loans: the quarterly loan projection, the energy bonds, the
-bank's total lending and the regulator's minimum share for energy, and the planned new limits. The output
-is deterministic, including project ids, so tests and links survive a reseed.
+The book has the shape of a commercial bank's: 17 facilities in operation, 14 under construction,
+10 yet to start drawdown and 3 settled, with similar capacity spreads, limits that add up to rounded
+totals per status (about NPR 39 billion in all) and drawn shares like a real book's, plus 6
+proposals still being appraised. Each facility is the bank's share of a consortium loan.
+
+Names and promoters are invented and checked against every name in
+backend/data/merged_hydropower_master.csv (the Niti Foundation / DoED licence list), so no demo
+project can be mistaken for an actual one; only the river, province, district and municipality come
+from that list. Everything else (loans, schedules, covenants, milestones, risks, operations,
+governance, ESG, the quarterly loan projection, the energy bonds, the bank's total lending, the
+regulator's minimum share for energy and the planned new limits) is synthetic. The output is
+deterministic, including project ids, so tests and links survive a reseed.
 
 WARNING: this deletes every project and everything that hangs off one (loans, schedules, milestones,
 risks, licences, operations records, ownership), the loan projection, bonds and energy-financing
@@ -20,17 +25,19 @@ Run from the repository root:
 import asyncio
 import csv
 import random
+import re
 import uuid
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.database import engine
 from backend.app.models.auth import ProjectOwner
+from backend.app.models.consortium import ConsortiumFacility, ConsortiumMember
 from backend.app.models.financial import (
     DisbursementTranche, EnergyBond, EnergyFinancingQuarter, LoanAccount, LoanAccountRateHistory,
     LoanProjectionQuarter, NewLoanDisbursementQuarter, NewLoanLimit, Repayment,
@@ -49,7 +56,7 @@ from backend.app.services.covenant_service import CovenantService
 from backend.app.services.filing_calendar import FilingPeriod, period_ends
 from backend.app.services.risk_service import bs_string, compute_severity
 
-SEED = 20261005
+SEED = 20262433  # checked locally: no invented name shares a distinctive word with a borrower of the bank
 SOURCE = Path(__file__).resolve().parent.parent / "data" / "merged_hydropower_master.csv"
 ID_NAMESPACE = uuid.UUID("6f0f3b52-5d0a-4a3e-9d0b-2b7f3f1c9a10")
 COST_PER_MW = Decimal("200000000")  # NPR 20 crore per MW, typical for run-of-river
@@ -66,35 +73,48 @@ PROVINCE_CODES = dict(PROVINCES.values())
 BASINS = {"Koshi": "Koshi", "Madhesh": "Bagmati", "Bagmati": "Bagmati", "Gandaki": "Gandaki",
           "Lumbini": "West Rapti", "Karnali": "Karnali", "Sudurpashchim": "Mahakali"}
 
-# DoED licence type -> project stage, how many of each to take, and the statuses that fit the stage
-STAGES = {
-    "Operation": ("operation", 17, ["under_operation"]),
-    "Generation": ("construction", 17, ["yet_to_start_drawdown", "under_construction", "under_construction"]),
-    "Survey": ("feasibility", 16, ["proposal_under_pipeline", "under_review", "approved"]),
+# The book is shaped like a commercial bank's hydropower portfolio: how many facilities sit at each
+# status, how large they are and how much of their limit is drawn. Totals are rounded and every
+# facility's figures are drawn at random; no row stands for a real borrower.
+#
+# status -> (DoED licence type to pick from, stage, capacity bands as (low MW, high MW, how many),
+#            the status's total limit in crore, per-MW limit range in crore with the odd larger one)
+BOOK = {
+    "under_operation": ("Operation", "operation", [(2, 8, 6), (8, 30, 8), (30, 80, 3)], 960, (0.4, 3.5), (5, 12)),
+    "under_construction": ("Generation", "construction", [(2, 8, 2), (15, 30, 6), (30, 60, 6)], 1390, (1.0, 5.0), (8, 16)),
+    "yet_to_start_drawdown": ("Generation", "construction", [(1, 12, 2), (12, 25, 2), (30, 50, 4), (80, 200, 2)], 1580,
+                              (1.5, 5.5), (9, 14)),
+    "settled": ("Operation", "operation", [(3, 12, 2), (60, 120, 1)], 0, None, None),
 }
+# Proposals still being appraised: survey licences, no facility yet
+PIPELINE = ("Survey", "feasibility", [(10, 60, 6)], ["proposal_under_pipeline", "under_review", "approved"])
+# Share of its limit a facility under construction has drawn: (low, high, how many)
+CONSTRUCTION_DRAWN = [(0.12, 0.40, 3), (0.40, 0.60, 2), (0.75, 1.00, 9)]
 WET_MONTHS = {6, 7, 8, 9, 10, 11}
 # Share of installed capacity generated, and the PPA rate in NPR per MWh (posted rate after escalation)
 SEASONS = {True: ("wet", Decimal("0.85"), Decimal("5600")), False: ("dry", Decimal("0.45"), Decimal("9800"))}
+GENERATION_MONTHS = 24   # monthly generation on record for a plant in operation
 FINANCIAL_QUARTERS = 11  # three more than the eight shown, so the oldest shown has a full year behind it
 
 # Loan projection and energy financing. The projection opens at the last fiscal quarter end reached.
-PROJECTION_QUARTERS = 16        # quarters projected after the opening position
+PROJECTION_QUARTERS = 24        # six years projected after the opening position
 RECORDED_QUARTERS = 8           # quarters before the opening for which the energy share is on record
-DRAWDOWN_QUARTERS = 6           # a project still building draws the rest of its limit over this many
-OPENING_ENERGY_SHARE = Decimal("0.108")   # energy financing over the bank's lending at the opening
-BANK_LOAN_GROWTH = Decimal("0.010")       # the bank's total lending, per quarter
+OPENING_ENERGY_SHARE = Decimal("0.09")    # energy financing over the bank's lending at the opening
+BANK_LOAN_GROWTH = Decimal("0.02")        # the bank's total lending, per quarter
 HYDRO_BOOK_GROWTH = Decimal("0.025")      # the hydropower book, per quarter, before the opening
 # Minimum energy share: (quarters from the opening at which it takes effect, per cent). Illustrative steps.
-MINIMUM_SHARE_STEPS = [(-RECORDED_QUARTERS, Decimal("6.5")), (-4, Decimal("7")), (0, Decimal("8")), (6, Decimal("10"))]
+MINIMUM_SHARE_STEPS = [(-RECORDED_QUARTERS, Decimal("6.5")), (-1, Decimal("7")), (3, Decimal("8")), (7, Decimal("10"))]
 # Bonds: (name, share of the opening hydropower book, years since investment, tenor in years, yield)
 BONDS = [
-    ("Infrastructure Energy Bond 7%", Decimal("0.025"), 3, 7, Decimal("7")),
-    ("Green Energy Debenture 7.5%", Decimal("0.020"), 2, 10, Decimal("7.5")),
-    ("Hydropower Development Bond 4%", Decimal("0.015"), 4, 6, Decimal("4")),
+    ("Infrastructure Energy Bond 7%", Decimal("0.027"), 3, 7, Decimal("7")),
+    ("Green Energy Debenture 7.5%", Decimal("0.027"), 3, 10, Decimal("7.5")),
+    ("Hydropower Development Bond 4%", Decimal("0.012"), 5, 15, Decimal("4")),
 ]
-NEW_LIMIT_SHARES = [Decimal("0.22"), Decimal("0.25"), Decimal("0.28")]  # of the opening book, one per fiscal year
+NEW_LIMIT_SHARES = [Decimal("0.16"), Decimal("0.18"), Decimal("0.22")]  # of the opening book, one per fiscal year
 NEW_LIMIT_DRAWDOWN = [Decimal("10"), Decimal("30"), Decimal("40"), Decimal("20")]  # per cent drawn in each year
 CRORE = Decimal("10000000")
+HALF_CRORE = Decimal("5000000")
+PARTNER_BANKS = ["Partner Bank A", "Partner Bank B", "Partner Bank C"]
 
 
 def money(value: Decimal) -> Decimal:
@@ -119,35 +139,127 @@ def load_source() -> List[Dict[str, str]]:
         return [row for row in csv.DictReader(handle) if row["province"] in PROVINCES and row["capacity_mw"]]
 
 
+MAJOR_RIVERS = {"Arun", "Bheri", "Karnali", "Marsyangdi", "Seti", "Sunkoshi", "Tamakoshi", "Tamor", "Trishuli",
+                "Mahakali", "Kaligandaki", "Likhu", "Madi", "Rapti", "Indrawati", "Melamchi", "Balephi"}
+NAME_PREFIXES = ["Upper ", "Lower ", "Middle ", "", "", "", ""]
+NAME_SUFFIXES = ["", "", "", " II", " III"]
+
+
+def _name_key(name: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9 ]", " ", name.lower()).replace("hydro power", "hydropower").split())
+
+
+def _river(row: Dict[str, str]) -> str:
+    """The river's name as a project would carry it, e.g. 'Seti Khola'."""
+    first = re.split(r"[,/&]| and ", row["river"])[0]  # some licences name two streams, e.g. "Chulepu,Dhunde"
+    river = " ".join(first.replace("River", "").split()).title()
+    if river.endswith(("Khola", "Gad", "Nadi")) or len(river.split()) > 1 or river in MAJOR_RIVERS:
+        return river
+    return f"{river} Khola"
+
+
+def _invent(rng: random.Random, row: Dict[str, str], capacity: Decimal, licence_type: str, taken: set) -> Dict[str, str]:
+    """A made-up project on a real river: a name and promoter that no licence in the DoED list
+    carries, so no demo facility can be mistaken for an actual project or borrower."""
+    river = _river(row)
+    kind = "Small Hydropower Project" if capacity < 10 else "Hydropower Project"
+    while True:
+        base = f"{rng.choice(NAME_PREFIXES)}{river}{rng.choice(NAME_SUFFIXES)}"
+        name, promoter = f"{base} {kind}", f"{base} Hydropower Ltd."
+        keys = {_name_key(name), _name_key(base), _name_key(promoter)}
+        if not keys & taken:
+            break
+    taken.update(keys)
+    return {"name": name, "promoter": promoter}
+
+
+def _pick(rng: random.Random, pool: List[Dict[str, str]], bands, licence_type: str, taken: set) -> List[Dict[str, Any]]:
+    """One made-up project per place, sized by the bands. Locations come from licences of the
+    same type, so plants in operation sit where plants operate and proposals where surveys are."""
+    out: List[Dict[str, Any]] = []
+    for low, high, count in bands:
+        for row in rng.sample(pool, count):
+            capacity = Decimal(str(round(rng.uniform(low, high), 1 if high > 10 else 2)))
+            out.append({"row": row, "capacity": capacity, "licence": licence_type,
+                        **_invent(rng, row, capacity, licence_type, taken)})
+    return out
+
+
+def _spread_provinces(rng: random.Random, picked: List[Dict[str, Any]], source: List[Dict[str, str]], taken: set) -> None:
+    """Every province with licences should be findable through the UI's province filter: for each
+    missing one, move a project from the best-represented province to a river there."""
+    for province in sorted({r["province"] for r in source} - {p["row"]["province"] for p in picked}):
+        counts: Dict[str, int] = {}
+        for p in picked:
+            counts[p["row"]["province"]] = counts.get(p["row"]["province"], 0) + 1
+        crowded = max(sorted(counts), key=counts.get)
+        victim = next(p for p in picked if p["row"]["province"] == crowded)
+        places = [r for r in source if r["province"] == province and r["license_type"] == victim["licence"]] or \
+                 [r for r in source if r["province"] == province]
+        victim["row"] = rng.choice(sorted(places, key=lambda r: r["project_name"]))
+        victim.update(_invent(rng, victim["row"], victim["capacity"], victim["licence"], taken))
+
+
 def build_projects(rng: random.Random) -> List[Dict[str, Any]]:
-    """50 real projects: the largest of each licence stage plus a random spread of the rest."""
-    source = load_source()
-    chosen: List[Dict[str, Any]] = []
-    for licence_type, (stage, count, statuses) in STAGES.items():
+    """50 made-up projects on real rivers: 44 facilities in the shape of a bank's hydropower book, plus 6 proposals."""
+    source = [r for r in load_source() if r["river"].strip() and r["district"].strip()]
+    # Every project and promoter name in the public DoED list is off limits for an invented name
+    taken = {_name_key(r[key]) for r in load_source() for key in ("project_name", "promoter") if r[key]}
+    picked: List[Dict[str, Any]] = []
+    for status, (licence_type, stage, bands, *_rest) in BOOK.items():
         pool = sorted((r for r in source if r["license_type"] == licence_type), key=lambda r: r["project_name"])
-        largest = sorted(pool, key=lambda r: -float(r["capacity_mw"]))[:5]
-        rest = [r for r in pool if r not in largest]
-        picked = largest + rng.sample(rest, count - len(largest))
-        # Every province this stage has should be findable through the UI's province filter:
-        # swap a randomly drawn row from the best-represented province for one from each missing province.
-        for province in sorted({r["province"] for r in pool} - {r["province"] for r in picked}):
-            counts: Dict[str, int] = {}
-            for row in picked[5:]:
-                counts[row["province"]] = counts.get(row["province"], 0) + 1
-            crowded = max(sorted(counts), key=counts.get)
-            victim = next(i for i in range(5, len(picked)) if picked[i]["province"] == crowded)
-            picked[victim] = next(r for r in rest if r["province"] == province and r not in picked)
-        for row in sorted(picked, key=lambda r: r["project_name"]):
-            chosen.append({
-                "name_en": row["project_name"].strip(), "capacity_mw": Decimal(row["capacity_mw"]),
-                "province": PROVINCES[row["province"]][0], "district": row["district"].strip().title() or None,
-                "local_level": row["municipality"].strip() or None, "river": row["river"].strip() or None,
-                "promoter": row["promoter"].strip() or None, "licence_number": row["license_number"].strip(),
-                "stage": stage, "status": rng.choice(statuses),
-            })
+        picked += [{**p, "stage": stage, "status": status} for p in _pick(rng, pool, bands, licence_type, taken)]
+    licence_type, stage, bands, statuses = PIPELINE
+    pool = sorted((r for r in source if r["license_type"] == licence_type), key=lambda r: r["project_name"])
+    picked += [{**p, "stage": stage, "status": statuses[i % len(statuses)]}
+               for i, p in enumerate(_pick(rng, pool, bands, licence_type, taken))]
+    _spread_provinces(rng, picked, source, taken)
+
+    chosen: List[Dict[str, Any]] = []
+    for p in sorted(picked, key=lambda p: p["name"]):
+        row = p["row"]
+        chosen.append({
+            "name_en": p["name"], "capacity_mw": p["capacity"],
+            "province": PROVINCES[row["province"]][0], "district": row["district"].strip().title(),
+            "local_level": row["municipality"].strip() or None, "river": _river(row),
+            "promoter": p["promoter"], "stage": p["stage"], "status": p["status"],
+        })
     for index, project in enumerate(chosen, start=1):
         project["code"] = f"HPM-{PROVINCE_CODES[project['province']]}-{index:04d}"
+        project["licence_number"] = f"{2070 + index % 12}/{index:03d}"
+    size_facilities(rng, chosen)
     return chosen
+
+
+def size_facilities(rng: random.Random, projects: List[Dict[str, Any]]) -> None:
+    """Each facility's limit and drawn share.
+
+    Limits are drawn per MW, then scaled so each status adds up to its rounded total, in half crores.
+    A plant in operation has drawn its whole limit; one under construction part of it; one yet to
+    start, nothing.
+    """
+    for status, (_licence, _stage, _bands, total, usual, large) in BOOK.items():
+        rows = [p for p in projects if p["status"] == status]
+        for p in rows:
+            p["limit"], p["drawn_share"] = Decimal("0"), Decimal("0")
+        if not total:
+            continue
+        for p in rows:
+            per_mw = rng.uniform(*large) if rng.random() < 0.12 else rng.uniform(*usual)
+            p["limit"] = p["capacity_mw"] * Decimal(str(round(per_mw, 3))) * CRORE
+        scale = Decimal(total) * CRORE / sum(p["limit"] for p in rows)
+        for p in rows:
+            p["limit"] = max(HALF_CRORE, (p["limit"] * scale / HALF_CRORE).quantize(Decimal("1")) * HALF_CRORE)
+        rows[-1]["limit"] += Decimal(total) * CRORE - sum(p["limit"] for p in rows)  # the rounding lands on one facility
+        if status == "under_operation":
+            for p in rows:
+                p["drawn_share"] = Decimal("1")
+        elif status == "under_construction":
+            shares = [Decimal(str(round(rng.uniform(low, high), 4))) for low, high, count in CONSTRUCTION_DRAWN
+                      for _ in range(count)]
+            rng.shuffle(shares)
+            for p, share in zip(rows, shares):
+                p["drawn_share"] = share
 
 
 def build_tranches(rng: random.Random, disbursed: Decimal, first: date) -> List[Dict[str, Any]]:
@@ -217,24 +329,38 @@ def _quarter(period: FilingPeriod) -> int:
     return int(period.label[-1])
 
 
+def drawdown_window(rng: random.Random, status: str) -> Tuple[int, int]:
+    """(first projected quarter that draws, how many quarters the rest of the limit is drawn over).
+    A project under construction draws soon and quickly; one yet to start waits for financial
+    close, then draws through its build."""
+    if status == "under_construction":
+        return 1, rng.randint(2, 8)
+    if status == "yet_to_start_drawdown":
+        return rng.randint(1, 4), rng.randint(6, 12)
+    return 1, 0
+
+
 def build_projection(status: str, sanctioned: Decimal, disbursed: Decimal, outstanding: Decimal,
-                     repayments: List[Dict[str, Any]], quarters: List[FilingPeriod]) -> List[Dict[str, Any]]:
+                     repayments: List[Dict[str, Any]], quarters: List[FilingPeriod],
+                     window: Tuple[int, int] = (1, 6)) -> List[Dict[str, Any]]:
     """A loan's plan by fiscal quarter, starting from its position today.
 
     ``quarters[0]`` is the opening. Repayment is the principal falling due in each quarter on the
     loan's own schedule. A project that is still building draws what is left of its limit in equal
-    parts; one in operation draws nothing more. Each quarter's outstanding is the one before plus
-    disbursement less repayment.
+    parts over ``window`` (first quarter, number of quarters); one in operation draws nothing more.
+    Each quarter's outstanding is the one before plus disbursement less repayment.
     """
+    first, length = window
     undrawn = sanctioned - disbursed if status in ("under_construction", "yet_to_start_drawdown") else Decimal("0")
-    draw = money(undrawn / DRAWDOWN_QUARTERS)
+    draw = money(undrawn / length) if length else Decimal("0")
+    last = first + length - 1
     rows = [{"period": quarters[0], "is_opening": True, "disbursement": Decimal("0"), "repayment": Decimal("0"),
              "outstanding": outstanding}]
     for index in range(1, len(quarters)):
         period, before = quarters[index], quarters[index - 1]
         disbursement = Decimal("0")
-        if undrawn > 0 and index <= DRAWDOWN_QUARTERS:
-            disbursement = undrawn - draw * (DRAWDOWN_QUARTERS - 1) if index == DRAWDOWN_QUARTERS else draw
+        if undrawn > 0 and first <= index <= last:
+            disbursement = undrawn - draw * (length - 1) if index == last else draw
         repayment = sum((r["principal_due"] for r in repayments
                          if before.end_ad < r["due_date_ad"] <= period.end_ad), Decimal("0"))
         repayment = min(repayment, rows[-1]["outstanding"] + disbursement)
@@ -289,9 +415,13 @@ def build_energy_financing(today: date, quarters: List[FilingPeriod], projected:
             "planned": [{"period": by_end[end], "planned_disbursement": amount} for end, amount in sorted(planned.items())]}
 
 
-def cod_dates(rng: random.Random, stage: str, today: date) -> Dict[str, Any]:
+def cod_dates(rng: random.Random, stage: str, today: date, status: str = "") -> Dict[str, Any]:
     """Commercial operation dates that fit the stage: achieved, slipping, or only planned."""
-    if stage == "operation":
+    if status == "yet_to_start_drawdown":
+        original = date(today.year + rng.randint(2, 4), rng.randint(1, 12), 1)
+        approved = original + timedelta(days=rng.choice([0, 0, 0, 120]))
+        dates = {"original_cod_ad": original, "current_approved_cod_ad": approved, "forecast_cod_ad": approved}
+    elif stage == "operation":
         original = date(today.year - rng.randint(3, 9), rng.randint(1, 12), 1)
         actual = original + timedelta(days=rng.choice([0, 0, 45, 120, 210]))
         dates = {"original_cod_ad": original, "current_approved_cod_ad": actual, "actual_cod_ad": actual}
@@ -438,7 +568,7 @@ def build_operations(rng: random.Random, project_id, data: Dict[str, Any], today
         records.append(NEAPPARate(id=uuid.uuid4(), project_id=project_id, valid_from_ad=date(2018, 7, 1),
                                   season=season, rate_per_mwh_npr=rate, is_current=True))
 
-    for back in range(1, 13):  # the twelve complete months before this one
+    for back in range(1, GENERATION_MONTHS + 1):  # the complete months before this one
         month = _months_before(first, back)
         wet = month.month in WET_MONTHS
         availability = _num(rng, 88, 99)
@@ -516,8 +646,36 @@ def build_operations(rng: random.Random, project_id, data: Dict[str, Any], today
     return records
 
 
+def build_consortium(rng: random.Random, project_id, data: Dict[str, Any], sanctioned: Decimal, facility: Decimal,
+                     disbursed: Decimal, today: date) -> List[Any]:
+    """The project's whole debt facility and who holds it. The bank leads when it holds the largest
+    share; partner banks share the rest. All lenders draw and are repaid pro rata."""
+    share = sanctioned / facility
+    partners = rng.randint(1, 3)
+    shares = [share] + [(1 - share) / partners] * partners
+    lead = 0 if share >= max(shares) else 1
+    signed = today - timedelta(days=rng.randint(400, 2500))
+    row = ConsortiumFacility(
+        id=uuid.uuid4(), project_id=project_id, facility_name=f"{data['name_en']} term loan facility"[:255],
+        total_facility_limit=facility, sbl_role="LEAD_BANK" if lead == 0 else "PARTICIPANT",
+        lead_bank_name=None if lead == 0 else PARTNER_BANKS[0], facility_agreement_date_ad=signed,
+        facility_agreement_date_bs=_bs(signed), security_type="Project assets and shares", charge_ranking="pari passu")
+    members: List[Any] = [row]
+    names = ["Our bank"] + PARTNER_BANKS[:partners]
+    for position, (name, part) in enumerate(zip(names, shares)):
+        committed = sanctioned if position == 0 else money(facility * part)
+        members.append(ConsortiumMember(
+            id=uuid.uuid4(), consortium_facility_id=row.id, institution_name=name, institution_type="commercial_bank",
+            is_lead=position == lead, is_current=True, committed_amount=committed,
+            share_pct=(committed / facility * 100).quantize(Decimal("0.000001")),
+            disbursed_to_date=money(committed * (disbursed / sanctioned)) if sanctioned else Decimal("0"),
+            valid_from_ad=signed, valid_from_bs=_bs(signed)))
+    return members
+
+
 # Children before parents; approval requests point at projects and loans by id, so they go too.
 DELETE_ORDER = (
+    ConsortiumMember, ConsortiumFacility,
     ApprovalStep, ApprovalRequest, EnergyFinancingQuarter, EnergyBond, NewLoanDisbursementQuarter, NewLoanLimit,
     LoanProjectionQuarter, Repayment, DisbursementTranche, LoanAccountRateHistory,
     LoanAccount,
@@ -542,8 +700,8 @@ async def seed(session: AsyncSession, today: date | None = None) -> int:
     book = [Decimal("0")] * len(projection_quarters)
 
     for index, data in enumerate(projects):
-        stage, capacity = data["stage"], data["capacity_mw"]
-        dates = cod_dates(rng, stage, today)
+        stage, capacity, status = data["stage"], data["capacity_mw"], data["status"]
+        dates = cod_dates(rng, stage, today, status)
         project = Project(
             id=uuid.uuid5(ID_NAMESPACE, data["name_en"]), project_code=data["code"], name_en=data["name_en"],
             name_np=data["name_en"],  # the source has no Nepali names
@@ -559,20 +717,30 @@ async def seed(session: AsyncSession, today: date | None = None) -> int:
             turbine_type=rng.choice(["francis", "pelton", "turgo"]), transmission_km=_num(rng, 3, 60)))
         session.add(build_water_licence(rng, project.id, data, index, today))
 
-        # Projects still in feasibility have a survey licence and nothing else yet.
-        if stage == "feasibility":
+        # Projects still in feasibility have a survey licence and nothing else yet; a settled
+        # facility has been repaid, so the bank no longer holds a loan or monitors the plant.
+        if stage == "feasibility" or status == "settled":
             continue
 
-        project_cost = capacity * COST_PER_MW
+        # The bank's limit is its share of the project's debt; the rest comes from partner banks
+        sanctioned = money(data["limit"])
         debt_share = _num(rng, 0.60, 0.75, 4)
-        sanctioned = money(project_cost * debt_share)
-        disbursed = money(sanctioned * _num(rng, 0.70, 1.0, 4))
+        facility = max(sanctioned, money(capacity * COST_PER_MW * debt_share))
+        project_cost = money(facility / debt_share)
+        disbursed = money(sanctioned * data["drawn_share"])
         rate = _num(rng, 8.5, 11.5)
-        tenor, grace = rng.randint(10, 15), rng.randint(1, 3)
-        first_due = date(2024, 6, 1)
-        delinquent = index % 10 == 4  # roughly one loan in ten has a missed instalment
+        if status == "under_operation":
+            tenor, grace = rng.randint(10, 15), rng.randint(1, 3)
+            first_due, principal = date(2024, 6, 1), disbursed
+            delinquent = index % 10 == 4  # roughly one loan in ten has a missed instalment
+        else:
+            # Repayment starts at the first instalment date after the approved COD, on the whole limit
+            cod = dates["current_approved_cod_ad"]
+            tenor, grace = rng.randint(12, 15), 0
+            first_due, principal = date(cod.year + 1, 6, 1), sanctioned
+            delinquent = False
 
-        repayments = build_repayments(rng, disbursed, rate, tenor, grace, first_due, today, delinquent)
+        repayments = build_repayments(rng, principal, rate, tenor, grace, first_due, today, delinquent)
         repaid = sum((r["principal_paid"] for r in repayments), Decimal("0"))
         overdue = [r for r in repayments if r["days_past_due"] > 0]
         outstanding = disbursed - repaid
@@ -588,12 +756,19 @@ async def seed(session: AsyncSession, today: date | None = None) -> int:
             maturity_ad=maturity, maturity_bs=_bs(maturity), sync_status="success")
         session.add(loan)
         await session.flush()  # the unit of work does not order every child table after its parent
-        for tranche in build_tranches(rng, disbursed, date(2022, 1, 15)):
-            session.add(DisbursementTranche(id=uuid.uuid4(), loan_account_id=loan.id, **tranche))
+        if facility > sanctioned:
+            session.add_all(build_consortium(rng, project.id, data, sanctioned, facility, disbursed, today))
+        if disbursed > 0:
+            first_draw = date(2022, 1, 15) if status == "under_operation" else today - timedelta(days=rng.randint(300, 700))
+            for tranche in build_tranches(rng, disbursed, first_draw):
+                tranche["actual_date_ad"] = min(tranche["actual_date_ad"], today)
+                tranche["planned_date_ad"] = min(tranche["planned_date_ad"], tranche["actual_date_ad"])
+                session.add(DisbursementTranche(id=uuid.uuid4(), loan_account_id=loan.id, **tranche))
         for repayment in repayments:
             session.add(Repayment(id=uuid.uuid4(), loan_account_id=loan.id, **repayment))
-        for position, row in enumerate(build_projection(data["status"], sanctioned, disbursed, outstanding,
-                                                        repayments, projection_quarters)):
+        for position, row in enumerate(build_projection(status, sanctioned, disbursed, outstanding,
+                                                        repayments, projection_quarters,
+                                                        drawdown_window(rng, status))):
             book[position] += row["outstanding"]
             session.add(LoanProjectionQuarter(
                 id=uuid.uuid4(), project_id=project.id, fiscal_year=_fiscal_year(row["period"]),
@@ -617,7 +792,7 @@ async def seed(session: AsyncSession, today: date | None = None) -> int:
         for record in build_risks(rng, project.id, stage, today):
             session.add(record)
         monthly_revenue: Dict[date, Decimal] = {}
-        if stage == "operation":
+        if status == "under_operation":
             for record in build_operations(rng, project.id, data, today):
                 session.add(record)
                 if isinstance(record, EnergyGenerationData):

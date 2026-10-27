@@ -15,6 +15,7 @@ import logging
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.models.consortium import ConsortiumFacility
 from backend.app.models.financial import DisbursementTranche, LoanAccount, Repayment
 from backend.app.models.operations import CovenantHistory, CovenantTerms, FinancialPeriod
 from backend.app.models.project import Project
@@ -103,9 +104,14 @@ class _LoanBook:
     """A project's loans with their schedules, answering what was due in a window and owed at a date."""
 
     def __init__(self, loans: Sequence[LoanAccount], repayments: Sequence[Repayment],
-                 tranches: Sequence[DisbursementTranche]):
+                 tranches: Sequence[DisbursementTranche], facility_limit: Optional[Decimal] = None):
         self.loans = list(loans)
-        self._fx = {loan.id: loan.fx_rate_to_npr or Decimal("1") for loan in loans}
+        fx = {loan.id: loan.fx_rate_to_npr or Decimal("1") for loan in loans}
+        # In a consortium every lender draws and is repaid pro rata on the same terms, and the
+        # covenants are tested on the whole facility: the bank's figures are scaled up by its share.
+        own = sum(((loan.sanctioned_amount or ZERO) * fx[loan.id] for loan in loans), ZERO)
+        self.facility_factor = facility_limit / own if facility_limit and own and facility_limit > own else Decimal("1")
+        self._fx = {loan_id: rate * self.facility_factor for loan_id, rate in fx.items()}
         self._repayments = list(repayments)
         self._tranches = list(tranches)
         self._drawn_loans = {t.loan_account_id for t in tranches if t.actual_date_ad}
@@ -183,7 +189,9 @@ class CovenantService:
         repayments = (await db.execute(select(Repayment).where(Repayment.loan_account_id.in_(ids)))).scalars().all()
         tranches = (await db.execute(
             select(DisbursementTranche).where(DisbursementTranche.loan_account_id.in_(ids)))).scalars().all()
-        return _LoanBook(loans, repayments, tranches)
+        facility_limit = (await db.execute(select(ConsortiumFacility.total_facility_limit)
+                                           .where(ConsortiumFacility.project_id == project_id))).scalar_one_or_none()
+        return _LoanBook(loans, repayments, tranches, facility_limit)
 
     @staticmethod
     async def save_period(db: AsyncSession, project_id: Any, quarter_label: str, values: Dict[str, Any],
@@ -318,7 +326,10 @@ class CovenantService:
         outstanding = book.outstanding_at(end, is_latest=quarter == Quarter.of(today).shift(-1))
         calc = engine.calculate(quarter, [_period_inputs(r) for r in rows], principal_due, interest_due,
                                 outstanding, terms)
-        return {**calculation_to_dict(calc), "terms_source": "sanction terms" if stored else "bank defaults"}
+        basis = ("bank's own loans" if book.facility_factor == 1 else
+                 f"whole consortium facility (bank's share {100 / book.facility_factor:.1f}%, scaled pro rata)")
+        return {**calculation_to_dict(calc), "terms_source": "sanction terms" if stored else "bank defaults",
+                "debt_basis": basis}
 
     @staticmethod
     async def get_financials(db: AsyncSession, project_id: Any, today: Optional[date] = None) -> Dict[str, Any]:

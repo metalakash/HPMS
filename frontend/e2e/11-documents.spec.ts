@@ -69,13 +69,14 @@ test.describe('11. Documents', () => {
   });
 
   test('the demo portfolio has documents, and an auditor can read them but not file', async ({ pageAs, apiAs }) => {
-    const projects = (await (await (await apiAs('admin')).get('/api/v1/projects?stage=operation&page_size=1')).json()).data;
+    const projects = (await (await (await apiAs('admin')).get('/api/v1/projects?status=under_operation&page_size=1')).json()).data;
     const page = await pageAs('auditor');
     await page.goto(`/projects/${projects[0].id}?tab=documents`);
     await expect(page.getByRole('button', { name: /Power purchase agreement/ })).toBeVisible();
     await expect(page.getByRole('button', { name: 'File a document' })).toHaveCount(0);
 
-    await page.getByRole('button', { name: /Sanction letter/ }).first().click();
+    // The seeded letter, not one another test may be filing on the same project at the same time
+    await page.getByRole('button', { name: /Sanction letter/ }).filter({ hasNotText: 'E2E' }).first().click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Version 2')).toBeVisible();
     const file = await downloaded(page, 'Download v1');

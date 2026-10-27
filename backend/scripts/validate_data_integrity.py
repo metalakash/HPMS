@@ -82,11 +82,15 @@ def check_loan(label: str, loan: Any, tranches: Iterable[Any], repayments: Itera
     if not repayments:
         return errors
 
+    # A loan still drawing, with nothing repaid yet, is scheduled on its whole limit: the balance
+    # the instalments run down is what will have been drawn by the first one.
     scheduled = sum((_d(r.principal_due) for r in repayments), ZERO)
-    if abs(scheduled - disbursed) > TOLERANCE:
+    still_drawing = disbursed < sanctioned - TOLERANCE and repaid == ZERO
+    basis = sanctioned if still_drawing and abs(scheduled - sanctioned) <= TOLERANCE else disbursed
+    if abs(scheduled - basis) > TOLERANCE:
         errors.append(f"{label}: schedule repays {scheduled} of {disbursed} disbursed")
 
-    balance = disbursed
+    balance = basis
     previous_due = None
     for r in repayments:
         when = f"{label} instalment {r.due_date_ad}"

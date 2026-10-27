@@ -56,6 +56,7 @@ function Working({ calculation }: { calculation: CovenantCalculation }) {
       <p className="mt-1 text-xs text-muted">
         Twelve months from {formatDate(window.from)} to {formatDate(window.to)}, tested against{' '}
         {calculation.terms_source}.
+        {calculation.debt_basis && <> Debt figures cover the {calculation.debt_basis}.</>}
       </p>
       <dl className="mt-3 divide-y divide-line rounded-md border border-line text-sm">
         {rows.map(([label, value]) => (

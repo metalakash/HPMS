@@ -554,6 +554,7 @@ export interface CovenantCalculation {
     security_value: DecimalString | null;
   };
   terms_source: string;
+  debt_basis?: string;
 }
 
 // ---- Portfolio views (analytics, maintenance, admin)

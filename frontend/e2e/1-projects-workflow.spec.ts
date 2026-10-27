@@ -38,10 +38,11 @@ test.describe('1. Projects workflow', () => {
     await page.getByLabel('Stage').selectOption('construction');
     await expect(page).toHaveURL(/[?&]stage=construction/);
 
+    // Wait for the filtered total: with a full page either way, the row count alone cannot tell old rows from new
+    await expect(page.getByRole('navigation', { name: 'Pagination' })).toContainText(`of ${total}`);
     const rows = await loadedRows(tableByCaption(page, 'Projects'));
     await expect(rows).toHaveCount(Math.min(total, PAGE_SIZE));
     expect(new Set(await columnTexts(rows, COL.stage))).toEqual(new Set(['Construction']));
-    await expect(page.getByRole('navigation', { name: 'Pagination' })).toContainText(`of ${total}`);
 
     // The filter is in the URL, so it survives a reload
     await page.reload();
@@ -199,7 +200,8 @@ test.describe('1. Projects workflow', () => {
     authenticatedPage: page,
     api,
   }) => {
-    const { rows: operating } = await fetchProjects(api, { stage: 'operation', page_size: 1 });
+    // A plant still financed: settled facilities are in operation too, but no longer have a loan
+    const { rows: operating } = await fetchProjects(api, { status: 'under_operation', page_size: 1 });
     const project = operating[0];
     const loans = (await (await api.get(`/api/v1/projects/${project.id}/loan-accounts`)).json()).data;
     const disbursements = (await (await api.get(`/api/v1/projects/${project.id}/disbursements`)).json()).data;
